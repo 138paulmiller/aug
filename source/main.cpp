@@ -13,20 +13,13 @@ void lexer_print_token(const shl_token& token)
 
 void lexer_test_file(const char* filename)
 {
-	std::cout << "Tokenizing" << filename << "\n";
+	std::cout << "Tokenizing\t" << filename << "\n";
 	shl_lexer lexer;
 	lexer.open_file(filename);
 	while (lexer.move())
 	{
-		//std::cout << "\t\tprev ";
-		//lexer_print_token(lexer.prev());
-
-		std::cout << "\t\tcurr ";
+		std::cout << "\tcurr ";
 		lexer_print_token(lexer.curr());
-
-		//std::cout << "\t\tnext ";
-		//lexer_print_token(lexer.next());
-
 		std::cout << "\n";
 
 		if (lexer.curr().id == shl_token_id::NONE)
@@ -122,7 +115,9 @@ void ir_print(const shl_ir_module* module)
 
 void run_test(const char* filename)
 {
-	lexer_test_file(filename);
+	std::cout << "----------" << filename << "------------\n";
+
+	//lexer_test_file(filename);
 
 	shl_ast* root = shl_parse_file(filename);
 	if(root == nullptr)
