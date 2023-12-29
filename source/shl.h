@@ -423,7 +423,7 @@ void shl_lexer::_end_tracking(std::string& s)
     const std::streampos pos_end = _input->tellg();
     const int len = pos_end - _pos_start;
 
-    char buffer[SHL_MAX_TOKEN_LENGTH];
+    static char buffer[SHL_MAX_TOKEN_LENGTH];
 
     _input->seekg(_pos_start);
     _input->read(buffer, len);
