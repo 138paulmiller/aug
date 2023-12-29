@@ -1,0 +1,26 @@
+
+.   # PERIOD,
+,   # COMMA  
+:   # COLON  
+;   # SEMICOLON,
+(   # LPAREN,
+)   # RPAREN,
+[   # LBRACKET,
+]   # RBRACKET,
+{   # LBRACE,
+}   # RBRACE,
+&   # AND
+|   # OR
++   # ADD
+-   # SUB
+*   # MUL
+/   # DIV
+^   # POW
+<   # LESS
+>   # GREATER,
+<=  # LESS_EQUAL,
+>=  # GREATER_EQUAL
+=   # ASSIGN,
+==  # EQUAL
+!   # NOT
+!=  # NOT_EQUAL
