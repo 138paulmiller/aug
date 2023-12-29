@@ -150,12 +150,12 @@ private:
 };
 
 // -------------------------------------- Lexer  ---------------------------------------// 
-#define SHL_TOKEN_LIST                    \
-    /* State */                           \
+#define SHL_TOKEN_LIST                        \
+    /* State */                               \
     SHL_TOKEN(NONE,           0, 0, NULL)     \
     SHL_TOKEN(ERR,	          0, 1, NULL)     \
     SHL_TOKEN(END,            0, 1, NULL)     \
-    /* Symbols */			              \
+    /* Symbols */			                  \
     SHL_TOKEN(DOT,            0, 0, NULL)     \
     SHL_TOKEN(COMMA,          0, 0, NULL)     \
     SHL_TOKEN(COLON,          0, 0, NULL)     \
@@ -166,7 +166,7 @@ private:
     SHL_TOKEN(RBRACKET,       0, 0, NULL)     \
     SHL_TOKEN(LBRACE,         0, 0, NULL)     \
     SHL_TOKEN(RBRACE,         0, 0, NULL)     \
-    /* Operators */                       \
+    /* Operators */                           \
     SHL_TOKEN(AND,            1, 0, NULL)     \
     SHL_TOKEN(OR,             1, 0, NULL)     \
     SHL_TOKEN(ADD,            2, 0, NULL)     \
@@ -187,15 +187,15 @@ private:
     SHL_TOKEN(EQUAL,          2, 0, NULL)     \
     SHL_TOKEN(NOT,            3, 0, NULL)     \
     SHL_TOKEN(NOT_EQUAL,      3, 0, NULL)     \
-    /* Literals */                        \
+    /* Literals */                            \
     SHL_TOKEN(DECIMAL,        0, 1, NULL)     \
     SHL_TOKEN(HEXIDECIMAL,    0, 1, NULL)     \
     SHL_TOKEN(BINARY,         0, 1, NULL)     \
     SHL_TOKEN(FLOAT,          0, 1, NULL)     \
     SHL_TOKEN(STRING,         0, 1, NULL)     \
-    /* Labels */                          \
+    /* Labels */                              \
     SHL_TOKEN(ID,             0, 1, NULL)     \
-    /* Keywords */                        \
+    /* Keywords */                            \
     SHL_TOKEN(IF,             0, 1, "if")     \
     SHL_TOKEN(IN,             0, 1, "in")     \
     SHL_TOKEN(FOR,            0, 1, "for")    \
@@ -223,7 +223,7 @@ struct shl_token_detail
 };
 
 // All token type info. Types map from id to type info
-static constexpr shl_token_detail shl_token_details[(int)shl_token_id::COUNT] = 
+static shl_token_detail shl_token_details[(int)shl_token_id::COUNT] = 
 {
     #define SHL_TOKEN(id, ...) { #id, __VA_ARGS__},
         SHL_TOKEN_LIST
@@ -244,35 +244,6 @@ struct shl_token
 
 class shl_lexer
 {
-public:
-    shl_lexer();
-    ~shl_lexer();
-
-    bool open(const char* line);
-    bool open_file(const char* filename);
-    void close();
-
-    bool move();   //move to next token position
-
-    const shl_token& prev(); // get previous token at position
-    const shl_token& curr(); // get current token at position
-    const shl_token& next(); // get next token at position
-
-private:
-    char _get();
-    char _unget();
-    char _peek();
-
-    void _start_tracking();
-    void _end_tracking(std::string& s);
-
-    void _tokenize(shl_token& tok);
-    bool _tokenize_string(shl_token& tok);
-    bool _tokenize_symbol(shl_token& tok);
-    bool _tokenize_label(shl_token& tok);
-    bool _tokenize_number(shl_token& tok);
-    void _tokenize_error(shl_token& tok, const char* format, ...);
-
     shl_token _prev;
     shl_token _curr;
     shl_token _next;
@@ -283,6 +254,37 @@ private:
     int _line, _col;
     int _prev_line, _prev_col;
     std::streampos _pos_start;
+
+public:
+    shl_lexer();
+    ~shl_lexer();
+
+    bool open(const char* line);
+    bool open_file(const char* filename);
+    void close();
+
+    bool move();   //move to next token position
+
+    inline int line() { return _line; }
+    inline int col() { return _col; }
+    inline const shl_token& prev() { return _prev; }
+    inline const shl_token& curr() {return _curr;}    
+    inline const shl_token& next() {return _next;}
+
+private:
+    char _get();
+    char _unget();
+    char _peek();
+
+    void _start_tracking();
+    void _end_tracking(std::string& s);
+
+    shl_token _tokenize();
+    bool _tokenize_string(shl_token& token);
+    bool _tokenize_symbol(shl_token& token);
+    bool _tokenize_label(shl_token& token);
+    bool _tokenize_number(shl_token& token);
+    void _tokenize_error(shl_token& token, const char* format, ...);
 };
 
 shl_lexer::shl_lexer()
@@ -346,34 +348,14 @@ bool shl_lexer::open_file(const char* filename)
     return true;
 }
 
-const shl_token& shl_lexer::prev()
-{
-    return _prev;
-}
-
-const shl_token& shl_lexer::curr()
-{
-    return _curr;
-}
-
-const shl_token& shl_lexer::next()
-{
-    if (_next.id == shl_token_id::NONE)
-    {
-        _tokenize(_next);
-
-        // assign detail for future lookup
-        _next.detail = &shl_token_details[(int)_next.id];
-    }
-    return _next;
-}
-
 bool shl_lexer::move()
 {
-    // move curr to prev, next to curr. set current to new token, and destroy previous  
+    if (_next.id == shl_token_id::NONE)
+        _next = _tokenize();        
+
     _prev = _curr; 
     _curr = next();
-    _next = shl_token();
+    _next = _tokenize();
 
     return _curr.id != shl_token_id::NONE;
 }
@@ -433,13 +415,17 @@ void shl_lexer::_end_tracking(std::string& s)
     s.assign(buffer, len);
 }
 
-void shl_lexer::_tokenize(shl_token& tok)
+shl_token shl_lexer::_tokenize()
 {
-    tok = shl_token();
+    shl_token token;
 
     // if file is not open, or already at then end. return invalid token
     if (_input == nullptr || _peek() == EOF)
-        return;
+    {
+        token.id = shl_token_id::NONE;
+        token.detail = &shl_token_details[(int)token.id];
+        return token;
+    }
 
     char c = _peek();
 
@@ -463,38 +449,42 @@ void shl_lexer::_tokenize(shl_token& tok)
     // handle eof
     if (c == EOF)
     {
-        tok.id = shl_token_id::END;
-        return;
+        token.id = shl_token_id::END;
+        token.detail = &shl_token_details[(int)token.id];
+        return token;
     }
 
-    tok.col = _col;
-    tok.line = _line;
+    token.col = _col;
+    token.line = _line;
 
     switch (c)
     {
     case '.': 
     case '+':
     case '-':
-        if (!_tokenize_number(tok))
-            _tokenize_symbol(tok);
+        if (!_tokenize_number(token))
+            _tokenize_symbol(token);
         break;
     case '\"':
-        _tokenize_string(tok);
+        _tokenize_string(token);
         break;
     default:
-        if (_tokenize_symbol(tok))
+        if (_tokenize_symbol(token))
             break;
-        if(_tokenize_label(tok))
+        if(_tokenize_label(token))
             break;
-        if (_tokenize_number(tok))
+        if (_tokenize_number(token))
             break;
 
-        _tokenize_error(tok, "invalid character % c", c);
+        _tokenize_error(token, "invalid character % c", c);
         break;
     }
+
+    token.detail = &shl_token_details[(int)token.id];
+    return token;
 }
 
-bool shl_lexer::_tokenize_string(shl_token& tok)
+bool shl_lexer::_tokenize_string(shl_token& token)
 {
     _start_tracking();
 
@@ -510,7 +500,7 @@ bool shl_lexer::_tokenize_string(shl_token& tok)
         c = _get();
         if (c == EOF)
         {
-            _tokenize_error(tok, "string literal missing closing \"");
+            _tokenize_error(token, "string literal missing closing \"");
             return false;
         }
 
@@ -526,7 +516,7 @@ bool shl_lexer::_tokenize_string(shl_token& tok)
                 break;
             default:
             {
-                _tokenize_error(tok, "invalid escape character \\%c", c);
+                _tokenize_error(token, "invalid escape character \\%c", c);
                 while (c != '\"')
                 {
                     if (c == EOF)
@@ -539,13 +529,13 @@ bool shl_lexer::_tokenize_string(shl_token& tok)
         }
     } while (c != '\"');
 
-    tok.id = shl_token_id::STRING;
-    _end_tracking(tok.data);
+    token.id = shl_token_id::STRING;
+    _end_tracking(token.data);
 
     return true;
 }
 
-bool shl_lexer::_tokenize_symbol(shl_token& tok)
+bool shl_lexer::_tokenize_symbol(shl_token& token)
 {
     shl_token_id id = shl_token_id::ERR;
 
@@ -626,11 +616,11 @@ bool shl_lexer::_tokenize_symbol(shl_token& tok)
         return false;
     }
 
-    tok.id = id;
+    token.id = id;
     return true;
 }
 
-bool shl_lexer::_tokenize_label(shl_token& tok)
+bool shl_lexer::_tokenize_label(shl_token& token)
 {
     _start_tracking();
 
@@ -660,13 +650,13 @@ bool shl_lexer::_tokenize_label(shl_token& tok)
         }
     }
     
-    tok.id = id;
-    tok.data = std::move(label);
+    token.id = id;
+    token.data = std::move(label);
 
     return true;
 }
 
-bool shl_lexer::_tokenize_number(shl_token& tok)
+bool shl_lexer::_tokenize_number(shl_token& token)
 {
     _start_tracking();
 
@@ -751,16 +741,16 @@ bool shl_lexer::_tokenize_number(shl_token& tok)
 
     if(id == shl_token_id::ERR)
     {
-        _tokenize_error(tok, "invalid numeric format %s", str.c_str());
+        _tokenize_error(token, "invalid numeric format %s", str.c_str());
         return false;
     }
     
-    tok.id = id;
-    tok.data = std::move(str);
+    token.id = id;
+    token.data = std::move(str);
     return true;
 }
 
-void shl_lexer::_tokenize_error(shl_token& tok, const char* format, ...)
+void shl_lexer::_tokenize_error(shl_token& token, const char* format, ...)
 {
     char buffer[2048];
     int len = snprintf(buffer, 2048, "%s(%d,%d):", _inputname.c_str(), _line, _col);
@@ -770,8 +760,8 @@ void shl_lexer::_tokenize_error(shl_token& tok, const char* format, ...)
     len += vsnprintf(buffer+len, 2048, format, argptr);
     va_end(argptr);
 
-    tok.id = shl_token_id::ERR;
-    tok.data.copy(buffer, len);
+    token.id = shl_token_id::ERR;
+    token.data.copy(buffer, len);
 }
 
 // -------------------------------------- Parser ---------------------------------------// 
@@ -796,96 +786,29 @@ public:
     shl_array<shl_ptr<shl_ast>> children;
 };
 
-// TODO: add a syntax check pass. check for variable/function names. Binary/Unary ops
 
-class shl_parser
+void shl_parse_error(shl_lexer& lexer, const char* message)
 {
-public:
-    shl_ptr<shl_ast> parse(const char* code);
-    shl_ptr<shl_ast> parse_file(const char* filename);
-
-private:
-    shl_ast* _parse_block();
-    shl_ast* _parse_stmt();
-    shl_ast* _parse_expr();
-    shl_ast* _parse_funccall();
-    shl_ast* _parse_value();
-
-    void _parser_error(const char* message);
-
-    shl_lexer _lexer;
-};
-
-shl_ptr<shl_ast> shl_parser::parse(const char* code)
-{
-    _lexer.open(code);
-    _lexer.move();
-
-    shl_ptr<shl_ast> block = _parse_block();
-    if(block == nullptr)
-        return nullptr;
-
-    shl_ast* root = new shl_ast();
-    root->type = shl_ast::ROOT;
-
-    root->children = { std::move(block) };
-    return root;
+    // TODO: give user info about lshl_ast token line, column, context etc...
+    std::cerr << "shl syntax error(" << lexer.line() << "," << lexer.col() << ")"
+              << "\n" << message << "\n";
 }
 
-shl_ptr<shl_ast> shl_parser::parse_file(const char* filename)
+shl_ast* shl_parse_value(shl_lexer& lexer);
+
+shl_ast* shl_parse_expr(shl_lexer& lexer)
 {
-    _lexer.open_file(filename);
-    _lexer.move();
-
-    shl_ptr<shl_ast> block = _parse_block();
-    if(block == nullptr)
-        return nullptr;
-
-    shl_ast* root = new shl_ast();
-    root->type = shl_ast::ROOT;
-    root->children = { std::move(block) };
-    return root;
-}
-
-shl_ast* shl_parser::_parse_block()
-{
-    shl_array<shl_ptr<shl_ast>> stmts;
-    while(shl_ast* stmt = _parse_stmt())
-        stmts.push_back(stmt);
-
-    if(stmts.size() == 0)
-        return nullptr;
-
-    shl_ast* block = new shl_ast();
-    block->type = shl_ast::BLOCK;
-    block->children = std::move(stmts);
-    return block;
-}
-
-shl_ast* shl_parser::_parse_stmt()
-{
-    //TODO: assignment, funcdef etc..
-    // Default, epxression parsing. 
-    if (shl_ast* expr = _parse_expr())
-    {
-        return expr;
-    }
-    return nullptr;
-}
-
-shl_ast* shl_parser::_parse_expr()
-{
-    shl_ast* lhs = _parse_value();
-    shl_token op = _lexer.curr();
+    shl_ast* lhs = shl_parse_value(lexer);
+    shl_token op = lexer.curr();
     if (op.detail->prec <= 0)
         return lhs;
 
-    _lexer.move(); // eat op
+    lexer.move(); // eat op
 
-    shl_ast* rhs = _parse_value();
+    shl_ast* rhs = shl_parse_value(lexer);
     if(!rhs)
     {
-        _parser_error("Binary operation expected value");
+        shl_parse_error(lexer, "Binary operation expected value");
         return nullptr;
     }
 
@@ -895,17 +818,17 @@ shl_ast* shl_parser::_parse_expr()
     binaryop->token = op;
     binaryop->children = { lhs, rhs };
 
-    shl_token nextop = _lexer.curr();
+    shl_token nextop = lexer.curr();
     if (nextop.detail->prec <= 0) // operation is complete. close binop expr
         return binaryop;
 
     // else, parse the next expression and reorder according to prec
-    _lexer.move(); // eat nextop
+    lexer.move(); // eat nextop
 
-    shl_ast* expr = _parse_expr();
+    shl_ast* expr = shl_parse_expr(lexer);
     if(!expr)
     {
-        _parser_error("Binary operation expected expression");
+        shl_parse_error(lexer, "Binary operation expected expression");
         return nullptr;
     }
 
@@ -931,40 +854,40 @@ shl_ast* shl_parser::_parse_expr()
     return next_binaryop;
 }
 
-shl_ast* shl_parser::_parse_funccall()
+shl_ast* shl_parse_funccall(shl_lexer& lexer)
 {
-    shl_token idtoken = _lexer.curr();
+    shl_token idtoken = lexer.curr();
     if (idtoken.id != shl_token_id::ID)
         return nullptr;
 
-    if (_lexer.next().id != shl_token_id::LPAREN)
+    if (lexer.next().id != shl_token_id::LPAREN)
             return nullptr;
 
-    _lexer.move(); // eat id
-    _lexer.move(); // eat (
+    lexer.move(); // eat id
+    lexer.move(); // eat (
 
     shl_array<shl_ptr<shl_ast>> args;
 
     // parse args
-    if (shl_ast* expr = _parse_expr())
+    if (shl_ast* expr = shl_parse_expr(lexer))
     {
         args.push_back(expr);
 
-        while (expr && _lexer.curr().id == shl_token_id::COMMA)
+        while (expr && lexer.curr().id == shl_token_id::COMMA)
         {
-            _lexer.move(); // eat ,
+            lexer.move(); // eat ,
 
-            if((expr = _parse_expr()))
+            if((expr = shl_parse_expr(lexer)))
                 args.push_back(expr);
         }
     }
 
-    if (_lexer.curr().id != shl_token_id::RPAREN)
+    if (lexer.curr().id != shl_token_id::RPAREN)
     {
-        _parser_error("Function call missing closing parentheses");
+        shl_parse_error(lexer, "Function call missing closing parentheses");
         return nullptr;
     }
-    _lexer.move(); // eat )
+    lexer.move(); // eat )
 
     shl_ast* funccall = new shl_ast();
     funccall->type = shl_ast::FUNC_CALL;
@@ -973,17 +896,17 @@ shl_ast* shl_parser::_parse_funccall()
     return funccall;
 }
 
-shl_ast* shl_parser::_parse_value()
+shl_ast* shl_parse_value(shl_lexer& lexer)
 {
-    shl_token token = _lexer.curr();
+    shl_token token = lexer.curr();
     switch (token.id)
     {
     case shl_token_id::ID:
     {   
-        if (shl_ast* funccall = _parse_funccall())
+        if (shl_ast* funccall = shl_parse_funccall(lexer))
             return funccall;
 
-        _lexer.move();
+        lexer.move();
         shl_ast* var = new shl_ast();
         var->type = shl_ast::VARIABLE;
         var->token = token;
@@ -995,7 +918,7 @@ shl_ast* shl_parser::_parse_value()
     case shl_token_id::FLOAT:
     case shl_token_id::STRING:
     {
-        _lexer.move();
+        lexer.move();
         shl_ast* literal = new shl_ast();
         literal->type = shl_ast::LITERAL;
         literal->token =token;
@@ -1003,23 +926,23 @@ shl_ast* shl_parser::_parse_value()
     }
     case shl_token_id::LPAREN:
     {
-        _lexer.move(); // eat the LPAREN
-        shl_ast* expr = _parse_expr();
-        if (_lexer.curr().id == shl_token_id::RPAREN)
-            _lexer.move(); // eat the RPAREN
+        lexer.move(); // eat the LPAREN
+        shl_ast* expr = shl_parse_expr(lexer);
+        if (lexer.curr().id == shl_token_id::RPAREN)
+            lexer.move(); // eat the RPAREN
         else
-            _parser_error("Expression missing closing parentheses");
+            shl_parse_error(lexer, "Expression missing closing parentheses");
         return expr;
     }
     default: 
         if (token.detail->prec > 0) // is operator token
         {
-            _lexer.move(); // eat op token
+            lexer.move(); // eat op token
 
-            shl_ast* expr = _parse_expr();
+            shl_ast* expr = shl_parse_expr(lexer);
             if(!expr)
             {
-                _parser_error("Unary operation expected expression");
+                shl_parse_error(lexer, "Unary operation expected expression");
                 return nullptr;
             }
 
@@ -1034,10 +957,62 @@ shl_ast* shl_parser::_parse_value()
     return nullptr;
 }
 
-void shl_parser::_parser_error(const char* message)
+shl_ast* shl_parse_stmt(shl_lexer& lexer)
 {
-    // TODO: give user info about lshl_ast token line, column, context etc...
-    std::cerr << "Syntax Error:" << message << "\n";
+    //TODO: assignment, funcdef etc..
+    // Default, epxression parsing. 
+    if (shl_ast* expr = shl_parse_expr(lexer))
+    {
+        return expr;
+    }
+    return nullptr;
+}
+
+shl_ast* shl_parse_block(shl_lexer& lexer)
+{
+    shl_array<shl_ptr<shl_ast>> stmts;
+    while(shl_ast* stmt = shl_parse_stmt(lexer))
+        stmts.push_back(stmt);
+
+    if(stmts.size() == 0)
+        return nullptr;
+
+    shl_ast* block = new shl_ast();
+    block->type = shl_ast::BLOCK;
+    block->children = std::move(stmts);
+    return block;
+}
+
+shl_ptr<shl_ast> shl_parse(const char* code)
+{
+    shl_lexer lexer;
+    lexer.open(code);
+    lexer.move();
+
+    shl_ptr<shl_ast> block = shl_parse_block(lexer);
+    if(block == nullptr)
+        return nullptr;
+
+    shl_ast* root = new shl_ast();
+    root->type = shl_ast::ROOT;
+    root->children = { std::move(block) };
+    return root;
+}
+
+shl_ptr<shl_ast> shl_parse_file(const char* filename)
+{
+    shl_lexer lexer;
+    lexer.open_file(filename);
+    lexer.move();
+
+    shl_ptr<shl_ast> block = shl_parse_block(lexer);
+    if(block == nullptr)
+        return nullptr;
+
+    shl_ast* root = new shl_ast();
+    root->type = shl_ast::ROOT;
+    root->children = { std::move(block) };
+    return root;
 }
 
 // -------------------------------------- IR ---------------------------------------// 
@@ -1114,7 +1089,7 @@ enum class shl_opcode : uint8_t
 	#undef SHL_OPCODE
 };
 
-constexpr static const char* shl_opcode_labels[] =
+static const char* shl_opcode_labels[] =
 {
 	#define SHL_OPCODE(opcode) #opcode,
 	SHL_OPCODE_LIST
@@ -1246,8 +1221,8 @@ bool shl_pass_semantic_check(const shl_ptr<shl_ast>& node)
     if(node == nullptr)
         return false;
     return true;
-        // TODO: check variable, function, field names.
-        //       check binary/unary ops
+    // TODO: check variable, function, field names.
+    //       check binary/unary ops
 }
 
 // -------------------------------------- Transformations ---------------------------------------// 
@@ -1315,7 +1290,6 @@ void shl_ast_to_ir(const shl_ptr<shl_ast>& node, shl_ir_builder* ir)
         }
         case shl_ast::BINARY_OP:
         {
-
             assert(children.size() == 2);
             shl_ast_to_ir(children[1], ir); // RHS
             shl_ast_to_ir(children[0], ir); // LHS

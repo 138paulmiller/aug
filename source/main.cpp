@@ -122,8 +122,9 @@ void ir_print(const shl_ptr<shl_ir_module>& module)
 
 void run_test(const char* filename)
 {
-	shl_parser parser;
-	shl_ptr<shl_ast> root = parser.parse_file(filename);
+	//lexer_test_file(filename);
+
+	shl_ptr<shl_ast> root = shl_parse_file(filename);
 	if(root == nullptr)
 	{
 		std::cerr << "Failed to generate AST";
