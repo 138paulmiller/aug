@@ -732,7 +732,7 @@ bool shl_parse_expr_pop(shl_lexer& lexer, shl_list<shl_token>&op_stack, shl_list
     const int op_argc = (size_t)next_op.detail->argc;
     assert(op_argc == 1 || op_argc == 2); // Only supported operator types
 
-    if(expr_stack.size() < op_argc)
+    if(expr_stack.size() < (size_t)op_argc)
     {
         while(expr_stack.size() > 0)
         {
@@ -902,23 +902,6 @@ shl_ast* shl_parse_value(shl_lexer& lexer)
         return expr;
     }
     default: 
-        if (token.detail->prec > 0) // is operator token
-        {
-            lexer.move(); // eat op token
-
-            shl_ast* expr = shl_parse_expr(lexer);
-            if(!expr)
-            {
-                shl_parse_error(lexer, "Unary operation expected expression");
-                return nullptr;
-            }
-
-            shl_ast* unaryop = new shl_ast();
-            unaryop->type = shl_ast::UNARY_OP;
-            unaryop->token = token;
-            unaryop->children = { expr };
-            return unaryop;
-        }
     break;
     }
     return nullptr;
