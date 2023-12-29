@@ -36,7 +36,7 @@ void lexer_test_file(const char* filename)
 }
 
 // -------------------------- parser -------------------------------------------
-void ast_print_tree(shl_ptr<shl_ast> node, shl_str prefix = "", bool is_leaf = false)
+void ast_print_tree(shl_ptr<shl_ast> node, std::string prefix = "", bool is_leaf = false)
 {
 	static const char* space = "  ";// char(192);
 	static const char* pipe = "| ";// char(192);

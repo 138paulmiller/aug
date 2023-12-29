@@ -26,8 +26,16 @@ void shl_evaluate(const char* filename, const char* compiled_filename);
 #include <iostream>
 #include <sstream>
 #include <list>
-#include <map>
+#include <memory>
 #include <vector>
+
+#ifndef SHL_MAX_TOKEN_LENGTH
+#define SHL_MAX_TOKEN_LENGTH 128
+#endif//SHL_MAX_TOKEN_LENGTH 
+
+#ifndef SHL_COMMENT_SYMBOL
+#define SHL_COMMENT_SYMBOL '#'
+#endif//SHL_COMMENT_SYMBOL 
 
 // -------------------------------------- Core  ---------------------------------------//
 template <class type>
@@ -35,67 +43,6 @@ using shl_list = std::list<type>;
 
 template <class type>
 using shl_array = std::vector<type>;
-
-class shl_str
-{
-public:
-    shl_str();
-    shl_str(int count);
-    shl_str(const char* data, int count = -1);
-    shl_str(const shl_str& other);
-
-    ~shl_str();
-
-    void reserve(int count);
-    void resize(int count);
-    void fill(char c, int count);
-
-    int size() const;
-    int capacity() const;
-    char* bytes();
-    const char* bytes() const;
-
-    char* byte(int i);
-    const char* byte(int i) const;
-
-    void copy(const char* new_bytes, int count = -1);
-    void append(const char* new_bytes, int count = -1);
-    void append(const char new_byte);
-
-    long to_int(int base = 10) const;
-    double to_float() const;
-
-    const shl_str& operator=(const shl_str& other);
-    shl_str operator+(const shl_str& other);
-    const shl_str& operator+=(const shl_str& other);
-
-    bool operator==(const shl_str& other) const;
-    bool operator==(const char* other_bytes) const;
-    int compare(const shl_str& other) const;
-    int compare(const char* other_bytes) const;
-
-protected:
-
-    void _allocate(int count);
-    void _deallocate();
-
-    int* _size();
-    const int* _size() const;
-    int* _capacity();
-    const int* _capacity() const;
-
-private:
-    int* _data; //int,bytes...\0
-};
-
-class filepath_t : public shl_str
-{
-public:
-    void copy(const char* bytes);
-    void fullpath(filepath_t& path) const;
-};
-
-std::ostream& operator<<(std::ostream& os, const shl_str& s);
 
 template <class type_t>
 class shl_ptr
@@ -202,289 +149,6 @@ private:
     int* _ref_count; // shared ref counters
 };
 
-shl_str::shl_str()
-    :_data(nullptr)
-{}
-
-shl_str::shl_str(int count)
-    :_data(nullptr)
-{
-    _allocate(count);
-}
-
-shl_str::shl_str(const char* data, int count)
-    :_data(nullptr)
-{
-    copy(data, count);
-}
-
-shl_str::shl_str(const shl_str& other)
-    : _data(nullptr)
-{
-    if(other.size() > 0)
-        copy(other.bytes(), other.size());
-}
-
-shl_str::~shl_str()
-{
-    _deallocate();
-}
-
-void shl_str::reserve(int count)
-{
-    _deallocate();
-    _allocate(count);
-}
-
-void shl_str::resize(int count)
-{
-    _deallocate();
-    _allocate(count);
-
-    *_size() = count;
-    *byte(count) = '\0';
-}
-
-void shl_str::fill(char c, int count)
-{
-    resize(count);
-    for (int i = 0; i < count; ++i)
-        *byte(i) = c;
-}
-
-int shl_str::size() const
-{
-    const int* s = _size();
-    return s ? *s : 0;
-}
-
-int shl_str::capacity() const
-{
-    const int* c = _capacity();
-    return c ? *c : 0;
-}
-
-char* shl_str::bytes()
-{
-    return (char*)(_data + 2);
-}
-
-const char* shl_str::bytes() const
-{
-    return (const char*)(_data + 2);
-}
-
-char* shl_str::byte(int i)
-{
-    return ((char*)(_data + 2)) + i;
-}
-
-const char* shl_str::byte(int i) const
-{
-    return ((char*)(_data + 2)) + i;
-}
-
-void shl_str::copy(const char* new_bytes, int count)
-{
-    if (count == -1)
-    {
-        count = 0;
-        const char* p = new_bytes;
-        while (p && *p != '\0')
-        {
-            ++count;
-            ++p;
-        }
-    }
-    
-    if (count == 0)
-    {
-        resize(0);
-        return;
-    }
-
-    if (count > size())
-        resize(count);
-
-    for (int i = 0; i < count; ++i)
-        *byte(i) = new_bytes[i];
-
-    char* d = bytes();
-    d[count] = '\0';
-}
-
-void shl_str::append(const char new_byte)
-{
-    shl_str old_str = *this;
-    resize(old_str.size() + 1);
-
-    for (int i = 0; i < old_str.size(); ++i)
-        *byte(i) = *old_str.byte(i);
-
-    *byte(old_str.size()) = new_byte;
-}
-
-void shl_str::append(const char* new_bytes, int count)
-{
-    if (count == -1)
-    {
-        count = 0;
-        const char* p = new_bytes;
-        while (p && *p != '\0')
-        {
-            ++count;
-            ++p;
-        }
-    }
-
-    if (count == 0)
-        return;
-
-    shl_str old_str = *this;
-    resize(old_str.size() + count);
-
-    for (int i = 0; i < old_str.size(); ++i)
-        *byte(i) = *old_str.byte(i);
-
-    for (int i = 0; i < count; ++i)
-        *byte(old_str.size() + i) = new_bytes[i];
-}
-
-long shl_str::to_int(int base) const
-{
-    return strtol(bytes(), nullptr, base);
-}
-
-double shl_str::to_float() const
-{
-    return atof(bytes());
-}
-
-const shl_str& shl_str::operator=(const shl_str& other)
-{
-    this->copy(other.bytes(), other.size());
-    return *this;
-}
-
-shl_str shl_str::operator+(const shl_str& other)
-{
-    shl_str n;
-    n.append(bytes(), size());
-    n.append(other.bytes(), other.size());
-    return n;
-}
-
-const shl_str& shl_str::operator+=(const shl_str& other)
-{
-    append(other.bytes(), other.size());
-    return *this;
-}
-
-bool shl_str::operator==(const shl_str& other) const
-{
-    return compare(other) == 0;
-}
-
-bool shl_str::operator==(const char* other_bytes) const
-{
-    return compare(other_bytes) == 0;
-}
-
-int shl_str::compare(const shl_str& other) const
-{
-    return compare(other.bytes());
-}
-
-int shl_str::compare(const char* other_bytes) const
-{
-    const char* current_bytes = bytes();
-    if(current_bytes == nullptr || other_bytes == nullptr)
-    {
-        return current_bytes - other_bytes;
-    }
-    
-    while (*current_bytes == *other_bytes)
-    {
-        if (*current_bytes == '\0')
-            break;
-        if (*other_bytes == '\0')
-            break;
-
-        ++current_bytes;
-        ++other_bytes;
-    }
-    return *current_bytes - *other_bytes;
-}
-
-void shl_str::_allocate(int count)
-{
-    const int size = count + sizeof(int) * 2;
-    char* new_bytes = new char[size + 1];
-    
-    _data = (int*)new_bytes;
-    
-    *_size() = 0;
-    *_capacity() = count;
-    *bytes() = '\0';
-}
-
-void shl_str::_deallocate()
-{
-    if (_data)
-    {
-        delete[] _data;
-        _data = nullptr;
-    }
-}
-
-int* shl_str::_size() 
-{
-    return _data ? _data : 0;
-}
-
-const int* shl_str::_size() const
-{
-    return _data ? _data : 0;
-}
-
-int* shl_str::_capacity()
-{
-    return _data ? (_data + 1): 0;
-}
-
-const int* shl_str::_capacity() const
-{
-    return _data ? (_data + 1) : 0;
-}
-
-void filepath_t::copy(const char* bytes)
-{
-    int size = 0;
-    while (bytes && *bytes != '\0')
-    {
-        ++size;
-        ++bytes;
-        if (size > FILENAME_MAX)
-            break;
-    }
-    shl_str::copy(bytes, size);
-}
-
-void filepath_t::fullpath(filepath_t& path) const
-{
-    path.resize(FILENAME_MAX);
-
-#ifdef _WIN32
-    GetFullPathNameA(bytes(), path.size(), path.bytes(), nullptr);
-#endif
-}
-
-std::ostream& operator<<(std::ostream& os, const shl_str& s)
-{
-    os << s.bytes();
-    return os;
-}
-
 // -------------------------------------- Lexer  ---------------------------------------// 
 #define SHL_TOKEN_LIST                    \
     /* State */                           \
@@ -571,7 +235,7 @@ struct shl_token
 {
     shl_token_id id;
     const shl_token_detail* detail; 
-    shl_str data;
+    std::string data;
     int line;
     int col;
 };
@@ -600,7 +264,7 @@ private:
     char _peek();
 
     void _start_tracking();
-    void _end_tracking(shl_str& s);
+    void _end_tracking(std::string& s);
 
     void _tokenize(shl_token& tok);
     bool _tokenize_string(shl_token& tok);
@@ -614,7 +278,7 @@ private:
     shl_token _next;
 
     std::istream* _input;
-    filepath_t _inputname;
+    std::string _inputname;
 
     int _line, _col;
     int _prev_line, _prev_col;
@@ -678,11 +342,7 @@ bool shl_lexer::open_file(const char* filename)
     }
 
     _input = file;
-
-    filepath_t temppath;
-    temppath.copy(filename);
-    temppath.fullpath(_inputname);
-
+    _inputname = filename;
     return true;
 }
 
@@ -755,20 +415,22 @@ void shl_lexer::_start_tracking()
     _pos_start = _input->tellg();
 }
 
-void shl_lexer::_end_tracking(shl_str& s)
+void shl_lexer::_end_tracking(std::string& s)
 {
     const std::fstream::iostate state = _input->rdstate();
     _input->clear();
 
     const std::streampos pos_end = _input->tellg();
-    const int pos_len = pos_end - _pos_start;
+    const int len = pos_end - _pos_start;
 
-    s.resize(pos_len);
+    char buffer[SHL_MAX_TOKEN_LENGTH];
 
     _input->seekg(_pos_start);
-    _input->read(s.bytes(), pos_len);
+    _input->read(buffer, len);
     _input->seekg(pos_end);
     _input->clear(state);
+
+    s.assign(buffer, len);
 }
 
 void shl_lexer::_tokenize(shl_token& tok)
@@ -790,8 +452,7 @@ void shl_lexer::_tokenize(shl_token& tok)
     }
 
     // skip comments
-    static const char shl_comment_symbol = '#';
-    if (c == shl_comment_symbol)
+    if (c == SHL_COMMENT_SYMBOL)
     {
         while (c != EOF && c != '\n')
             c = _get();
@@ -984,14 +645,15 @@ bool shl_lexer::_tokenize_label(shl_token& tok)
         c = _get();
     _unget();
 
-    shl_str label;
+    std::string label;
     _end_tracking(label);
 
     // find token id for keyword
     shl_token_id id = shl_token_id::ID;
     for (int i = 0; i < (int)shl_token_id::COUNT; ++i)
     {
-        if (label == shl_token_details[i].keyword)
+        const shl_token_detail& detail = shl_token_details[i];
+        if (detail.keyword && detail.keyword == label)
         {
             id = (shl_token_id)i;
             break;
@@ -1084,12 +746,12 @@ bool shl_lexer::_tokenize_number(shl_token& tok)
         _unget();
     }
 
-    shl_str str;
+    std::string str;
     _end_tracking(str);
 
     if(id == shl_token_id::ERR)
     {
-        _tokenize_error(tok, "invalid numeric format %s", str.bytes());
+        _tokenize_error(tok, "invalid numeric format %s", str.c_str());
         return false;
     }
     
@@ -1101,7 +763,7 @@ bool shl_lexer::_tokenize_number(shl_token& tok)
 void shl_lexer::_tokenize_error(shl_token& tok, const char* format, ...)
 {
     char buffer[2048];
-    int len = snprintf(buffer, 2048, "%s(%d,%d):", _inputname.bytes(), _line, _col);
+    int len = snprintf(buffer, 2048, "%s(%d,%d):", _inputname.c_str(), _line, _col);
 
     va_list argptr;
     va_start(argptr, format);
@@ -1483,7 +1145,7 @@ public:
     bool check_flag(shl_ir_flags bit) const { return (flags & bit) != 0;}
     void set_flag(shl_ir_flags bit) { flags |= bit; }
 
-    shl_str data;
+    std::string data;
     uint16_t flags;
 };
 
@@ -1497,7 +1159,7 @@ public:
 class shl_ir_block
 {
 public:
-    shl_str label;
+    std::string label;
     shl_list<shl_ir_operation> operations;
 };
 
@@ -1515,7 +1177,7 @@ public:
     shl_ptr<shl_ir_module> get_module();
 
 
-    void push_block(const shl_str& label);
+    void push_block(const std::string& label);
     void pop_block(); 
 
     void add_operation(shl_opcode opcode);
@@ -1539,14 +1201,14 @@ shl_ptr<shl_ir_module> shl_ir_builder::get_module()
     return _module;
 }
 
-void shl_ir_builder::push_block(const shl_str& label)
+void shl_ir_builder::push_block(const std::string& label)
 {
     if(label.size() == 0)
     {
         const std::string& generated_label = "L" + std::to_string(_generated_label_count++);
 
         shl_ir_block block;
-        block.label = shl_str(generated_label.c_str(), generated_label.size());
+        block.label = std::string(generated_label.c_str(), generated_label.size());
         _block_stack.push_back(block);
     }
     else
