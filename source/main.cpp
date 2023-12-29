@@ -8,7 +8,7 @@
 
 void lexer_print_token(const shl_token& token)
 {
-	std::cout << token.detail->label  << token.line << ',' << token.col << ":" << "(" << token.data << ")";
+	std::cout << token.detail->label << "(" << token.data << ") " << token.line << ':' << token.col;
 }
 
 void lexer_test_file(const char* filename)
@@ -36,7 +36,7 @@ void lexer_test_file(const char* filename)
 }
 
 // -------------------------- parser -------------------------------------------
-void ast_print_tree(shl_ptr<shl_ast> node, std::string prefix = "", bool is_leaf = false)
+void ast_print_tree(shl_ast* node, std::string prefix = "", bool is_leaf = false)
 {
 	static const char* space = "  ";// char(192);
 	static const char* pipe = "| ";// char(192);
@@ -56,7 +56,7 @@ void ast_print_tree(shl_ptr<shl_ast> node, std::string prefix = "", bool is_leaf
 	}
 
 	const shl_token& token = node->token;
-    const shl_array<shl_ptr<shl_ast>>& children = node->children;
+    const shl_array<shl_ast*>& children = node->children;
 
 	switch(node->type)
 	{
@@ -104,7 +104,7 @@ void ast_print_tree(shl_ptr<shl_ast> node, std::string prefix = "", bool is_leaf
 	}
 }
 
-void ir_print(const shl_ptr<shl_ir_module>& module)
+void ir_print(const shl_ir_module* module)
 {
 	std::cout << "IR\n";
 	for(const shl_ir_block& block : module->blocks)
@@ -122,9 +122,9 @@ void ir_print(const shl_ptr<shl_ir_module>& module)
 
 void run_test(const char* filename)
 {
-	//lexer_test_file(filename);
+	lexer_test_file(filename);
 
-	shl_ptr<shl_ast> root = shl_parse_file(filename);
+	shl_ast* root = shl_parse_file(filename);
 	if(root == nullptr)
 	{
 		std::cerr << "Failed to generate AST";
@@ -136,8 +136,10 @@ void run_test(const char* filename)
 
 	shl_ir_builder builder;
 	shl_ast_to_ir(root, &builder);
-	shl_ptr<shl_ir_module> module = builder.get_module();
-	if(module.get() == nullptr)
+	delete root;
+
+	shl_ir_module* module = builder.get_module();
+	if(module == nullptr)
 	{
 		std::cerr << "Failed to generate IR";
 		return;
