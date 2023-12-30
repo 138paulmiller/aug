@@ -15,16 +15,18 @@ void lexer_test_file(const char* filename)
 {
 	std::cout << "Tokenizing\t" << filename << "\n";
 	shl_lexer lexer;
-	lexer.open_file(filename);
-	while (lexer.move())
+	shl_lexer_open_file(lexer, filename);
+	while (shl_lexer_move(lexer))
 	{
 		std::cout << "\tcurr ";
-		lexer_print_token(lexer.curr());
+		lexer_print_token(lexer.curr);
 		std::cout << "\n";
 
-		if (lexer.curr().id == shl_token_id::NONE)
+		if (lexer.curr.id == SHL_TOKEN_END)
 			break;
 	}
+    shl_lexer_close(lexer);
+
 	std::cout << "Done\n";
 }
 
@@ -51,48 +53,48 @@ void ast_print_tree(shl_ast* node, std::string prefix = "", bool is_leaf = false
 	const shl_token& token = node->token;
     const shl_array<shl_ast*>& children = node->children;
 
-	switch(node->type)
+	switch(node->id)
 	{
-		case shl_ast::ROOT:
+		case SHL_AST_ROOT:
 			std::cout << "ROOT";
 			assert(children.size()==1);
 			ast_print_tree(children[0], "\n", true);
 			std::cout << "\n";
 		break;
-		case shl_ast::BLOCK:
+		case SHL_AST_BLOCK:
 			std::cout << "BLOCK";
 			for (size_t i = 0; i < children.size(); ++i)
 				ast_print_tree(children[i], prefix, i == children.size()-1);
 		break;
-		case shl_ast::ASSIGN:
+		case SHL_AST_ASSIGN:
 			std::cout << "ASSIGN:" << token.data;
 			assert(children.size()==1);
 			ast_print_tree(children[0], prefix, true);
 		break;
-		case shl_ast::UNARY_OP:
+		case SHL_AST_UNARY_OP:
 			std::cout << token.detail->label;
 			assert(children.size()==1);
 			ast_print_tree(children[0], prefix, true);
 		break;
-		case shl_ast::BINARY_OP:
+		case SHL_AST_BINARY_OP:
 			std::cout << token.detail->label;
 			assert(children.size()==2);
 			ast_print_tree(children[0], prefix, false);
 			ast_print_tree(children[1], prefix, true);
 		break;
 
-		case shl_ast::FUNC_CALL:
+		case SHL_AST_FUNC_CALL:
 			std::cout << "FUNCCALL:" << token.data;
 			for (size_t i = 0; i < children.size(); ++i)
 				ast_print_tree(children[i], prefix, i == children.size()-1);
 		break;
-		case shl_ast::VARIABLE:
-		case shl_ast::LITERAL:
+		case SHL_AST_VARIABLE:
+		case SHL_AST_LITERAL:
 			std::cout << token.data;
 		break;
-		case shl_ast::FUNC_DEF:
+		case SHL_AST_FUNC_DEF:
 		break;
-		case shl_ast::PARAM:
+		case SHL_AST_PARAM:
 		break;
 	}
 }
@@ -106,8 +108,7 @@ void ir_print(const shl_ir_module* module)
 		for(const shl_ir_operation& operation : block.operations)
 		{
 			std::cout << '\t' << shl_opcode_labels[(int)operation.opcode];
-			if(operation.operand.valid())
-				std::cout << ' ' << operation.operand.data;
+			std::cout << ' ' << operation.operand.data;
 			std::cout << '\n';
 		}
 	}
@@ -131,7 +132,7 @@ void run_test(const char* filename)
 
 	shl_ir_builder builder;
 	shl_ast_to_ir(root, &builder);
-	delete root;
+	shl_ast_delete(root);
 
 	shl_ir_module* module = builder.get_module();
 	if(module == nullptr)
