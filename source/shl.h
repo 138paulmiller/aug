@@ -8,21 +8,20 @@
 /*
     TODO: 
     - Semantic Pass: check variable, function, field names, check binary/unary ops
+    - Framework - Add filewatchers to recompile if source file changed.
+    - VM - Execcute just compiled bytecode
 */
 
 //void shl_register(const char* function_signature, shl_callback callback);
 //void shl_unregister(const char* function_signature);
 
 //void shl_compile(const char* filename, const char* compiled_filename);
-void shl_evaluate(const char* filename, const char* compiled_filename);
+void shl_execute(const char* filename); 
+void shl_evaluate(const char* code);
 
 #endif //__SHL_HEADER__
 
 #if defined(SHL_IMPLEMENTATION)
-
-#ifdef _WIN32
-#include <windows.h>
-#endif 
 
 #include <cassert>
 #include <cstdarg>
@@ -33,15 +32,6 @@ void shl_evaluate(const char* filename, const char* compiled_filename);
 #include <list>
 #include <memory>
 #include <vector>
-
-
-#ifndef __SHL_FUNCTION_NAME__
-    #ifdef WIN32
-        #define __SHL_FUNCTION_NAME__  __FUNCTION__  
-    #else
-        #define __SHL_FUNCTION_NAME__  __func__ 
-    #endif
-#endif
 
 #ifndef SHL_TOKEN_BUFFER_LEN
     #define SHL_TOKEN_BUFFER_LEN 128
@@ -55,12 +45,22 @@ void shl_evaluate(const char* filename, const char* compiled_filename);
     #define SHL_LOG_PRELUDE "[SHL]"
 #endif//SHL_LOG_PRELUDE 
 
-#define shl_log_error(...)\
-{\
-    fprintf(stderr, "[%s:%d]", __SHL_FUNCTION_NAME__, __LINE__);\
-    fprintf(stderr, SHL_LOG_PRELUDE "Error: ");\
-    fprintf(stderr, __VA_ARGS__);\
-    fprintf(stderr, "\n");\
+#ifdef SHL_LOG_VERBOSE
+    #ifdef WIN32
+        #define shl_log_trace() fprintf(stderr, "[%s:%d]", __FUNCTION__, __LINE__);
+    #else
+        #define shl_log_trace() fprintf(stderr, "[%s:%d]", __func__, __LINE__);
+    #endif  
+#else 
+    #define shl_log_trace()   
+#endif
+
+#define shl_log_error(...)                             \
+{                                                      \
+    shl_log_trace()                                    \
+    fprintf(stderr, SHL_LOG_PRELUDE "Error: ");        \
+    fprintf(stderr, __VA_ARGS__);                      \
+    fprintf(stderr, "\n");                             \
 }
 
 // -------------------------------------- Core  ---------------------------------------//
@@ -138,9 +138,9 @@ enum shl_token_id : uint8_t
 struct shl_token_detail
 {
     const char* label;    // the string representation, used for visualization and debugging
-    char prec;        // if the token is an operator, this is the precedence (note: higher values take precendece)
-    int  argc;       // if the token is an operator, this is the number of operands
-    bool capture;     // if non-zero, the token will contain the source string value (i.e. integer and string literals)
+    char prec;            // if the token is an operator, this is the precedence (note: higher values take precendece)
+    int  argc;            // if the token is an operator, this is the number of operands
+    bool capture;         // if non-zero, the token will contain the source string value (i.e. integer and string literals)
     const char* keyword;  // if non-null, the token must match the provided keyword
 };
 
@@ -164,6 +164,7 @@ struct shl_token
     int col;
 };
 
+// Lexer state
 struct shl_lexer
 {
     shl_token prev;
@@ -653,6 +654,13 @@ bool shl_lexer_open_file(shl_lexer& lexer, const char* filename)
 }
 
 // -------------------------------------- Parser ---------------------------------------// 
+
+#define shl_parse_error(lexer,  ...)\
+{\
+    shl_log_error("Syntax error %s(%d,%d)", lexer.inputname.c_str(), lexer.line, lexer.col);\
+    shl_log_error(__VA_ARGS__);\
+}
+
 enum shl_ast_id : uint8_t
 {
     SHL_AST_ROOT,
@@ -687,12 +695,6 @@ void shl_ast_delete(shl_ast* node)
     for(shl_ast* child : node->children)
         shl_ast_delete(child);
     delete node;
-}
-
-#define shl_parse_error(lexer,  ...)\
-{\
-    shl_log_error("Syntax error %s(%d,%d)", lexer.inputname.c_str(), lexer.line, lexer.col);\
-    shl_log_error(__VA_ARGS__);\
 }
 
 bool shl_parse_expr_pop(shl_lexer& lexer,  shl_list<shl_token>&op_stack, shl_list<shl_ast*>& expr_stack)
@@ -1024,18 +1026,18 @@ static const char* shl_opcode_labels[] =
 
 #undef SHL_OPCODE_LIST
 
-enum shl_ir_flags : uint16_t
+enum shl_ir_operand_flags : uint16_t
 {
-    // scope
-    CONST = 1, 
-    LOCAL = 1 << 2,
-    GLOBAL = 1 << 3,
-    // if constant, type of literal
-    DECIMAL = 1 << 4,
-    HEXIDECIMAL = 1 << 5,
-    BINARY = 1 << 6,
-    FLOAT = 1 << 7, 
-    STRING = 1 << 8, 
+    // operand scope
+    SHL_IR_OPERAND_CONST = 1, 
+    SHL_IR_OPERAND_LOCAL = 1 << 2,
+    SHL_IR_OPERAND_GLOBAL = 1 << 3,
+    // type if operand is constant or literal
+    SHL_IR_OPERAND_DECIMAL = 1 << 4,
+    SHL_IR_OPERAND_HEXIDECIMAL = 1 << 5,
+    SHL_IR_OPERAND_BINARY = 1 << 6,
+    SHL_IR_OPERAND_FLOAT = 1 << 7, 
+    SHL_IR_OPERAND_STRING = 1 << 8, 
 };
 
 struct shl_ir_operand
@@ -1056,77 +1058,59 @@ struct shl_ir_block
     shl_list<shl_ir_operation> operations;
 };
 
+// All the blocks within a compilation/translation unit (i.e. file, code literal)
 struct shl_ir_module
 {
     shl_list<shl_ir_block> blocks;
 };
 
-class shl_ir_builder
-{
-public:
-    ~shl_ir_builder() { delete _module; }
-
-    void new_module();
-    shl_ir_module* get_module() { return _module; }
-
-    void push_block(const std::string& label);
-    void pop_block(); 
-
-    void add_operation(shl_opcode opcode);
-    void add_operation(shl_opcode opcode, const shl_ir_operand& param);
-
-private:		
-    shl_ir_module* _module = nullptr; 
-    shl_list<shl_ir_block> _block_stack; 
-    int _generated_label_count;
+// IR Module Builder
+struct shl_ir
+{		
+    shl_ir_module module;
+    shl_list<shl_ir_block> block_stack; 
+    int generated_label_count = 0;
 };
 
-void shl_ir_builder::new_module()
-{
-    delete _module;
-    _module = new shl_ir_module();
-    _generated_label_count = 0;
-    _block_stack.clear(); 
-}
-
-void shl_ir_builder::push_block(const std::string& label)
+void shl_ir_push_block(shl_ir& ir, std::string label)
 {
     if(label.size() == 0)
     {
-        const std::string& generated_label = "L" + std::to_string(_generated_label_count++);
+        const std::string& generated_label = "L" + std::to_string(ir.generated_label_count++);
 
         shl_ir_block block;
         block.label = std::string(generated_label.c_str(), generated_label.size());
-        _block_stack.push_back(block);
+        ir.block_stack.push_back(block);
     }
     else
     {
         shl_ir_block block;
         block.label = label;
-        _block_stack.push_back(block);
+        ir.block_stack.push_back(block);
     }
 }
 
-void shl_ir_builder::pop_block()
+void shl_ir_pop_block(shl_ir& ir)
 {
-    assert(_module != nullptr && _block_stack.size() > 0);
-    _module->blocks.push_front(_block_stack.back());
-    _block_stack.pop_back();
+    assert(ir.block_stack.size() > 0);
+    ir.module.blocks.push_front(ir.block_stack.back());
+    ir.block_stack.pop_back();
 }
 
-void shl_ir_builder::add_operation(shl_opcode opcode)
-{
-    shl_ir_operand operand;
-    add_operation(opcode, operand);
-}
-
-void shl_ir_builder::add_operation(shl_opcode opcode, const shl_ir_operand& operand)
+void shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_ir_operand& operand)
 {
     shl_ir_operation operation;
     operation.opcode = opcode;
     operation.operand = operand;
-    _block_stack.back().operations.push_back(std::move(operation));
+    ir.block_stack.back().operations.push_back(std::move(operation));
 }
+
+void shl_ir_add_operation(shl_ir& ir, shl_opcode opcode)
+{
+    shl_ir_operand operand;
+    shl_ir_add_operation(ir, opcode, operand);
+}
+
 // -------------------------------------- Passes ---------------------------------------// 
 
 bool shl_pass_semantic_check(const shl_ast* node)
@@ -1137,7 +1121,7 @@ bool shl_pass_semantic_check(const shl_ast* node)
 }
 
 // -------------------------------------- Transformations ---------------------------------------// 
-void shl_ast_to_ir(const shl_ast* node, shl_ir_builder* ir)
+void shl_ast_to_ir(const shl_ast* node, shl_ir& ir)
 {
     if(!shl_pass_semantic_check(node))
         return;
@@ -1149,14 +1133,13 @@ void shl_ast_to_ir(const shl_ast* node, shl_ir_builder* ir)
     {
         case SHL_AST_ROOT:
             assert(children.size() == 1);
-            ir->new_module();
             shl_ast_to_ir(children[0], ir);
             break;
         case SHL_AST_BLOCK: 
-            ir->push_block("");
+            shl_ir_push_block(ir, "");
             for (shl_ast* stmt : children)
                 shl_ast_to_ir(stmt, ir);
-            ir->pop_block();
+            shl_ir_pop_block(ir);
             break;
         case SHL_AST_ASSIGN:
             //TODO
@@ -1166,25 +1149,25 @@ void shl_ast_to_ir(const shl_ast* node, shl_ir_builder* ir)
         {
             shl_ir_operand operand;
             operand.data = token.data;
-            operand.flags = shl_ir_flags::CONST;
+            operand.flags = SHL_IR_OPERAND_CONST;
             switch(token.id)
             {
-                case SHL_TOKEN_DECIMAL:     operand.flags |= shl_ir_flags::DECIMAL;     break;
-                case SHL_TOKEN_HEXIDECIMAL: operand.flags |= shl_ir_flags::HEXIDECIMAL; break;
-                case SHL_TOKEN_BINARY:      operand.flags |= shl_ir_flags::BINARY;      break;
-                case SHL_TOKEN_FLOAT:       operand.flags |= shl_ir_flags::FLOAT;       break;
-                case SHL_TOKEN_STRING:      operand.flags |= shl_ir_flags::STRING;      break;
+                case SHL_TOKEN_DECIMAL:     operand.flags |= SHL_IR_OPERAND_DECIMAL;     break;
+                case SHL_TOKEN_HEXIDECIMAL: operand.flags |= SHL_IR_OPERAND_HEXIDECIMAL; break;
+                case SHL_TOKEN_BINARY:      operand.flags |= SHL_IR_OPERAND_BINARY;      break;
+                case SHL_TOKEN_FLOAT:       operand.flags |= SHL_IR_OPERAND_FLOAT;       break;
+                case SHL_TOKEN_STRING:      operand.flags |= SHL_IR_OPERAND_STRING;      break;
                 default: break;
             }
-            ir->add_operation(shl_opcode::PUSH, operand);
+            shl_ir_add_operation(ir, shl_opcode::PUSH, operand);
             break;
         }
         case SHL_AST_VARIABLE:
         {
             shl_ir_operand operand;
             operand.data = token.data;
-            operand.flags = shl_ir_flags::LOCAL;
-            ir->add_operation(shl_opcode::PUSH, operand);
+            operand.flags = SHL_IR_OPERAND_LOCAL;
+            shl_ir_add_operation(ir, shl_opcode::PUSH, operand);
             break;
         }
         case SHL_AST_UNARY_OP:
@@ -1194,7 +1177,7 @@ void shl_ast_to_ir(const shl_ast* node, shl_ir_builder* ir)
 
             switch(token.id)
             {
-                case SHL_TOKEN_NOT: ir->add_operation(shl_opcode::NOT); break;
+                case SHL_TOKEN_NOT: shl_ir_add_operation(ir, shl_opcode::NOT); break;
                 default: break;
             }
             break;
@@ -1207,10 +1190,10 @@ void shl_ast_to_ir(const shl_ast* node, shl_ir_builder* ir)
 
             switch(token.id)
             {
-                case SHL_TOKEN_ADD: ir->add_operation(shl_opcode::ADD); break;
-                case SHL_TOKEN_SUB: ir->add_operation(shl_opcode::SUB); break;
-                case SHL_TOKEN_MUL: ir->add_operation(shl_opcode::MUL); break;
-                case SHL_TOKEN_DIV: ir->add_operation(shl_opcode::DIV); break;
+                case SHL_TOKEN_ADD: shl_ir_add_operation(ir, shl_opcode::ADD); break;
+                case SHL_TOKEN_SUB: shl_ir_add_operation(ir, shl_opcode::SUB); break;
+                case SHL_TOKEN_MUL: shl_ir_add_operation(ir, shl_opcode::MUL); break;
+                case SHL_TOKEN_DIV: shl_ir_add_operation(ir, shl_opcode::DIV); break;
                 default: break;
             }
             break;
@@ -1222,8 +1205,8 @@ void shl_ast_to_ir(const shl_ast* node, shl_ir_builder* ir)
 
             shl_ir_operand operand;
             operand.data = token.data;
-            operand.flags = shl_ir_flags::STRING;
-            ir->add_operation(shl_opcode::CALL, operand);
+            operand.flags = SHL_IR_OPERAND_STRING;
+            shl_ir_add_operation(ir, shl_opcode::CALL, operand);
             break;
         }
         case SHL_AST_FUNC_DEF:
@@ -1239,9 +1222,16 @@ void shl_ast_to_ir(const shl_ast* node, shl_ir_builder* ir)
     }
 }
 
-void shl_evaluate(const char* filename, const char* compiled_filename)
+void shl_execute(const char* filename)
 {
     //TODO: compile to byte code chunk, then pass to VM
+
+}
+
+void shl_evaluate(const char* code)
+{
+    //TODO: compile to byte code chunk, then pass to VM
+
 }
 
 #endif

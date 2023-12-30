@@ -1,4 +1,5 @@
 #define SHL_IMPLEMENTATION
+#define SHL_LOG_VERBOSE
 #include "shl.h"
 
 #ifdef  _WIN32
@@ -99,10 +100,10 @@ void ast_print_tree(shl_ast* node, std::string prefix = "", bool is_leaf = false
 	}
 }
 
-void ir_print(const shl_ir_module* module)
+void ir_print(const shl_ir_module& module)
 {
 	std::cout << "IR\n";
-	for(const shl_ir_block& block : module->blocks)
+	for(const shl_ir_block& block : module.blocks)
 	{
 		std::cout << block.label << ":\n";
 		for(const shl_ir_operation& operation : block.operations)
@@ -130,18 +131,11 @@ void run_test(const char* filename)
 	std::cout << "AST\n";
 	ast_print_tree(root);
 
-	shl_ir_builder builder;
-	shl_ast_to_ir(root, &builder);
+	shl_ir ir;
+	shl_ast_to_ir(root, ir);
 	shl_ast_delete(root);
 
-	shl_ir_module* module = builder.get_module();
-	if(module == nullptr)
-	{
-		std::cerr << "Failed to generate IR";
-		return;
-	}
-
-	ir_print(module);
+	ir_print(ir.module);
 }
 
 int main(int argc, char** argv)
