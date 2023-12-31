@@ -15,9 +15,11 @@ void lexer_print_token(const shl_token& token)
 void lexer_test_file(const char* filename)
 {
 	std::cout << "Tokenizing\t" << filename << "\n";
+
+	shl_environment env;
 	shl_lexer lexer;
-	shl_lexer_open_file(lexer, filename);
-	while (shl_lexer_move(lexer))
+	shl_lexer_open_file(env, lexer, filename);
+	while (shl_lexer_move(env, lexer))
 	{
 		std::cout << "\tcurr ";
 		lexer_print_token(lexer.curr);
@@ -121,7 +123,8 @@ void run_test(const char* filename)
 
 	//lexer_test_file(filename);
 
-	shl_ast* root = shl_parse_file(filename);
+	shl_environment env;
+	shl_ast* root = shl_parse_file(env, filename);
 	if(root == nullptr)
 	{
 		std::cerr << "Failed to generate AST";
@@ -136,6 +139,9 @@ void run_test(const char* filename)
 	shl_ast_delete(root);
 
 	ir_print(ir.module);
+
+	shl_environment env2;
+	shl_execute(env2, filename);
 }
 
 int main(int argc, char** argv)

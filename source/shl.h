@@ -3,21 +3,74 @@
 /*
     Single Header Language 
     Author: 138paulmiller
-*/
 
-/*
-    TODO: 
-    - Semantic Pass: check variable, function, field names, check binary/unary ops
+    Todo: 
+    - Parsing - statement, assignment, object, func dec
+    - Semantic Pass- check variable, function, field names, check binary/unary ops
     - Framework - Add filewatchers to recompile if source file changed.
-    - VM - Execcute just compiled bytecode
+    - VM - Execute compiled bytecode from file
 */
 
-//void shl_register(const char* function_signature, shl_callback callback);
-//void shl_unregister(const char* function_signature);
+#include <functional>
+#include <list>
+#include <string>
+#include <vector>
+#include <unordered_map>
 
-//void shl_compile(const char* filename, const char* compiled_filename);
-void shl_execute(const char* filename); 
-void shl_evaluate(const char* code);
+using shl_string = std::string;
+
+template <class type>
+using shl_list = std::list<type>;
+
+template <class type>
+using shl_array = std::vector<type>;
+
+template <class key, class type>
+using shl_map = std::unordered_map<key, type>;
+
+using shl_error_callback = std::function<void(const char* /*msg*/)>;
+using shl_function_callback = std::function<void(const shl_list<class shl_value*>& /*args*/)>;
+
+enum shl_type
+{
+    SHL_INT, 
+    SHL_FLOAT, 
+    SHL_STRING, 
+    SHL_BOOL, 
+    SHL_OBJECT
+};
+
+struct shl_value
+{
+    shl_type type;
+    union 
+    {
+        long i; 
+        double f;
+        const char* str;
+        class shl_object* obj;
+    };
+};
+
+struct shl_object
+{
+    shl_map<const char*, shl_value> map;
+};
+
+struct shl_environment
+{
+    // user defined functions
+    shl_map<const char*, shl_function_callback> function_callbacks;
+    shl_error_callback error_callback;
+};
+
+//void shl_register(shl_environment& environment, const char* function_signature, shl_function_callback callback); //TODO parse the func types ? 
+//void shl_unregister(shl_environment& environment, const char* function_signature);
+
+//void shl_compile(shl_environment& environment, const char* filename, const char* compiled_filename);
+
+void shl_execute(shl_environment& env, const char* filename);
+void shl_evaluate(shl_environment& env, const char* code);
 
 #endif //__SHL_HEADER__
 
@@ -29,13 +82,20 @@ void shl_evaluate(const char* code);
 #include <fstream>
 #include <iostream>
 #include <sstream>
-#include <list>
 #include <memory>
-#include <vector>
 
 #ifndef SHL_TOKEN_BUFFER_LEN
     #define SHL_TOKEN_BUFFER_LEN 128
 #endif//SHL_TOKEN_BUFFER_LEN 
+
+#ifndef SHL_BYTECODE_CHUNK_SIZE
+    #define SHL_BYTECODE_CHUNK_SIZE (1024 * 2)
+#endif//SHL_BYTECODE_CHUNK_SIZE
+
+
+#ifndef SHL_STACK_SIZE
+    #define SHL_STACK_SIZE (4096 * 4)
+#endif//SHL_STACK_SIZE
 
 #ifndef SHL_COMMENT_SYMBOL
     #define SHL_COMMENT_SYMBOL '#'
@@ -47,28 +107,26 @@ void shl_evaluate(const char* code);
 
 #ifdef SHL_LOG_VERBOSE
     #ifdef WIN32
-        #define shl_log_trace() fprintf(stderr, "[%s:%d]", __FUNCTION__, __LINE__);
+        #define SHL_LOG_TRACE() fprintf(stderr, "[%s:%d]", __FUNCTION__, __LINE__);
     #else
-        #define shl_log_trace() fprintf(stderr, "[%s:%d]", __func__, __LINE__);
+        #define SHL_LOG_TRACE() fprintf(stderr, "[%s:%d]", __func__, __LINE__);
     #endif  
 #else 
-    #define shl_log_trace()   
+    #define SHL_LOG_TRACE()   
 #endif
 
-#define shl_log_error(...)                             \
+#define SHL_LOG_ERROR(env, ...)                        \
 {                                                      \
-    shl_log_trace()                                    \
+    SHL_LOG_TRACE()                                    \
     fprintf(stderr, SHL_LOG_PRELUDE "Error: ");        \
     fprintf(stderr, __VA_ARGS__);                      \
     fprintf(stderr, "\n");                             \
+                                                                            \
+    char buffer[2048];                                                      \
+    int len = snprintf(buffer, sizeof(buffer), SHL_LOG_PRELUDE "Error: ");  \
+    len = snprintf(buffer + len, sizeof(buffer) - len, __VA_ARGS__);        \
+    env.error_callback(buffer);                                             \
 }
-
-// -------------------------------------- Core  ---------------------------------------//
-template <class type>
-using shl_list = std::list<type>;
-
-template <class type>
-using shl_array = std::vector<type>;
 
 // -------------------------------------- Lexer  ---------------------------------------// 
 #define SHL_TOKEN_LIST                           \
@@ -159,7 +217,7 @@ struct shl_token
 {
     shl_token_id id;
     const shl_token_detail* detail; 
-    std::string data;
+    shl_string data;
     int line;
     int col;
 };
@@ -172,12 +230,21 @@ struct shl_lexer
     shl_token next;
 
     std::istream* input = nullptr;
-    std::string inputname;
+    shl_string inputname;
 
     int line, col;
     int prev_line, prev_col;
     std::streampos pos_start;
 };
+
+#define SHL_LEXER_ERROR(env, lexer, token, ...)          \
+{                                                        \
+    token.id = SHL_TOKEN_ERR;                            \
+                                                         \
+    SHL_LOG_ERROR(env, "%s(%d,%d):",                     \
+        lexer.inputname.c_str(), lexer.line, lexer.col); \
+    SHL_LOG_ERROR(env, __VA_ARGS__);                     \
+}
 
 char shl_lexer_get(shl_lexer& lexer)
 {
@@ -216,7 +283,7 @@ void shl_lexer_start_tracking(shl_lexer& lexer)
     lexer.pos_start = lexer.input->tellg();
 }
 
-void shl_lexer_end_tracking(shl_lexer& lexer, std::string& s)
+void shl_lexer_end_tracking(shl_lexer& lexer, shl_string& s)
 {
     const std::fstream::iostate state = lexer.input->rdstate();
     lexer.input->clear();
@@ -234,21 +301,7 @@ void shl_lexer_end_tracking(shl_lexer& lexer, std::string& s)
     s.assign(buffer, len);
 }
 
-void shl_lexer_tokenize_error(shl_lexer& lexer, shl_token& token, const char* format, ...)
-{
-    char buffer[2048];
-    int len = snprintf(buffer, 2048, "%s(%d,%d):", lexer.inputname.c_str(), lexer.line, lexer.col);
-
-    va_list argptr;
-    va_start(argptr, format);
-    len += vsnprintf(buffer+len, 2048, format, argptr);
-    va_end(argptr);
-
-    token.id = SHL_TOKEN_ERR;
-    token.data.copy(buffer, len);
-}
-
-bool shl_lexer_tokenize_string(shl_lexer& lexer, shl_token& token)
+bool shl_lexer_tokenize_string(shl_environment& env, shl_lexer& lexer, shl_token& token)
 {
     shl_lexer_start_tracking(lexer);
 
@@ -264,7 +317,7 @@ bool shl_lexer_tokenize_string(shl_lexer& lexer, shl_token& token)
         c = shl_lexer_get(lexer);
         if (c == EOF)
         {
-            shl_lexer_tokenize_error(lexer, token, "string literal missing closing \"");
+            SHL_LEXER_ERROR(env, lexer, token, "string literal missing closing \"");
             return false;
         }
 
@@ -280,7 +333,7 @@ bool shl_lexer_tokenize_string(shl_lexer& lexer, shl_token& token)
                 break;
             default:
             {
-                shl_lexer_tokenize_error(lexer, token, "invalid escape character \\%c", c);
+                SHL_LEXER_ERROR(env, lexer, token, "invalid escape character \\%c", c);
                 while (c != '\"')
                 {
                     if (c == EOF)
@@ -299,8 +352,10 @@ bool shl_lexer_tokenize_string(shl_lexer& lexer, shl_token& token)
     return true;
 }
 
-bool shl_lexer_tokenize_symbol(shl_lexer& lexer, shl_token& token)
+bool shl_lexer_tokenize_symbol(shl_environment& env, shl_lexer& lexer, shl_token& token)
 {
+    (void)env;
+
     shl_token_id id = SHL_TOKEN_ERR;
 
     char c = shl_lexer_get(lexer);
@@ -384,8 +439,10 @@ bool shl_lexer_tokenize_symbol(shl_lexer& lexer, shl_token& token)
     return true;
 }
 
-bool shl_lexer_tokenize_label(shl_lexer& lexer, shl_token& token)
+bool shl_lexer_tokenize_label(shl_environment& env, shl_lexer& lexer, shl_token& token)
 {
+    (void)env;
+
     shl_lexer_start_tracking(lexer);
 
     char c = shl_lexer_get(lexer);
@@ -399,7 +456,7 @@ bool shl_lexer_tokenize_label(shl_lexer& lexer, shl_token& token)
         c = shl_lexer_get(lexer);
     shl_lexer_unget(lexer);
 
-    std::string label;
+    shl_string label;
     shl_lexer_end_tracking(lexer, label);
 
     // find token id for keyword
@@ -420,7 +477,7 @@ bool shl_lexer_tokenize_label(shl_lexer& lexer, shl_token& token)
     return true;
 }
 
-bool shl_lexer_tokenize_number(shl_lexer& lexer, shl_token& token)
+bool shl_lexer_tokenize_number(shl_environment& env, shl_lexer& lexer, shl_token& token)
 {    
     shl_lexer_start_tracking(lexer);
 
@@ -500,12 +557,12 @@ bool shl_lexer_tokenize_number(shl_lexer& lexer, shl_token& token)
         shl_lexer_unget(lexer);
     }
 
-    std::string str;
+    shl_string str;
     shl_lexer_end_tracking(lexer, str);
 
     if(id == SHL_TOKEN_ERR)
     {
-        shl_lexer_tokenize_error(lexer, token, "invalid numeric format %s", str.c_str());
+        SHL_LEXER_ERROR(env, lexer, token, "invalid numeric format %s", str.c_str());
         return false;
     }
     
@@ -514,7 +571,7 @@ bool shl_lexer_tokenize_number(shl_lexer& lexer, shl_token& token)
     return true;
 }
 
-shl_token shl_lexer_tokenize(shl_lexer& lexer)
+shl_token shl_lexer_tokenize(shl_environment& env, shl_lexer& lexer)
 {
     shl_token token;
 
@@ -568,21 +625,21 @@ shl_token shl_lexer_tokenize(shl_lexer& lexer)
     case '.': 
     case '+':
     case '-':
-        if (!shl_lexer_tokenize_number(lexer, token))
-            shl_lexer_tokenize_symbol(lexer, token);
+        if (!shl_lexer_tokenize_number(env, lexer, token))
+            shl_lexer_tokenize_symbol(env, lexer, token);
         break;
     case '\"':
-        shl_lexer_tokenize_string(lexer, token);
+        shl_lexer_tokenize_string(env, lexer, token);
         break;
     default:
-        if (shl_lexer_tokenize_symbol(lexer, token))
+        if (shl_lexer_tokenize_symbol(env, lexer, token))
             break;
-        if(shl_lexer_tokenize_label(lexer, token))
+        if(shl_lexer_tokenize_label(env, lexer, token))
             break;
-        if (shl_lexer_tokenize_number(lexer, token))
+        if (shl_lexer_tokenize_number(env, lexer, token))
             break;
 
-        shl_lexer_tokenize_error(lexer, token, "invalid character % c", c);
+        SHL_LEXER_ERROR(env, lexer, token, "invalid character % c", c);
         break;
     }
 
@@ -590,14 +647,14 @@ shl_token shl_lexer_tokenize(shl_lexer& lexer)
     return token;
 }
 
-bool shl_lexer_move(shl_lexer& lexer)
+bool shl_lexer_move(shl_environment& env, shl_lexer& lexer)
 {
     if (lexer.next.id == SHL_TOKEN_NONE)
-        lexer.next = shl_lexer_tokenize(lexer);        
+        lexer.next = shl_lexer_tokenize(env, lexer);        
 
     lexer.prev = lexer.curr; 
     lexer.curr = lexer.next;
-    lexer.next = shl_lexer_tokenize(lexer);
+    lexer.next = shl_lexer_tokenize(env, lexer);
 
     return lexer.curr.id != SHL_TOKEN_NONE;
 }
@@ -619,47 +676,41 @@ void shl_lexer_close(shl_lexer& lexer)
     lexer.next = shl_token();
 }
 
-bool shl_lexer_open(shl_lexer& lexer, const char* code)
+bool shl_lexer_open(shl_environment& env, shl_lexer& lexer, const char* code)
 {
     shl_lexer_close(lexer);
 
     std::istringstream* iss = new std::istringstream(code, std::fstream::in);
     if (iss == nullptr || !iss->good())
     {
-        shl_log_error("Lexer failed to open code");
+        SHL_LOG_ERROR(env,"Lexer failed to open code");
         return false;
     }
 
     lexer.input = iss;
     lexer.inputname = "code";
 
-    return shl_lexer_move(lexer);
+    return shl_lexer_move(env, lexer);
 }
 
-bool shl_lexer_open_file(shl_lexer& lexer, const char* filename)
+bool shl_lexer_open_file(shl_environment& env, shl_lexer& lexer, const char* filename)
 {
     shl_lexer_close(lexer);
 
     std::fstream* file = new std::fstream(filename, std::fstream::in);
     if (file == nullptr || !file->is_open())
     {
-        shl_log_error("Lexer failed to open file %s", filename);
+        SHL_LOG_ERROR(env,"Lexer failed to open file %s", filename);
         return false;
     }
 
     lexer.input = file;
     lexer.inputname = filename;
 
-    return shl_lexer_move(lexer);
+    return shl_lexer_move(env, lexer);
 }
 
 // -------------------------------------- Parser ---------------------------------------// 
-
-#define shl_parse_error(lexer,  ...)\
-{\
-    shl_log_error("Syntax error %s(%d,%d)", lexer.inputname.c_str(), lexer.line, lexer.col);\
-    shl_log_error(__VA_ARGS__);\
-}
 
 enum shl_ast_id : uint8_t
 {
@@ -697,7 +748,13 @@ void shl_ast_delete(shl_ast* node)
     delete node;
 }
 
-bool shl_parse_expr_pop(shl_lexer& lexer,  shl_list<shl_token>&op_stack, shl_list<shl_ast*>& expr_stack)
+#define SHL_PARSE_ERROR(env, lexer,  ...)\
+{\
+    SHL_LOG_ERROR(env, "Syntax error %s(%d,%d)", lexer.inputname.c_str(), lexer.line, lexer.col);\
+    SHL_LOG_ERROR(env, __VA_ARGS__);\
+}
+
+bool shl_parse_expr_pop(shl_environment& env, shl_lexer& lexer, shl_list<shl_token>&op_stack, shl_list<shl_ast*>& expr_stack)
 {
     shl_token next_op = op_stack.back();
     op_stack.pop_back();
@@ -712,7 +769,7 @@ bool shl_parse_expr_pop(shl_lexer& lexer,  shl_list<shl_token>&op_stack, shl_lis
             shl_ast_delete(expr_stack.back());
             expr_stack.pop_back();
         }
-        shl_parse_error(lexer,  "Invalid number of arguments to operator %s", next_op.detail->label);
+        SHL_PARSE_ERROR(env, lexer,  "Invalid number of arguments to operator %s", next_op.detail->label);
         return false;
     }
 
@@ -732,9 +789,9 @@ bool shl_parse_expr_pop(shl_lexer& lexer,  shl_list<shl_token>&op_stack, shl_lis
     return true;
 }
 
-shl_ast* shl_parse_value(shl_lexer& lexer); 
+shl_ast* shl_parse_value(shl_environment& env, shl_lexer& lexer); 
 
-shl_ast* shl_parse_expr(shl_lexer& lexer)
+shl_ast* shl_parse_expr(shl_environment& env, shl_lexer& lexer)
 {
     // Shunting yard algorithm
     shl_list<shl_token> op_stack;
@@ -748,16 +805,16 @@ shl_ast* shl_parse_expr(shl_lexer& lexer)
             // left associate by default (for right, <= becomes <)
             while(op_stack.size() && op_stack.back().detail->prec >= op.detail->prec)
             {
-                if(!shl_parse_expr_pop(lexer,  op_stack, expr_stack))
+                if(!shl_parse_expr_pop(env, lexer,  op_stack, expr_stack))
                     return nullptr;
             }
 
             op_stack.push_back(op);
-            shl_lexer_move(lexer);
+            shl_lexer_move(env, lexer);
         }
         else
         {
-            shl_ast* value = shl_parse_value(lexer);
+            shl_ast* value = shl_parse_value(env, lexer);
             if(value == nullptr)
                 break;
             expr_stack.push_back(value);
@@ -770,7 +827,7 @@ shl_ast* shl_parse_expr(shl_lexer& lexer)
 
     while(op_stack.size())
     {
-        if(!shl_parse_expr_pop(lexer,  op_stack, expr_stack))
+        if(!shl_parse_expr_pop(env, lexer,  op_stack, expr_stack))
             return nullptr;
     }
 
@@ -782,14 +839,14 @@ shl_ast* shl_parse_expr(shl_lexer& lexer)
             shl_ast_delete(expr_stack.back());
             expr_stack.pop_back();
         }
-        shl_parse_error(lexer,  "Invalid expression syntax");
+        SHL_PARSE_ERROR(env, lexer,  "Invalid expression syntax");
         return nullptr;
     }
 
     return expr_stack.back();
 }
 
-shl_ast* shl_parse_funccall(shl_lexer& lexer)
+shl_ast* shl_parse_funccall(shl_environment& env, shl_lexer& lexer)
 {
     shl_token idtoken = lexer.curr;
     if (idtoken.id != SHL_TOKEN_ID)
@@ -798,49 +855,49 @@ shl_ast* shl_parse_funccall(shl_lexer& lexer)
     if (lexer.next.id != SHL_TOKEN_LPAREN)
         return nullptr;
 
-    shl_lexer_move(lexer); // eat id
-    shl_lexer_move(lexer); // eat (
+    shl_lexer_move(env, lexer); // eat id
+    shl_lexer_move(env, lexer); // eat (
 
     shl_array<shl_ast*> args;
-    if (shl_ast* expr = shl_parse_expr(lexer))
+    if (shl_ast* expr = shl_parse_expr(env, lexer))
     {
         args.push_back(expr);
 
         while (expr && lexer.curr.id == SHL_TOKEN_COMMA)
         {
-            shl_lexer_move(lexer); // eat ,
+            shl_lexer_move(env, lexer); // eat ,
 
-            if((expr = shl_parse_expr(lexer)))
+            if((expr = shl_parse_expr(env, lexer)))
                 args.push_back(expr);
         }
     }
 
     if (lexer.curr.id != SHL_TOKEN_RPAREN)
     {
-        shl_parse_error(lexer,  "Function call missing closing parentheses");
+        SHL_PARSE_ERROR(env, lexer,  "Function call missing closing parentheses");
         for(shl_ast* arg : args)
             delete arg;
         return nullptr;
     }
 
-    shl_lexer_move(lexer); // eat )
+    shl_lexer_move(env, lexer); // eat )
 
     shl_ast* funccall = shl_ast_new(SHL_AST_FUNC_CALL, idtoken);
     funccall->children = std::move(args);
     return funccall;
 }
 
-shl_ast* shl_parse_value(shl_lexer& lexer)
+shl_ast* shl_parse_value(shl_environment& env, shl_lexer& lexer)
 {
     shl_token token = lexer.curr;
     switch (token.id)
     {
     case SHL_TOKEN_ID:
     {   
-        if (shl_ast* funccall = shl_parse_funccall(lexer))
+        if (shl_ast* funccall = shl_parse_funccall(env, lexer))
             return funccall;
 
-        shl_lexer_move(lexer);
+        shl_lexer_move(env, lexer);
         shl_ast* var = shl_ast_new(SHL_AST_VARIABLE, token);
         return var;
     }
@@ -850,7 +907,7 @@ shl_ast* shl_parse_value(shl_lexer& lexer)
     case SHL_TOKEN_FLOAT:
     case SHL_TOKEN_STRING:
     {
-        shl_lexer_move(lexer);
+        shl_lexer_move(env, lexer);
         shl_ast* literal = shl_ast_new(SHL_AST_LITERAL, token);
         literal->id = SHL_AST_LITERAL;
         literal->token = token;
@@ -858,15 +915,15 @@ shl_ast* shl_parse_value(shl_lexer& lexer)
     }
     case SHL_TOKEN_LPAREN:
     {
-        shl_lexer_move(lexer); // eat the LPAREN
-        shl_ast* expr = shl_parse_expr(lexer);
+        shl_lexer_move(env, lexer); // eat the LPAREN
+        shl_ast* expr = shl_parse_expr(env, lexer);
         if (lexer.curr.id != SHL_TOKEN_RPAREN)
         {
-            shl_parse_error(lexer,  "Expression missing closing parentheses");
+            SHL_PARSE_ERROR(env, lexer,  "Expression missing closing parentheses");
             shl_ast_delete(expr);    
             return nullptr;
         }
-        shl_lexer_move(lexer); // eat the RPAREN
+        shl_lexer_move(env, lexer); // eat the RPAREN
         return expr;
     }
     default: 
@@ -875,29 +932,29 @@ shl_ast* shl_parse_value(shl_lexer& lexer)
     return nullptr;
 }
 
-shl_ast* shl_parse_stmt(shl_lexer& lexer)
+shl_ast* shl_parse_stmt(shl_environment& env, shl_lexer& lexer)
 {
     //TODO: assignment, funcdef etc..
     // Default, epxression parsing. 
-    if (shl_ast* expr = shl_parse_expr(lexer))
+    if (shl_ast* expr = shl_parse_expr(env, lexer))
     {
         if(lexer.curr.id != SHL_TOKEN_SEMICOLON)
         {
             shl_ast_delete(expr);    
-            shl_parse_error(lexer,  "Missing semicolon at end of expression");
+            SHL_PARSE_ERROR(env, lexer,  "Missing semicolon at end of expression");
             return nullptr;
         }
 
-        shl_lexer_move(lexer); // eat ;
+        shl_lexer_move(env, lexer); // eat ;
         return expr;
     }
     return nullptr;
 }
 
-shl_ast* shl_parse_block(shl_lexer& lexer)
+shl_ast* shl_parse_block(shl_environment& env, shl_lexer& lexer)
 {
     shl_array<shl_ast*> stmts;
-    while(shl_ast* stmt = shl_parse_stmt(lexer))
+    while(shl_ast* stmt = shl_parse_stmt(env, lexer))
         stmts.push_back(stmt);
 
     if(stmts.size() == 0)
@@ -908,9 +965,9 @@ shl_ast* shl_parse_block(shl_lexer& lexer)
     return block;
 }
 
-shl_ast* shl_parse_root(shl_lexer& lexer)
+shl_ast* shl_parse_root(shl_environment& env, shl_lexer& lexer)
 {
-    shl_ast* block = shl_parse_block(lexer);
+    shl_ast* block = shl_parse_block(env, lexer);
     if(block == nullptr)
         return nullptr;
 
@@ -920,35 +977,40 @@ shl_ast* shl_parse_root(shl_lexer& lexer)
     return root;
 }
 
-shl_ast* shl_parse(const char* code)
+shl_ast* shl_parse(shl_environment& env, const char* code)
 {
     shl_lexer lexer;
-    if(!shl_lexer_open(lexer, code))
+    if(!shl_lexer_open(env, lexer, code))
         return nullptr;
 
-    shl_ast* root = shl_parse_root(lexer);
+    shl_ast* root = shl_parse_root(env, lexer);
     shl_lexer_close(lexer);
 
     return root;
 }
 
-shl_ast* shl_parse_file(const char* filename)
+shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 {
     shl_lexer lexer;
-    if(!shl_lexer_open_file(lexer, filename))
+    if(!shl_lexer_open_file(env, lexer, filename))
         return nullptr;
 
-    shl_ast* root = shl_parse_root(lexer);
+    shl_ast* root = shl_parse_root(env, lexer);
     shl_lexer_close(lexer);
 
     return root;
 }
 
-// -------------------------------------- IR ---------------------------------------// 
+// -------------------------------------- OPCODE -----------------------------------------// 
 #define SHL_OPCODE_LIST\
 	SHL_OPCODE(NO_OP)          \
 	SHL_OPCODE(EXIT)           \
-	SHL_OPCODE(PUSH)           \
+	SHL_OPCODE(NEXT_CHUNK)     \
+	SHL_OPCODE(PUSH_INT)       \
+	SHL_OPCODE(PUSH_FLOAT)     \
+	SHL_OPCODE(PUSH_STRING)    \
+	SHL_OPCODE(PUSH_LOCAL)     \
+	SHL_OPCODE(PUSH_GLOBAL)    \
 	SHL_OPCODE(POP)            \
 	SHL_OPCODE(ADD)            \
 	SHL_OPCODE(SUB)            \
@@ -1002,20 +1064,20 @@ shl_ast* shl_parse_file(const char* filename)
 	SHL_OPCODE(JUMP_GE)        \
 	SHL_OPCODE(JUMP_GT)        \
 	SHL_OPCODE(MULADD)         \
-	SHL_OPCODE(IJ)             \
-	SHL_OPCODE(IJE)            \
 	SHL_OPCODE(CALL)           \
 	SHL_OPCODE(RET)            \
 	SHL_OPCODE(ASSERT)         \
 	SHL_OPCODE(ASSERT_POSITIVE)\
 	SHL_OPCODE(ASSERT_BOUND)
 
-enum class shl_opcode : uint8_t
+enum shl_opcode : uint8_t
 { 
-	#define SHL_OPCODE(opcode) opcode,
+	#define SHL_OPCODE(opcode) SHL_OPCODE_##opcode,
 	SHL_OPCODE_LIST
 	#undef SHL_OPCODE
+    SHL_OPCODE_COUNT
 };
+static_assert(SHL_OPCODE_COUNT < 255, "SHL Opcode count too large. This will affect bytecode instruction set");
 
 static const char* shl_opcode_labels[] =
 {
@@ -1026,24 +1088,22 @@ static const char* shl_opcode_labels[] =
 
 #undef SHL_OPCODE_LIST
 
-enum shl_ir_operand_flags : uint16_t
+// -------------------------------------- IR --------------------------------------------// 
+
+enum shl_ir_operand_flags : uint8_t
 {
-    // operand scope
-    SHL_IR_OPERAND_CONST = 1, 
-    SHL_IR_OPERAND_LOCAL = 1 << 2,
-    SHL_IR_OPERAND_GLOBAL = 1 << 3,
     // type if operand is constant or literal
-    SHL_IR_OPERAND_DECIMAL = 1 << 4,
-    SHL_IR_OPERAND_HEXIDECIMAL = 1 << 5,
-    SHL_IR_OPERAND_BINARY = 1 << 6,
-    SHL_IR_OPERAND_FLOAT = 1 << 7, 
-    SHL_IR_OPERAND_STRING = 1 << 8, 
+    SHL_IR_OPERAND_DECIMAL = 1 << 0,
+    SHL_IR_OPERAND_HEXIDECIMAL = 1 << 1,
+    SHL_IR_OPERAND_BINARY = 1 << 2,
+    SHL_IR_OPERAND_FLOAT = 1 << 3, 
+    SHL_IR_OPERAND_STRING = 1 << 4, 
 };
 
 struct shl_ir_operand
 {
-    std::string data;
-    uint16_t flags = 0;
+    shl_string data;
+    uint8_t flags = 0;
 };
 
 struct shl_ir_operation
@@ -1054,7 +1114,7 @@ struct shl_ir_operation
 
 struct shl_ir_block
 {
-    std::string label;
+    shl_string label;
     shl_list<shl_ir_operation> operations;
 };
 
@@ -1072,14 +1132,14 @@ struct shl_ir
     int generated_label_count = 0;
 };
 
-void shl_ir_push_block(shl_ir& ir, std::string label)
+void shl_ir_push_block(shl_ir& ir, shl_string label)
 {
     if(label.size() == 0)
     {
-        const std::string& generated_label = "L" + std::to_string(ir.generated_label_count++);
+        const shl_string& generated_label = "L" + std::to_string(ir.generated_label_count++);
 
         shl_ir_block block;
-        block.label = std::string(generated_label.c_str(), generated_label.size());
+        block.label = shl_string(generated_label.c_str(), generated_label.size());
         ir.block_stack.push_back(block);
     }
     else
@@ -1111,8 +1171,208 @@ void shl_ir_add_operation(shl_ir& ir, shl_opcode opcode)
     shl_ir_add_operation(ir, opcode, operand);
 }
 
-// -------------------------------------- Passes ---------------------------------------// 
+// -------------------------------------- Bytecode ----------------------------------------------// 
+struct shl_bytecode_chunk
+{
+    char bytecode[SHL_BYTECODE_CHUNK_SIZE];
+};
 
+// Used to convert values to/from bytes for constant values
+union shl_bytecode_value
+{
+    long i;
+    double f;
+    unsigned char bytes[16];
+};
+
+// -------------------------------------- VM ----------------------------------------------------// 
+struct shl_vm
+{
+    // NOTE?: all globals are push on beginning portion of stack frame. All locals are relative addresses
+    shl_value stack[SHL_STACK_SIZE]; 
+    shl_array<shl_bytecode_chunk*> bytecode_chunks;
+
+    char* instruction; 
+    size_t stack_offset; 
+    bool running;
+};
+
+#define SHL_VM_CHECK_STACK(env, vm, running, size) \
+{                                                  \
+    if(vm.stack_offset + size >= SHL_STACK_SIZE)   \
+    {                                              \
+        SHL_LOG_ERROR(env, "Stack overflow");      \
+        running = false;                           \
+    }                                              \
+}
+
+shl_value* shl_vm_push(shl_environment& env, shl_vm& vm)
+{
+    ++vm.stack_offset;
+    if(vm.stack_offset >= SHL_STACK_SIZE)   
+    {                                              
+        if(vm.running)
+        {
+            SHL_LOG_ERROR(env, "Stack overflow");      
+            vm.running = false;
+        }  
+        return nullptr;                           
+    }
+
+    shl_value* value = &vm.stack[vm.stack_offset];
+    return value;
+}
+
+shl_value* shl_vm_pop(shl_environment& env, shl_vm& vm)
+{        
+    if(vm.stack_offset < 0)   
+    {   
+        if(vm.running)
+        {
+            SHL_LOG_ERROR(env, "Stack underflow");      
+            vm.running = false;
+        }                                           
+        return nullptr;                           
+    }
+
+    shl_value* value = &vm.stack[vm.stack_offset];
+    --vm.stack_offset;
+    return value;
+}
+
+
+#define SHL_OPCODE_TO_BINOP(opcode, out, x, y) \
+{                                                 \
+    switch(opcode)                                \
+    {                                             \
+        case SHL_OPCODE_ADD:                      \
+            out = x + y;                          \
+            break;                                \
+        case SHL_OPCODE_SUB:                      \
+            out = x - y;                          \
+            break;                                \
+        case SHL_OPCODE_MUL:                      \
+            out = x * y;                          \
+            break;                                \
+        case SHL_OPCODE_DIV:                      \
+            out = x / y;                          \
+            break;                                \
+    }                                             \
+}
+
+void shl_vm_execute_binop(shl_environment& env, shl_vm& vm, shl_opcode opcode)
+{
+    shl_value* rhs = shl_vm_pop(env, vm);
+    shl_value* lhs = shl_vm_pop(env, vm);
+    shl_value* target = shl_vm_push(env, vm);
+    if(rhs == nullptr || lhs == nullptr || target == nullptr)
+        return;
+
+
+    if(lhs->type == SHL_INT)
+    {
+        if(rhs->type == SHL_INT)
+        {
+            target->type == SHL_INT;
+            SHL_OPCODE_TO_BINOP(opcode, target->i, lhs->i, rhs->i)
+        }
+        else if(rhs->type == SHL_FLOAT)
+        {
+            target->type == SHL_FLOAT;
+            SHL_OPCODE_TO_BINOP(opcode, target->f, lhs->i, rhs->f)
+        }
+        else
+        {
+            //Undefined, should we support operator overloading? fallback to user?
+            vm.running = false;
+        }
+    }
+    else if(lhs->type == SHL_FLOAT)
+    {
+        if(rhs->type == SHL_INT)
+        {
+            target->type == SHL_FLOAT;
+            SHL_OPCODE_TO_BINOP(opcode, target->f, lhs->f, rhs->i)
+        }
+        else if(rhs->type == SHL_FLOAT)
+        {
+            target->type == SHL_FLOAT;
+            SHL_OPCODE_TO_BINOP(opcode, target->f, lhs->f, rhs->f)
+        }
+        else
+        {
+            //Undefined, should we support operator overloading? fallback to user?
+            vm.running = false;
+        }
+    }
+}
+
+void shl_vm_execute(shl_environment& env, shl_vm& vm)
+{
+    if(vm.bytecode_chunks.size() == 0)
+        return;
+
+    shl_bytecode_chunk* chunk = vm.bytecode_chunks[0];
+    vm.instruction = &chunk->bytecode[0];
+    vm.stack_offset = -1;
+    vm.running = true;
+
+    shl_bytecode_value bytecode_value;
+
+    while(vm.running)
+    {
+        shl_opcode opcode = (shl_opcode) (*vm.instruction);
+        switch(opcode)
+        {
+            case SHL_OPCODE_EXIT:
+                vm.running = false;
+                break;
+            case SHL_OPCODE_NO_OP:
+                ++vm.instruction;
+                break;
+            case SHL_OPCODE_NEXT_CHUNK:
+                ++chunk;
+                vm.instruction = &chunk->bytecode[0];
+                break;
+            case SHL_OPCODE_PUSH_INT:   
+                for(size_t i = 0; i < sizeof(bytecode_value.i); ++i)
+                    bytecode_value.bytes[i] = *(++vm.instruction);
+
+                if(shl_value* value = shl_vm_push(env, vm))
+                {
+                    value->type = SHL_INT;
+                    value->i = bytecode_value.i;
+                }
+                break;
+            case SHL_OPCODE_PUSH_FLOAT:                
+                for(size_t i = 0; i < sizeof(bytecode_value.f); ++i)
+                    bytecode_value.bytes[i] = *(++vm.instruction);
+                    
+                if(shl_value* value = shl_vm_push(env, vm))
+                {
+                    value->type = SHL_FLOAT;
+                    value->f = bytecode_value.f;
+                }
+                break;
+
+            case SHL_OPCODE_ADD:
+            case SHL_OPCODE_SUB:
+            case SHL_OPCODE_MUL:
+            case SHL_OPCODE_DIV:
+                shl_vm_execute_binop(env, vm, opcode);
+                break;
+
+        }
+    }
+}
+
+void shl_vm_shutdown(shl_environment& env, shl_vm& vm)
+{
+    for( shl_bytecode_chunk* chunk : vm.bytecode_chunks)
+        delete chunk;
+}
+
+// -------------------------------------- Passes ------------------------------------------------// 
 bool shl_pass_semantic_check(const shl_ast* node)
 {
     if(node == nullptr)
@@ -1149,25 +1409,39 @@ void shl_ast_to_ir(const shl_ast* node, shl_ir& ir)
         {
             shl_ir_operand operand;
             operand.data = token.data;
-            operand.flags = SHL_IR_OPERAND_CONST;
             switch(token.id)
             {
-                case SHL_TOKEN_DECIMAL:     operand.flags |= SHL_IR_OPERAND_DECIMAL;     break;
-                case SHL_TOKEN_HEXIDECIMAL: operand.flags |= SHL_IR_OPERAND_HEXIDECIMAL; break;
-                case SHL_TOKEN_BINARY:      operand.flags |= SHL_IR_OPERAND_BINARY;      break;
-                case SHL_TOKEN_FLOAT:       operand.flags |= SHL_IR_OPERAND_FLOAT;       break;
-                case SHL_TOKEN_STRING:      operand.flags |= SHL_IR_OPERAND_STRING;      break;
-                default: break;
+                case SHL_TOKEN_DECIMAL:     
+                    operand.flags = SHL_IR_OPERAND_DECIMAL;     
+                    shl_ir_add_operation(ir, SHL_OPCODE_PUSH_INT, operand);
+                    break;
+                case SHL_TOKEN_HEXIDECIMAL: 
+                    operand.flags = SHL_IR_OPERAND_HEXIDECIMAL; 
+                    shl_ir_add_operation(ir, SHL_OPCODE_PUSH_INT, operand);
+                    break;
+                case SHL_TOKEN_BINARY:      
+                    operand.flags = SHL_IR_OPERAND_BINARY;
+                    shl_ir_add_operation(ir, SHL_OPCODE_PUSH_INT, operand);
+                    break;
+                case SHL_TOKEN_FLOAT:       
+                    operand.flags = SHL_IR_OPERAND_FLOAT;
+                    shl_ir_add_operation(ir, SHL_OPCODE_PUSH_FLOAT, operand);
+                    break;
+                case SHL_TOKEN_STRING:      
+                    operand.flags = SHL_IR_OPERAND_STRING;
+                    shl_ir_add_operation(ir, SHL_OPCODE_PUSH_STRING, operand);
+                    break;
+                default: 
+                break;
             }
-            shl_ir_add_operation(ir, shl_opcode::PUSH, operand);
             break;
         }
         case SHL_AST_VARIABLE:
         {
             shl_ir_operand operand;
             operand.data = token.data;
-            operand.flags = SHL_IR_OPERAND_LOCAL;
-            shl_ir_add_operation(ir, shl_opcode::PUSH, operand);
+            // TODO: determine if variable is local or global
+            shl_ir_add_operation(ir, SHL_OPCODE_PUSH_LOCAL, operand);
             break;
         }
         case SHL_AST_UNARY_OP:
@@ -1177,7 +1451,7 @@ void shl_ast_to_ir(const shl_ast* node, shl_ir& ir)
 
             switch(token.id)
             {
-                case SHL_TOKEN_NOT: shl_ir_add_operation(ir, shl_opcode::NOT); break;
+                case SHL_TOKEN_NOT: shl_ir_add_operation(ir, SHL_OPCODE_NOT); break;
                 default: break;
             }
             break;
@@ -1190,10 +1464,10 @@ void shl_ast_to_ir(const shl_ast* node, shl_ir& ir)
 
             switch(token.id)
             {
-                case SHL_TOKEN_ADD: shl_ir_add_operation(ir, shl_opcode::ADD); break;
-                case SHL_TOKEN_SUB: shl_ir_add_operation(ir, shl_opcode::SUB); break;
-                case SHL_TOKEN_MUL: shl_ir_add_operation(ir, shl_opcode::MUL); break;
-                case SHL_TOKEN_DIV: shl_ir_add_operation(ir, shl_opcode::DIV); break;
+                case SHL_TOKEN_ADD: shl_ir_add_operation(ir, SHL_OPCODE_ADD); break;
+                case SHL_TOKEN_SUB: shl_ir_add_operation(ir, SHL_OPCODE_SUB); break;
+                case SHL_TOKEN_MUL: shl_ir_add_operation(ir, SHL_OPCODE_MUL); break;
+                case SHL_TOKEN_DIV: shl_ir_add_operation(ir, SHL_OPCODE_DIV); break;
                 default: break;
             }
             break;
@@ -1206,7 +1480,7 @@ void shl_ast_to_ir(const shl_ast* node, shl_ir& ir)
             shl_ir_operand operand;
             operand.data = token.data;
             operand.flags = SHL_IR_OPERAND_STRING;
-            shl_ir_add_operation(ir, shl_opcode::CALL, operand);
+            shl_ir_add_operation(ir, SHL_OPCODE_CALL, operand);
             break;
         }
         case SHL_AST_FUNC_DEF:
@@ -1222,16 +1496,120 @@ void shl_ast_to_ir(const shl_ast* node, shl_ir& ir)
     }
 }
 
-void shl_execute(const char* filename)
+int shl_bytecode_serialize(shl_array<char> bytes, int& chunk_offset, shl_array<shl_bytecode_chunk*>& bytecode_chunks)
 {
-    //TODO: compile to byte code chunk, then pass to VM
+    shl_bytecode_chunk* chunk = bytecode_chunks.back();
+    if(chunk_offset + bytes.size() >= (SHL_BYTECODE_CHUNK_SIZE-1))
+    {
+        // pad remaining with NO_OPs
+        while(chunk_offset < SHL_BYTECODE_CHUNK_SIZE-1)
+        {
+            chunk->bytecode[chunk_offset] = SHL_OPCODE_NO_OP;
+            chunk_offset++;
+        }
+        chunk->bytecode[chunk_offset] = SHL_OPCODE_NEXT_CHUNK;
+        chunk_offset = 0;
+        bytecode_chunks.push_back(new shl_bytecode_chunk());
+        chunk = bytecode_chunks.back();
+    }
 
+    for(char byte : bytes)
+    {
+        chunk->bytecode[chunk_offset] = byte;
+        chunk_offset++; 
+    }
+  
+    return bytes.size();
 }
 
-void shl_evaluate(const char* code)
+void shl_ir_to_bytecode(shl_ir& ir, shl_array<shl_bytecode_chunk*>& bytecode_chunks)
+{
+    int instruction_offset = 0;
+    int chunk_offset = 0;
+    shl_map<const char*, int> label_offset; 
+    shl_bytecode_value value;
+
+    bytecode_chunks.push_back(new shl_bytecode_chunk());
+
+	for(const shl_ir_block& block : ir.module.blocks)
+	{
+        // TODO: handle JMP operations by translating from label to instr offet
+		label_offset[block.label.c_str()] =  instruction_offset;
+		for(const shl_ir_operation& operation : block.operations)
+		{
+            shl_array<char> bytes;
+            bytes.push_back((char)operation.opcode);
+
+            const shl_ir_operand& operand = operation.operand;
+            if(operand.data.size())
+            {
+                if(operand.flags & SHL_IR_OPERAND_BINARY)
+                {
+                    value.i = strtoul(operand.data.c_str(), NULL, 2);
+                    for(size_t i = 0; i < sizeof(value.i); ++i)
+                        bytes.push_back(value.bytes[i]);
+                }
+                else if(operand.flags & SHL_IR_OPERAND_HEXIDECIMAL)
+                {
+                    value.i = strtoul(operand.data.c_str(), NULL, 16);
+                    for(size_t i = 0; i < sizeof(value.i); ++i)
+                        bytes.push_back(value.bytes[i]);
+                }
+                else if(operand.flags & SHL_IR_OPERAND_DECIMAL)
+                {
+                    // Note: Signed string to long call
+                    value.i = strtol(operand.data.c_str(), NULL, 10);
+                    for(size_t i = 0; i < sizeof(value.i); ++i)
+                        bytes.push_back(value.bytes[i]);
+                }
+                else if(operand.flags & SHL_IR_OPERAND_FLOAT)
+                {
+                    value.f = strtof(operand.data.c_str(), NULL);
+                    for(size_t i = 0; i < sizeof(value.f); ++i)
+                        bytes.push_back(value.bytes[i]);
+                }
+                else if(operand.flags & SHL_IR_OPERAND_STRING)
+                {
+                    for(size_t i = 0; i < operand.data.size(); ++i)
+                        bytes.push_back(operand.data[i]);
+                    bytes.push_back(0);
+                }
+            }
+
+            instruction_offset += shl_bytecode_serialize(bytes, chunk_offset, bytecode_chunks);
+		}
+	}
+
+
+    shl_array<char> bytes;
+    bytes.push_back(SHL_OPCODE_EXIT);
+    instruction_offset += shl_bytecode_serialize(bytes, chunk_offset, bytecode_chunks);
+}
+
+// -------------------------------------- API ------ ---------------------------------------// 
+
+void shl_execute(shl_environment& env, const char* filename)
+{
+    // Parse file
+	shl_ast* root = shl_parse_file(env, filename);
+	if(root == nullptr)
+		return;
+
+    // Generate IR
+	shl_ir ir;
+	shl_ast_to_ir(root, ir);
+
+    // Load bytecode into VM
+    shl_vm vm;
+    shl_ir_to_bytecode(ir, vm.bytecode_chunks);
+
+    // Run VM
+    shl_vm_execute(env, vm);
+}
+
+void shl_evaluate(shl_environment& env, const char* code)
 {
     //TODO: compile to byte code chunk, then pass to VM
-
 }
 
 #endif
