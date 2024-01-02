@@ -6,9 +6,12 @@
 
     Todo: 
     - Parsing - statement, assignment, object, func dec
+    - IR - reduce all local function calls (user defined) to jump operations
     - Semantic Pass- check variable, function, field names, check binary/unary ops
     - Framework - Add filewatchers to recompile if source file changed.
     - VM - Execute compiled bytecode from file
+    - VM - Print Stack trace 
+
 */
 
 #include <functional>
@@ -28,8 +31,8 @@ using shl_array = std::vector<type>;
 template <class key, class type>
 using shl_map = std::unordered_map<key, type>;
 
-using shl_error_callback = std::function<void(const char* /*msg*/)>;
-using shl_function_callback = std::function<void(const shl_list<class shl_value*>& /*args*/)>;
+typedef void(shl_error_callback)(const char* /*msg*/);
+typedef void(shl_function_callback)(const shl_list<class shl_value*>& /*args*/);
 
 enum shl_type
 {
@@ -54,23 +57,26 @@ struct shl_value
 
 struct shl_object
 {
-    shl_map<const char*, shl_value> map;
+    shl_map<shl_string, shl_value> map;
 };
 
 struct shl_environment
 {
     // user defined functions
-    shl_map<const char*, shl_function_callback> function_callbacks;
-    shl_error_callback error_callback;
+    shl_map<shl_string, shl_function_callback*> functions;
+    shl_error_callback* error_callback = nullptr;
 };
 
-//void shl_register(shl_environment& environment, const char* function_signature, shl_function_callback callback); //TODO parse the func types ? 
-//void shl_unregister(shl_environment& environment, const char* function_signature);
+//void shl_register(shl_environment& env, const char* function_signature, shl_function_callback callback); //TODO parse the func types ? 
+//void shl_unregister(shl_environment& env, const char* function_signature);
 
-//void shl_compile(shl_environment& environment, const char* filename, const char* compiled_filename);
+void shl_register(shl_environment& env, const char* function_id, shl_function_callback* callback); //TODO parse the func types ? 
+void shl_unregister(shl_environment& env, const char* function_id);
 
 void shl_execute(shl_environment& env, const char* filename);
 void shl_evaluate(shl_environment& env, const char* code);
+
+shl_string shl_value_to_string(const shl_value* value);
 
 #endif //__SHL_HEADER__
 
@@ -83,6 +89,8 @@ void shl_evaluate(shl_environment& env, const char* code);
 #include <iostream>
 #include <sstream>
 #include <memory>
+
+#define SHL_DEBUG 0
 
 #ifndef SHL_TOKEN_BUFFER_LEN
     #define SHL_TOKEN_BUFFER_LEN 128
@@ -125,7 +133,7 @@ void shl_evaluate(shl_environment& env, const char* code);
     char buffer[2048];                                                      \
     int len = snprintf(buffer, sizeof(buffer), SHL_LOG_PRELUDE "Error: ");  \
     len = snprintf(buffer + len, sizeof(buffer) - len, __VA_ARGS__);        \
-    env.error_callback(buffer);                                             \
+    if(env.error_callback) env.error_callback(buffer);                      \
 }
 
 // -------------------------------------- Lexer  ---------------------------------------// 
@@ -1109,7 +1117,7 @@ struct shl_ir_operand
 struct shl_ir_operation
 {
     shl_opcode opcode;
-    shl_ir_operand operand; //optional parameter. will be encoded in following bytes
+    shl_list<shl_ir_operand> operands; //optional parameter. will be encoded in following bytes
 };
 
 struct shl_ir_block
@@ -1136,10 +1144,12 @@ void shl_ir_push_block(shl_ir& ir, shl_string label)
 {
     if(label.size() == 0)
     {
-        const shl_string& generated_label = "L" + std::to_string(ir.generated_label_count++);
+        char generated_label[8];
+        int generated_label_len = snprintf(generated_label, sizeof(generated_label), "L%d", ir.generated_label_count);
+        ++ir.generated_label_count;
 
         shl_ir_block block;
-        block.label = shl_string(generated_label.c_str(), generated_label.size());
+        block.label = shl_string(&generated_label[0], generated_label_len);
         ir.block_stack.push_back(block);
     }
     else
@@ -1157,11 +1167,21 @@ void shl_ir_pop_block(shl_ir& ir)
     ir.block_stack.pop_back();
 }
 
+void shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_list<shl_ir_operand>& operands)
+{
+    shl_ir_operation operation;
+    operation.opcode = opcode;
+    operation.operands = operands;
+    
+    ir.block_stack.back().operations.push_back(std::move(operation));
+}
+
 void shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_ir_operand& operand)
 {
     shl_ir_operation operation;
     operation.opcode = opcode;
-    operation.operand = operand;
+    operation.operands.push_back(operand);
+
     ir.block_stack.back().operations.push_back(std::move(operation));
 }
 
@@ -1186,6 +1206,7 @@ union shl_bytecode_value
 };
 
 // -------------------------------------- VM ----------------------------------------------------// 
+
 struct shl_vm
 {
     // NOTE?: all globals are push on beginning portion of stack frame. All locals are relative addresses
@@ -1197,13 +1218,21 @@ struct shl_vm
     bool running;
 };
 
-#define SHL_VM_CHECK_STACK(env, vm, running, size) \
-{                                                  \
-    if(vm.stack_offset + size >= SHL_STACK_SIZE)   \
-    {                                              \
-        SHL_LOG_ERROR(env, "Stack overflow");      \
-        running = false;                           \
-    }                                              \
+#define SHL_VM_ERROR(env, vm, ...)     \
+{                                      \
+    SHL_LOG_ERROR(env, __VA_ARGS__);   \
+    vm.running = false;                \
+}
+
+shl_value* shl_vm_delete(shl_environment& env, shl_vm& vm)
+{
+    for(shl_bytecode_chunk* bytecode_chunk : vm.bytecode_chunks)
+        delete bytecode_chunk;
+    vm.bytecode_chunks.clear();
+
+    vm.instruction = nullptr; 
+    vm.stack_offset = -1; 
+    vm.running = false;
 }
 
 shl_value* shl_vm_push(shl_environment& env, shl_vm& vm)
@@ -1212,10 +1241,7 @@ shl_value* shl_vm_push(shl_environment& env, shl_vm& vm)
     if(vm.stack_offset >= SHL_STACK_SIZE)   
     {                                              
         if(vm.running)
-        {
-            SHL_LOG_ERROR(env, "Stack overflow");      
-            vm.running = false;
-        }  
+            SHL_VM_ERROR(env, vm, "Stack overflow");      
         return nullptr;                           
     }
 
@@ -1228,10 +1254,7 @@ shl_value* shl_vm_pop(shl_environment& env, shl_vm& vm)
     if(vm.stack_offset < 0)   
     {   
         if(vm.running)
-        {
-            SHL_LOG_ERROR(env, "Stack underflow");      
-            vm.running = false;
-        }                                           
+            SHL_VM_ERROR(env, vm, "Stack underflow");      
         return nullptr;                           
     }
 
@@ -1240,8 +1263,7 @@ shl_value* shl_vm_pop(shl_environment& env, shl_vm& vm)
     return value;
 }
 
-
-#define SHL_OPCODE_TO_BINOP(opcode, out, x, y) \
+#define SHL_OPCODE_BINOP_EXEC(opcode, out, x, y) \
 {                                                 \
     switch(opcode)                                \
     {                                             \
@@ -1257,54 +1279,34 @@ shl_value* shl_vm_pop(shl_environment& env, shl_vm& vm)
         case SHL_OPCODE_DIV:                      \
             out = x / y;                          \
             break;                                \
+        default:                                  \
+            break;                                \
     }                                             \
 }
 
 void shl_vm_execute_binop(shl_environment& env, shl_vm& vm, shl_opcode opcode)
 {
-    shl_value* rhs = shl_vm_pop(env, vm);
     shl_value* lhs = shl_vm_pop(env, vm);
+    shl_value* rhs = shl_vm_pop(env, vm);
     shl_value* target = shl_vm_push(env, vm);
     if(rhs == nullptr || lhs == nullptr || target == nullptr)
         return;
 
+    if(rhs->type != lhs->type)
+    {
+        SHL_VM_ERROR(env, vm, "Type mismatch")
+        return;
+    }
 
+    target->type = lhs->type;
+    
     if(lhs->type == SHL_INT)
-    {
-        if(rhs->type == SHL_INT)
-        {
-            target->type == SHL_INT;
-            SHL_OPCODE_TO_BINOP(opcode, target->i, lhs->i, rhs->i)
-        }
-        else if(rhs->type == SHL_FLOAT)
-        {
-            target->type == SHL_FLOAT;
-            SHL_OPCODE_TO_BINOP(opcode, target->f, lhs->i, rhs->f)
-        }
-        else
-        {
-            //Undefined, should we support operator overloading? fallback to user?
-            vm.running = false;
-        }
-    }
+        SHL_OPCODE_BINOP_EXEC(opcode, target->i, lhs->i, rhs->i)
     else if(lhs->type == SHL_FLOAT)
-    {
-        if(rhs->type == SHL_INT)
-        {
-            target->type == SHL_FLOAT;
-            SHL_OPCODE_TO_BINOP(opcode, target->f, lhs->f, rhs->i)
-        }
-        else if(rhs->type == SHL_FLOAT)
-        {
-            target->type == SHL_FLOAT;
-            SHL_OPCODE_TO_BINOP(opcode, target->f, lhs->f, rhs->f)
-        }
-        else
-        {
-            //Undefined, should we support operator overloading? fallback to user?
-            vm.running = false;
-        }
-    }
+        SHL_OPCODE_BINOP_EXEC(opcode, target->f, lhs->f, rhs->f)
+    else
+        //Undefined, should we support operator overloading? fallback to user?
+        vm.running = false;
 }
 
 void shl_vm_execute(shl_environment& env, shl_vm& vm)
@@ -1312,57 +1314,135 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm)
     if(vm.bytecode_chunks.size() == 0)
         return;
 
+    shl_bytecode_value bytecode_value;
+    shl_array<char> bytecode_string;
+
     shl_bytecode_chunk* chunk = vm.bytecode_chunks[0];
     vm.instruction = &chunk->bytecode[0];
     vm.stack_offset = -1;
     vm.running = true;
 
-    shl_bytecode_value bytecode_value;
-
     while(vm.running)
     {
         shl_opcode opcode = (shl_opcode) (*vm.instruction);
+        ++vm.instruction;
+
+#if SHL_DEBUG
+        printf("%s", shl_opcode_labels[(int)opcode]);
+        getchar();
+#endif
+
         switch(opcode)
         {
             case SHL_OPCODE_EXIT:
                 vm.running = false;
                 break;
             case SHL_OPCODE_NO_OP:
-                ++vm.instruction;
                 break;
             case SHL_OPCODE_NEXT_CHUNK:
+            {
                 ++chunk;
                 vm.instruction = &chunk->bytecode[0];
                 break;
+            }
             case SHL_OPCODE_PUSH_INT:   
+            {
+                // Read int
                 for(size_t i = 0; i < sizeof(bytecode_value.i); ++i)
-                    bytecode_value.bytes[i] = *(++vm.instruction);
+                    bytecode_value.bytes[i] = *(vm.instruction++);
 
-                if(shl_value* value = shl_vm_push(env, vm))
-                {
-                    value->type = SHL_INT;
-                    value->i = bytecode_value.i;
-                }
+                shl_value* value = shl_vm_push(env, vm);
+                if(value == nullptr) 
+                    break;
+                value->type = SHL_INT;
+                value->i = bytecode_value.i;
                 break;
-            case SHL_OPCODE_PUSH_FLOAT:                
+            }
+            case SHL_OPCODE_PUSH_FLOAT:
+            {
+                // Read float              
                 for(size_t i = 0; i < sizeof(bytecode_value.f); ++i)
-                    bytecode_value.bytes[i] = *(++vm.instruction);
-                    
-                if(shl_value* value = shl_vm_push(env, vm))
-                {
-                    value->type = SHL_FLOAT;
-                    value->f = bytecode_value.f;
-                }
-                break;
+                    bytecode_value.bytes[i] = *(vm.instruction++);
 
+                shl_value* value = shl_vm_push(env, vm);
+                if(value == nullptr) 
+                    break;
+                
+                value->type = SHL_FLOAT;
+                value->f = bytecode_value.f;
+                break;
+            }                                  
+            case SHL_OPCODE_PUSH_STRING:
+            {
+                // Read until 0         
+                size_t len = 0;   
+                while(*(vm.instruction++)) 
+                    len++;
+
+                shl_value* value = shl_vm_push(env, vm);
+                if(value == nullptr) 
+                    break;
+
+                value->type = SHL_STRING;
+                // TODO: Duplicate string ? When popping string from stack, clean up allocated string ?  
+                value->str = (vm.instruction - (len+1)); 
+                break;
+            }
+            case SHL_OPCODE_CALL:
+            {
+                // Read int
+                for(size_t i = 0; i < sizeof(bytecode_value.i); ++i)
+                    bytecode_value.bytes[i] = *(vm.instruction++);
+                
+                // Read func name
+                size_t len = 0;   
+                while(*(vm.instruction++)) 
+                    len++;
+                
+                size_t arg_count = bytecode_value.i;
+                const char* func_name = (vm.instruction - (len+1)); 
+
+                shl_list<shl_value*> args;
+                for(size_t i = 0; i < arg_count; ++i)
+                {
+                    shl_value* value = shl_vm_pop(env, vm);
+                    if(value)
+                        args.push_front(value);
+                }
+
+                if(args.size() == arg_count && env.functions.count(func_name))
+                    env.functions.at(func_name)(args);
+
+                break;
+            }
             case SHL_OPCODE_ADD:
             case SHL_OPCODE_SUB:
             case SHL_OPCODE_MUL:
             case SHL_OPCODE_DIV:
+            {
                 shl_vm_execute_binop(env, vm, opcode);
                 break;
+            }
+            default:
+                // UNSUPPORTED!!!!
+            break;
 
         }
+
+
+#if SHL_DEBUG
+        shl_value* top = &vm.stack[vm.stack_offset];
+        shl_string str = shl_value_to_string(top);
+        printf("TOP: %s", str.c_str());
+        getchar();
+#endif
+
+
+        //if(vm.running && vm.stack_offset >= 0)
+        //{
+        //    std::cout << "\nTOP: i=" << vm.stack[vm.stack_offset].i << " f=" << vm.stack[vm.stack_offset].f;
+        //    std::cin.get();
+        //}
     }
 }
 
@@ -1474,13 +1554,25 @@ void shl_ast_to_ir(const shl_ast* node, shl_ir& ir)
         }
         case SHL_AST_FUNC_CALL:
         {
+            // Pass arguments
             for(const shl_ast* arg : children)
                 shl_ast_to_ir(arg, ir);
 
-            shl_ir_operand operand;
-            operand.data = token.data;
-            operand.flags = SHL_IR_OPERAND_STRING;
-            shl_ir_add_operation(ir, SHL_OPCODE_CALL, operand);
+            // Pass the function arg count
+            char arg_data[3]; // Max number of arguments is 99 so only need 3 bytes
+            const int arg_data_len = snprintf(arg_data, sizeof(arg_data), "%d", children.size());
+
+            shl_ir_operand arg_count_operand;
+            arg_count_operand.data = shl_string(arg_data, arg_data_len);
+            arg_count_operand.flags = SHL_IR_OPERAND_DECIMAL;
+
+            // Pass the function name
+            shl_ir_operand func_name_operand;
+            func_name_operand.data = token.data;
+            func_name_operand.flags = SHL_IR_OPERAND_STRING;
+
+            const shl_list<shl_ir_operand> operands = { arg_count_operand, func_name_operand };
+            shl_ir_add_operation(ir, SHL_OPCODE_CALL, operands);
             break;
         }
         case SHL_AST_FUNC_DEF:
@@ -1540,9 +1632,11 @@ void shl_ir_to_bytecode(shl_ir& ir, shl_array<shl_bytecode_chunk*>& bytecode_chu
             shl_array<char> bytes;
             bytes.push_back((char)operation.opcode);
 
-            const shl_ir_operand& operand = operation.operand;
-            if(operand.data.size())
+            for(const shl_ir_operand& operand : operation.operands)
             {
+                if(operand.data.size() == 0)
+                    continue;
+
                 if(operand.flags & SHL_IR_OPERAND_BINARY)
                 {
                     value.i = strtoul(operand.data.c_str(), NULL, 2);
@@ -1580,13 +1674,25 @@ void shl_ir_to_bytecode(shl_ir& ir, shl_array<shl_bytecode_chunk*>& bytecode_chu
 		}
 	}
 
-
     shl_array<char> bytes;
     bytes.push_back(SHL_OPCODE_EXIT);
     instruction_offset += shl_bytecode_serialize(bytes, chunk_offset, bytecode_chunks);
 }
 
 // -------------------------------------- API ------ ---------------------------------------// 
+
+
+void shl_register(shl_environment& env, const char* function_id, shl_function_callback *callback)
+{
+    env.functions[function_id] = callback;
+    assert(env.functions.count(function_id));
+}
+
+void shl_unregister(shl_environment& env, const char* function_id)
+{
+    env.functions.erase(function_id);
+    assert(env.functions.count(function_id) == 0);
+}
 
 void shl_execute(shl_environment& env, const char* filename)
 {
@@ -1599,17 +1705,46 @@ void shl_execute(shl_environment& env, const char* filename)
 	shl_ir ir;
 	shl_ast_to_ir(root, ir);
 
+    shl_ast_delete(root);
+
     // Load bytecode into VM
     shl_vm vm;
     shl_ir_to_bytecode(ir, vm.bytecode_chunks);
 
     // Run VM
     shl_vm_execute(env, vm);
+
+    shl_vm_delete(env, vm);
 }
 
 void shl_evaluate(shl_environment& env, const char* code)
 {
     //TODO: compile to byte code chunk, then pass to VM
+}
+
+shl_string shl_value_to_string(const shl_value* value)
+{
+    if(value == nullptr)
+        return "null";
+
+    char out[1024];
+    int len = 0;
+    switch(value->type)
+    {
+        case SHL_INT:
+            len = snprintf(out, sizeof(out), "int:%l", value->i);
+            break;
+        case SHL_FLOAT:
+            len = snprintf(out, sizeof(out), "float:%f", value->f);
+            break;
+        case SHL_STRING:
+            len = snprintf(out, sizeof(out), "string:%s", value->str);
+            break;
+        case SHL_OBJECT:
+            len = snprintf(out, sizeof(out), "object");
+            break;
+    }
+    return shl_string(out, len);
 }
 
 #endif

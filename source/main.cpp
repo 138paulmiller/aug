@@ -111,10 +111,21 @@ void ir_print(const shl_ir_module& module)
 		for(const shl_ir_operation& operation : block.operations)
 		{
 			std::cout << '\t' << shl_opcode_labels[(int)operation.opcode];
-			std::cout << ' ' << operation.operand.data;
+			for(shl_ir_operand operand : operation.operands)
+				std::cout << ' ' << operand.data;
 			std::cout << '\n';
 		}
 	}
+}
+
+void process_print(const shl_list<shl_value*>& args)
+{
+	for(shl_value* arg : args)
+	{
+		shl_string str = shl_value_to_string(arg);
+		std::cout << str;
+	}
+	std::cout << "\n";
 }
 
 void run_test(const char* filename)
@@ -124,6 +135,8 @@ void run_test(const char* filename)
 	//lexer_test_file(filename);
 
 	shl_environment env;
+	shl_register(env, "print", process_print);
+
 	shl_ast* root = shl_parse_file(env, filename);
 	if(root == nullptr)
 	{
@@ -141,6 +154,7 @@ void run_test(const char* filename)
 	ir_print(ir.module);
 
 	shl_environment env2;
+	shl_register(env2, "print", process_print);
 	shl_execute(env2, filename);
 }
 
