@@ -10,7 +10,7 @@
     - Semantic Pass- check variable, function, field names, check binary/unary ops
     - Framework - Add filewatchers to recompile if source file changed.
     - VM - Execute compiled bytecode from file
-    - VM - Print Stack trace 
+    - VM - Print Stack trace on error. Link back to source file if running uncompiled bytecode
 
 */
 
@@ -93,13 +93,12 @@ shl_string shl_value_to_string(const shl_value* value);
 #define SHL_DEBUG 0
 
 #ifndef SHL_TOKEN_BUFFER_LEN
-    #define SHL_TOKEN_BUFFER_LEN 128
+    #define SHL_TOKEN_BUFFER_LEN 32
 #endif//SHL_TOKEN_BUFFER_LEN 
 
 #ifndef SHL_BYTECODE_CHUNK_SIZE
     #define SHL_BYTECODE_CHUNK_SIZE (1024 * 2)
 #endif//SHL_BYTECODE_CHUNK_SIZE
-
 
 #ifndef SHL_STACK_SIZE
     #define SHL_STACK_SIZE (4096 * 4)
@@ -213,9 +212,9 @@ struct shl_token_detail
 // All token type info. Types map from id to type info
 static shl_token_detail shl_token_details[(int)SHL_TOKEN_COUNT] = 
 {
-    #define SHL_TOKEN(id, ...) { #id, __VA_ARGS__},
-        SHL_TOKEN_LIST
-    #undef SHL_TOKEN
+#define SHL_TOKEN(id, ...) { #id, __VA_ARGS__},
+    SHL_TOKEN_LIST
+#undef SHL_TOKEN
 };
 
 #undef SHL_TOKEN_LIST
@@ -243,12 +242,13 @@ struct shl_lexer
     int line, col;
     int prev_line, prev_col;
     std::streampos pos_start;
+
+    char token_buffer[SHL_TOKEN_BUFFER_LEN];
 };
 
 #define SHL_LEXER_ERROR(env, lexer, token, ...)          \
 {                                                        \
     token.id = SHL_TOKEN_ERR;                            \
-                                                         \
     SHL_LOG_ERROR(env, "%s(%d,%d):",                     \
         lexer.inputname.c_str(), lexer.line, lexer.col); \
     SHL_LOG_ERROR(env, __VA_ARGS__);                     \
@@ -299,20 +299,17 @@ void shl_lexer_end_tracking(shl_lexer& lexer, shl_string& s)
     const std::streampos pos_end = lexer.input->tellg();
     const int len = pos_end - lexer.pos_start;
 
-    static char buffer[SHL_TOKEN_BUFFER_LEN];
-
+    lexer.token_buffer[0] = '\0';
     lexer.input->seekg(lexer.pos_start);
-    lexer.input->read(buffer, len);
+    lexer.input->read(lexer.token_buffer, len);
     lexer.input->seekg(pos_end);
     lexer.input->clear(state);
 
-    s.assign(buffer, len);
+    s.assign(lexer.token_buffer, len);
 }
 
 bool shl_lexer_tokenize_string(shl_environment& env, shl_lexer& lexer, shl_token& token)
 {
-    shl_lexer_start_tracking(lexer);
-
     char c = shl_lexer_get(lexer);
     if (c != '\"')
     {
@@ -320,9 +317,13 @@ bool shl_lexer_tokenize_string(shl_environment& env, shl_lexer& lexer, shl_token
         return false;
     }
 
-    do
+    token.id = SHL_TOKEN_STRING;
+    token.data.clear();
+
+    c = shl_lexer_get(lexer);
+
+    while (c != '\"')
     {
-        c = shl_lexer_get(lexer);
         if (c == EOF)
         {
             SHL_LEXER_ERROR(env, lexer, token, "string literal missing closing \"");
@@ -335,12 +336,40 @@ bool shl_lexer_tokenize_string(shl_environment& env, shl_lexer& lexer, shl_token
             c = shl_lexer_get(lexer);
             switch (c)
             {
-            case '\'': case '\"': case '\\':
-            case '0': case 'a': case 'b': case 'f': case 'n': case 'r': case 't': case 'v':
-                c = shl_lexer_get(lexer);
+            case '\'': 
+                token.data.push_back('\'');
+                break;
+            case '\"':
+                token.data.push_back('\"');
+                break;
+            case '\\':
+                token.data.push_back('\\');
+                break;
+            case '0': //Null
+                token.data.push_back(0x0);
+                break;
+            case 'a': //Alert beep
+                token.data.push_back(0x07);
+                break;
+            case 'b': // Backspace
+                token.data.push_back(0x08);
+                break;
+            case 'f': // Page break
+                token.data.push_back(0x0C);
+                break;
+            case 'n': // Newline
+                token.data.push_back(0x0A);
+                break;
+            case 'r': // Carriage return
+                token.data.push_back(0x0D);
+                break;
+            case 't': // Tab (Horizontal)
+                token.data.push_back(0x09);
+                break;
+            case 'v': // Tab (Vertical)
+                token.data.push_back(0x0B);
                 break;
             default:
-            {
                 SHL_LEXER_ERROR(env, lexer, token, "invalid escape character \\%c", c);
                 while (c != '\"')
                 {
@@ -350,12 +379,14 @@ bool shl_lexer_tokenize_string(shl_environment& env, shl_lexer& lexer, shl_token
                 }
                 return false;
             }
-            }
         }
-    } while (c != '\"');
+        else
+        {
+            token.data.push_back(c);
+        }
 
-    token.id = SHL_TOKEN_STRING;
-    shl_lexer_end_tracking(lexer, token.data);
+        c = shl_lexer_get(lexer);
+    }
 
     return true;
 }
@@ -692,6 +723,8 @@ bool shl_lexer_open(shl_environment& env, shl_lexer& lexer, const char* code)
     if (iss == nullptr || !iss->good())
     {
         SHL_LOG_ERROR(env,"Lexer failed to open code");
+        if(iss) 
+            delete iss;
         return false;
     }
 
@@ -709,6 +742,8 @@ bool shl_lexer_open_file(shl_environment& env, shl_lexer& lexer, const char* fil
     if (file == nullptr || !file->is_open())
     {
         SHL_LOG_ERROR(env,"Lexer failed to open file %s", filename);
+        if (file)
+            delete file;
         return false;
     }
 
@@ -718,7 +753,12 @@ bool shl_lexer_open_file(shl_environment& env, shl_lexer& lexer, const char* fil
     return shl_lexer_move(env, lexer);
 }
 
-// -------------------------------------- Parser ---------------------------------------// 
+// -------------------------------------- Parser / Abstract Syntax Tree ---------------------------------------// 
+#define SHL_PARSE_ERROR(env, lexer,  ...)\
+{\
+    SHL_LOG_ERROR(env, "Syntax error %s(%d,%d)", lexer.inputname.c_str(), lexer.line, lexer.col);\
+    SHL_LOG_ERROR(env, __VA_ARGS__);\
+}
 
 enum shl_ast_id : uint8_t
 {
@@ -756,13 +796,7 @@ void shl_ast_delete(shl_ast* node)
     delete node;
 }
 
-#define SHL_PARSE_ERROR(env, lexer,  ...)\
-{\
-    SHL_LOG_ERROR(env, "Syntax error %s(%d,%d)", lexer.inputname.c_str(), lexer.line, lexer.col);\
-    SHL_LOG_ERROR(env, __VA_ARGS__);\
-}
-
-bool shl_parse_expr_pop(shl_environment& env, shl_lexer& lexer, shl_list<shl_token>&op_stack, shl_list<shl_ast*>& expr_stack)
+bool shl_parse_expr_pop(shl_environment& env, shl_lexer& lexer, shl_list<shl_token>& op_stack, shl_list<shl_ast*>& expr_stack)
 {
     shl_token next_op = op_stack.back();
     op_stack.pop_back();
@@ -1010,6 +1044,7 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 }
 
 // -------------------------------------- OPCODE -----------------------------------------// 
+
 #define SHL_OPCODE_LIST\
 	SHL_OPCODE(NO_OP)          \
 	SHL_OPCODE(EXIT)           \
@@ -1080,18 +1115,18 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 
 enum shl_opcode : uint8_t
 { 
-	#define SHL_OPCODE(opcode) SHL_OPCODE_##opcode,
+#define SHL_OPCODE(opcode) SHL_OPCODE_##opcode,
 	SHL_OPCODE_LIST
-	#undef SHL_OPCODE
+#undef SHL_OPCODE
     SHL_OPCODE_COUNT
 };
 static_assert(SHL_OPCODE_COUNT < 255, "SHL Opcode count too large. This will affect bytecode instruction set");
 
 static const char* shl_opcode_labels[] =
 {
-	#define SHL_OPCODE(opcode) #opcode,
+#define SHL_OPCODE(opcode) #opcode,
 	SHL_OPCODE_LIST
-	#undef SHL_OPCODE
+#undef SHL_OPCODE
 }; 
 
 #undef SHL_OPCODE_LIST
@@ -1191,7 +1226,7 @@ void shl_ir_add_operation(shl_ir& ir, shl_opcode opcode)
     shl_ir_add_operation(ir, opcode, operand);
 }
 
-// -------------------------------------- Bytecode ----------------------------------------------// 
+// -------------------------------------- Virtual Machine / Bytecode ----------------------------------------------// 
 struct shl_bytecode_chunk
 {
     char bytecode[SHL_BYTECODE_CHUNK_SIZE];
@@ -1205,34 +1240,20 @@ union shl_bytecode_value
     unsigned char bytes[16];
 };
 
-// -------------------------------------- VM ----------------------------------------------------// 
-
 struct shl_vm
 {
-    // NOTE?: all globals are push on beginning portion of stack frame. All locals are relative addresses
-    shl_value stack[SHL_STACK_SIZE]; 
+    char* instruction;
     shl_array<shl_bytecode_chunk*> bytecode_chunks;
-
-    char* instruction; 
-    size_t stack_offset; 
-    bool running;
+    size_t chunk_index;
+ 
+    shl_value stack[SHL_STACK_SIZE]; 
+    size_t stack_offset;
 };
 
 #define SHL_VM_ERROR(env, vm, ...)     \
 {                                      \
     SHL_LOG_ERROR(env, __VA_ARGS__);   \
-    vm.running = false;                \
-}
-
-shl_value* shl_vm_delete(shl_environment& env, shl_vm& vm)
-{
-    for(shl_bytecode_chunk* bytecode_chunk : vm.bytecode_chunks)
-        delete bytecode_chunk;
-    vm.bytecode_chunks.clear();
-
-    vm.instruction = nullptr; 
-    vm.stack_offset = -1; 
-    vm.running = false;
+    vm.instruction = nullptr;          \
 }
 
 shl_value* shl_vm_push(shl_environment& env, shl_vm& vm)
@@ -1240,20 +1261,19 @@ shl_value* shl_vm_push(shl_environment& env, shl_vm& vm)
     ++vm.stack_offset;
     if(vm.stack_offset >= SHL_STACK_SIZE)   
     {                                              
-        if(vm.running)
+        if(vm.instruction)
             SHL_VM_ERROR(env, vm, "Stack overflow");      
         return nullptr;                           
     }
 
-    shl_value* value = &vm.stack[vm.stack_offset];
-    return value;
+    return &vm.stack[vm.stack_offset];
 }
 
 shl_value* shl_vm_pop(shl_environment& env, shl_vm& vm)
 {        
     if(vm.stack_offset < 0)   
     {   
-        if(vm.running)
+        if(vm.instruction)
             SHL_VM_ERROR(env, vm, "Stack underflow");      
         return nullptr;                           
     }
@@ -1291,38 +1311,56 @@ void shl_vm_execute_binop(shl_environment& env, shl_vm& vm, shl_opcode opcode)
     shl_value* target = shl_vm_push(env, vm);
     if(rhs == nullptr || lhs == nullptr || target == nullptr)
         return;
-
-    if(rhs->type != lhs->type)
+    
+    if (lhs->type == SHL_INT)
     {
-        SHL_VM_ERROR(env, vm, "Type mismatch")
+        if (rhs->type == SHL_INT)
+        {
+            SHL_OPCODE_BINOP_EXEC(opcode, target->i, lhs->i, rhs->i);
+            target->type = SHL_INT;
+        }
+        else if (rhs->type == SHL_FLOAT)
+        {
+            SHL_OPCODE_BINOP_EXEC(opcode, target->i, lhs->i, rhs->f);
+            target->type = SHL_FLOAT;
+        }
+    }
+    else if (lhs->type == SHL_FLOAT)
+    {
+        if (rhs->type == SHL_INT)
+        {
+            SHL_OPCODE_BINOP_EXEC(opcode, target->f, lhs->f, rhs->i);
+            target->type = SHL_FLOAT;
+        }
+        else if (rhs->type == SHL_FLOAT)
+        {
+            SHL_OPCODE_BINOP_EXEC(opcode, target->f, lhs->f, rhs->f);
+            target->type = SHL_FLOAT;
+        }
+    }
+    else
+    {
+        //Undefined, should we support operator overloading? fallback to user?
+        SHL_VM_ERROR(env, vm, "Unexpected types for operator")
         return;
     }
-
-    target->type = lhs->type;
-    
-    if(lhs->type == SHL_INT)
-        SHL_OPCODE_BINOP_EXEC(opcode, target->i, lhs->i, rhs->i)
-    else if(lhs->type == SHL_FLOAT)
-        SHL_OPCODE_BINOP_EXEC(opcode, target->f, lhs->f, rhs->f)
-    else
-        //Undefined, should we support operator overloading? fallback to user?
-        vm.running = false;
 }
 
-void shl_vm_execute(shl_environment& env, shl_vm& vm)
+void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<shl_bytecode_chunk*>& bytecode_chunks)
 {
-    if(vm.bytecode_chunks.size() == 0)
+    if (bytecode_chunks.size() == 0)
         return;
 
+    vm.chunk_index = 0;
+    vm.bytecode_chunks = bytecode_chunks;
+    vm.stack_offset = -1;
+    vm.instruction = &bytecode_chunks[vm.chunk_index]->bytecode[0];
+   
+    // Objects to deserialize data from bytecode
     shl_bytecode_value bytecode_value;
     shl_array<char> bytecode_string;
 
-    shl_bytecode_chunk* chunk = vm.bytecode_chunks[0];
-    vm.instruction = &chunk->bytecode[0];
-    vm.stack_offset = -1;
-    vm.running = true;
-
-    while(vm.running)
+    while(vm.instruction)
     {
         shl_opcode opcode = (shl_opcode) (*vm.instruction);
         ++vm.instruction;
@@ -1335,14 +1373,17 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm)
         switch(opcode)
         {
             case SHL_OPCODE_EXIT:
-                vm.running = false;
+                vm.instruction = nullptr;
                 break;
             case SHL_OPCODE_NO_OP:
                 break;
             case SHL_OPCODE_NEXT_CHUNK:
             {
-                ++chunk;
-                vm.instruction = &chunk->bytecode[0];
+                ++vm.chunk_index;
+                if (vm.chunk_index < vm.bytecode_chunks.size())
+                    vm.instruction = &vm.bytecode_chunks[vm.chunk_index]->bytecode[0];
+                else
+                    SHL_VM_ERROR(env, vm, "Unexpected types for operator")
                 break;
             }
             case SHL_OPCODE_PUSH_INT:   
@@ -1429,27 +1470,18 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm)
 
         }
 
-
 #if SHL_DEBUG
         shl_value* top = &vm.stack[vm.stack_offset];
         shl_string str = shl_value_to_string(top);
         printf("TOP: %s", str.c_str());
         getchar();
 #endif
-
-
-        //if(vm.running && vm.stack_offset >= 0)
-        //{
-        //    std::cout << "\nTOP: i=" << vm.stack[vm.stack_offset].i << " f=" << vm.stack[vm.stack_offset].f;
-        //    std::cin.get();
-        //}
     }
-}
 
-void shl_vm_shutdown(shl_environment& env, shl_vm& vm)
-{
-    for( shl_bytecode_chunk* chunk : vm.bytecode_chunks)
-        delete chunk;
+    // Free bytecode
+    for (int i = 0; i < vm.bytecode_chunks.size(); ++i)
+        delete vm.bytecode_chunks[i];
+    vm.bytecode_chunks.clear();
 }
 
 // -------------------------------------- Passes ------------------------------------------------// 
@@ -1461,11 +1493,9 @@ bool shl_pass_semantic_check(const shl_ast* node)
 }
 
 // -------------------------------------- Transformations ---------------------------------------// 
+
 void shl_ast_to_ir(const shl_ast* node, shl_ir& ir)
 {
-    if(!shl_pass_semantic_check(node))
-        return;
-
     const shl_token token = node->token;
     const shl_array<shl_ast*>& children = node->children;
 
@@ -1678,48 +1708,66 @@ void shl_ir_to_bytecode(shl_ir& ir, shl_array<shl_bytecode_chunk*>& bytecode_chu
     bytes.push_back(SHL_OPCODE_EXIT);
     instruction_offset += shl_bytecode_serialize(bytes, chunk_offset, bytecode_chunks);
 }
-
 // -------------------------------------- API ------ ---------------------------------------// 
-
 
 void shl_register(shl_environment& env, const char* function_id, shl_function_callback *callback)
 {
     env.functions[function_id] = callback;
-    assert(env.functions.count(function_id));
 }
 
 void shl_unregister(shl_environment& env, const char* function_id)
 {
     env.functions.erase(function_id);
-    assert(env.functions.count(function_id) == 0);
 }
 
 void shl_execute(shl_environment& env, const char* filename)
 {
     // Parse file
-	shl_ast* root = shl_parse_file(env, filename);
-	if(root == nullptr)
-		return;
+    shl_ast* root = shl_parse_file(env, filename);
+    if (root == nullptr)
+        return;
+
+    bool success = shl_pass_semantic_check(root);
+    if (!success)
+        return;
 
     // Generate IR
-	shl_ir ir;
-	shl_ast_to_ir(root, ir);
-
+    shl_ir ir;
+    shl_ast_to_ir(root, ir);
     shl_ast_delete(root);
 
     // Load bytecode into VM
-    shl_vm vm;
-    shl_ir_to_bytecode(ir, vm.bytecode_chunks);
+    shl_array<shl_bytecode_chunk*> bytecode_chunks;
+    shl_ir_to_bytecode(ir, bytecode_chunks);
 
     // Run VM
-    shl_vm_execute(env, vm);
-
-    shl_vm_delete(env, vm);
+    shl_vm vm;
+    shl_vm_execute(env, vm, bytecode_chunks);
 }
 
 void shl_evaluate(shl_environment& env, const char* code)
 {
-    //TODO: compile to byte code chunk, then pass to VM
+    // Parse file
+    shl_ast* root = shl_parse(env, code);
+    if (root == nullptr)
+        return;
+
+    bool success = shl_pass_semantic_check(root);
+    if (!success)
+        return;
+
+    // Generate IR
+    shl_ir ir;
+    shl_ast_to_ir(root, ir);
+    shl_ast_delete(root);
+
+    // Load bytecode into VM
+    shl_array<shl_bytecode_chunk*> bytecode_chunks;
+    shl_ir_to_bytecode(ir, bytecode_chunks);
+
+    // Run VM
+    shl_vm vm;
+    shl_vm_execute(env, vm, bytecode_chunks);
 }
 
 shl_string shl_value_to_string(const shl_value* value)
