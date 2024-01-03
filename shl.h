@@ -136,58 +136,59 @@ shl_string shl_value_to_string(const shl_value* value);
 }
 
 // -------------------------------------- Lexer  ---------------------------------------// 
-#define SHL_TOKEN_LIST                           \
-    /* State */                                  \
-    SHL_TOKEN(NONE,           0, 0, 0, NULL)     \
-    SHL_TOKEN(ERR,	          0, 0, 1, NULL)     \
-    SHL_TOKEN(END,            0, 0, 1, NULL)     \
-    /* Symbols */			                     \
-    SHL_TOKEN(DOT,            0, 0, 0, NULL)     \
-    SHL_TOKEN(COMMA,          0, 0, 0, NULL)     \
-    SHL_TOKEN(COLON,          0, 0, 0, NULL)     \
-    SHL_TOKEN(SEMICOLON,      0, 0, 0, NULL)     \
-    SHL_TOKEN(LPAREN,         0, 0, 0, NULL)     \
-    SHL_TOKEN(RPAREN,         0, 0, 0, NULL)     \
-    SHL_TOKEN(LBRACKET,       0, 0, 0, NULL)     \
-    SHL_TOKEN(RBRACKET,       0, 0, 0, NULL)     \
-    SHL_TOKEN(LBRACE,         0, 0, 0, NULL)     \
-    SHL_TOKEN(RBRACE,         0, 0, 0, NULL)     \
-    /* Operators */                              \
-    SHL_TOKEN(AND,            1, 2, 0, NULL)     \
-    SHL_TOKEN(OR,             1, 2, 0, NULL)     \
-    SHL_TOKEN(ADD,            2, 2, 0, NULL)     \
-    SHL_TOKEN(ADD_EQUAL,      1, 2, 0, NULL)     \
-    SHL_TOKEN(SUB,            2, 2, 0, NULL)     \
-    SHL_TOKEN(SUB_EQUAL,      1, 2, 0, NULL)     \
-    SHL_TOKEN(MUL,            3, 2, 0, NULL)     \
-    SHL_TOKEN(MUL_EQUAL,      1, 2, 0, NULL)     \
-    SHL_TOKEN(DIV,            3, 2, 0, NULL)     \
-    SHL_TOKEN(DIV_EQUAL,      1, 2, 0, NULL)     \
-    SHL_TOKEN(POW,            3, 2, 0, NULL)     \
-    SHL_TOKEN(POW_EQUAL,      1, 2, 0, NULL)     \
-    SHL_TOKEN(LESS,           2, 2, 0, NULL)     \
-    SHL_TOKEN(GREATER,        2, 2, 0, NULL)     \
-    SHL_TOKEN(LESS_EQUAL,     1, 2, 0, NULL)     \
-    SHL_TOKEN(GREATER_EQUAL,  1, 2, 0, NULL)     \
-    SHL_TOKEN(ASSIGN,         1, 2, 0, NULL)     \
-    SHL_TOKEN(EQUAL,          2, 2, 0, NULL)     \
-    SHL_TOKEN(NOT,            3, 1, 0, NULL)     \
-    SHL_TOKEN(NOT_EQUAL,      3, 2, 0, NULL)     \
-    /* Literals */                               \
-    SHL_TOKEN(DECIMAL,        0, 0, 1, NULL)     \
-    SHL_TOKEN(HEXIDECIMAL,    0, 0, 1, NULL)     \
-    SHL_TOKEN(BINARY,         0, 0, 1, NULL)     \
-    SHL_TOKEN(FLOAT,          0, 0, 1, NULL)     \
-    SHL_TOKEN(STRING,         0, 0, 1, NULL)     \
-    /* Labels */                                 \
-    SHL_TOKEN(ID,             0, 0, 1, NULL)     \
-    /* Keywords */                               \
-    SHL_TOKEN(IF,             0, 0, 1, "if")     \
-    SHL_TOKEN(IN,             0, 0, 1, "in")     \
-    SHL_TOKEN(FOR,            0, 0, 1, "for")    \
-    SHL_TOKEN(WHILE,          0, 0, 1, "while")  \
-    SHL_TOKEN(FUNC,           0, 0, 1, "func")   \
-    SHL_TOKEN(TRUE,           0, 0, 1, "true")   \
+#define SHL_TOKEN_LIST                             \
+    /* State */                                    \
+    SHL_TOKEN(NONE,           0, 0, 0, NULL)       \
+    SHL_TOKEN(ERR,	          0, 0, 1, NULL)       \
+    SHL_TOKEN(END,            0, 0, 1, NULL)       \
+    /* Symbols */			                       \
+    SHL_TOKEN(DOT,            0, 0, 0, NULL)       \
+    SHL_TOKEN(COMMA,          0, 0, 0, NULL)       \
+    SHL_TOKEN(COLON,          0, 0, 0, NULL)       \
+    SHL_TOKEN(SEMICOLON,      0, 0, 0, NULL)       \
+    SHL_TOKEN(LPAREN,         0, 0, 0, NULL)       \
+    SHL_TOKEN(RPAREN,         0, 0, 0, NULL)       \
+    SHL_TOKEN(LBRACKET,       0, 0, 0, NULL)       \
+    SHL_TOKEN(RBRACKET,       0, 0, 0, NULL)       \
+    SHL_TOKEN(LBRACE,         0, 0, 0, NULL)       \
+    SHL_TOKEN(RBRACE,         0, 0, 0, NULL)       \
+    /* Operators */                                \
+    SHL_TOKEN(AND,            1, 2, 0, NULL)       \
+    SHL_TOKEN(OR,             1, 2, 0, NULL)       \
+    SHL_TOKEN(ADD,            2, 2, 0, NULL)       \
+    SHL_TOKEN(ADD_EQUAL,      1, 2, 0, NULL)       \
+    SHL_TOKEN(SUB,            2, 2, 0, NULL)       \
+    SHL_TOKEN(SUB_EQUAL,      1, 2, 0, NULL)       \
+    SHL_TOKEN(MUL,            3, 2, 0, NULL)       \
+    SHL_TOKEN(MUL_EQUAL,      1, 2, 0, NULL)       \
+    SHL_TOKEN(DIV,            3, 2, 0, NULL)       \
+    SHL_TOKEN(DIV_EQUAL,      1, 2, 0, NULL)       \
+    SHL_TOKEN(POW,            3, 2, 0, NULL)       \
+    SHL_TOKEN(POW_EQUAL,      1, 2, 0, NULL)       \
+    SHL_TOKEN(LESS,           2, 2, 0, NULL)       \
+    SHL_TOKEN(GREATER,        2, 2, 0, NULL)       \
+    SHL_TOKEN(LESS_EQUAL,     1, 2, 0, NULL)       \
+    SHL_TOKEN(GREATER_EQUAL,  1, 2, 0, NULL)       \
+    SHL_TOKEN(ASSIGN,         1, 2, 0, NULL)       \
+    SHL_TOKEN(EQUAL,          2, 2, 0, NULL)       \
+    SHL_TOKEN(NOT,            3, 1, 0, NULL)       \
+    SHL_TOKEN(NOT_EQUAL,      3, 2, 0, NULL)       \
+    /* Literals */                                 \
+    SHL_TOKEN(DECIMAL,        0, 0, 1, NULL)       \
+    SHL_TOKEN(HEXIDECIMAL,    0, 0, 1, NULL)       \
+    SHL_TOKEN(BINARY,         0, 0, 1, NULL)       \
+    SHL_TOKEN(FLOAT,          0, 0, 1, NULL)       \
+    SHL_TOKEN(STRING,         0, 0, 1, NULL)       \
+    /* Labels */                                   \
+    SHL_TOKEN(NAME,           0, 0, 1, NULL)       \
+    /* Keywords */                                 \
+    SHL_TOKEN(VAR,            0, 0, 1, "var")      \
+    SHL_TOKEN(IF,             0, 0, 1, "if")       \
+    SHL_TOKEN(IN,             0, 0, 1, "in")       \
+    SHL_TOKEN(FOR,            0, 0, 1, "for")      \
+    SHL_TOKEN(WHILE,          0, 0, 1, "while")    \
+    SHL_TOKEN(FUNC,           0, 0, 1, "func")     \
+    SHL_TOKEN(TRUE,           0, 0, 1, "true")     \
     SHL_TOKEN(FALSE,          0, 0, 1, "false")
 
 // Token identifier. 
@@ -444,7 +445,7 @@ bool shl_lexer_tokenize_symbol(shl_environment& env, shl_lexer& lexer, shl_token
         break;
     case '=':
         if (shl_lexer_peek(lexer) == '=' && shl_lexer_get(lexer))
-            id = SHL_TOKEN_GREATER_EQUAL;
+            id = SHL_TOKEN_EQUAL;
         else
             id = SHL_TOKEN_ASSIGN;
         break;
@@ -478,7 +479,7 @@ bool shl_lexer_tokenize_symbol(shl_environment& env, shl_lexer& lexer, shl_token
     return true;
 }
 
-bool shl_lexer_tokenize_label(shl_environment& env, shl_lexer& lexer, shl_token& token)
+bool shl_lexer_tokenize_name(shl_environment& env, shl_lexer& lexer, shl_token& token)
 {
     (void)env;
 
@@ -495,15 +496,15 @@ bool shl_lexer_tokenize_label(shl_environment& env, shl_lexer& lexer, shl_token&
         c = shl_lexer_get(lexer);
     shl_lexer_unget(lexer);
 
-    shl_string label;
-    shl_lexer_end_tracking(lexer, label);
+    shl_string name;
+    shl_lexer_end_tracking(lexer, name);
 
     // find token id for keyword
-    shl_token_id id = SHL_TOKEN_ID;
+    shl_token_id id = SHL_TOKEN_NAME;
     for (int i = 0; i < (int)SHL_TOKEN_COUNT; ++i)
     {
         const shl_token_detail& detail = shl_token_details[i];
-        if (detail.keyword && detail.keyword == label)
+        if (detail.keyword && detail.keyword == name)
         {
             id = (shl_token_id)i;
             break;
@@ -511,7 +512,7 @@ bool shl_lexer_tokenize_label(shl_environment& env, shl_lexer& lexer, shl_token&
     }
     
     token.id = id;
-    token.data = std::move(label);
+    token.data = std::move(name);
 
     return true;
 }
@@ -673,7 +674,7 @@ shl_token shl_lexer_tokenize(shl_environment& env, shl_lexer& lexer)
     default:
         if (shl_lexer_tokenize_symbol(env, lexer, token))
             break;
-        if(shl_lexer_tokenize_label(env, lexer, token))
+        if(shl_lexer_tokenize_name(env, lexer, token))
             break;
         if (shl_lexer_tokenize_number(env, lexer, token))
             break;
@@ -791,6 +792,8 @@ shl_ast* shl_ast_new(shl_ast_id id, const shl_token& token = shl_token())
 
 void shl_ast_delete(shl_ast* node)
 {
+    if (node == nullptr)
+        return;
     for(shl_ast* child : node->children)
         shl_ast_delete(child);
     delete node;
@@ -835,6 +838,8 @@ shl_ast* shl_parse_value(shl_environment& env, shl_lexer& lexer);
 
 shl_ast* shl_parse_expr(shl_environment& env, shl_lexer& lexer)
 {
+    // expr : value | expr BINOP expr | UNOP expr
+
     // Shunting yard algorithm
     shl_list<shl_token> op_stack;
     shl_list<shl_ast*> expr_stack;
@@ -890,8 +895,11 @@ shl_ast* shl_parse_expr(shl_environment& env, shl_lexer& lexer)
 
 shl_ast* shl_parse_funccall(shl_environment& env, shl_lexer& lexer)
 {
-    shl_token idtoken = lexer.curr;
-    if (idtoken.id != SHL_TOKEN_ID)
+    // funccall : NAME ( args )
+    // args : NULL | expr | expr , args 
+
+    shl_token name_token = lexer.curr;
+    if (name_token.id != SHL_TOKEN_NAME)
         return nullptr;
 
     if (lexer.next.id != SHL_TOKEN_LPAREN)
@@ -924,17 +932,18 @@ shl_ast* shl_parse_funccall(shl_environment& env, shl_lexer& lexer)
 
     shl_lexer_move(env, lexer); // eat )
 
-    shl_ast* funccall = shl_ast_new(SHL_AST_FUNC_CALL, idtoken);
+    shl_ast* funccall = shl_ast_new(SHL_AST_FUNC_CALL, name_token);
     funccall->children = std::move(args);
     return funccall;
 }
 
 shl_ast* shl_parse_value(shl_environment& env, shl_lexer& lexer)
 {
+    // value : NAME | funccall | NUMBER | STRING | ( expr )
     shl_token token = lexer.curr;
     switch (token.id)
     {
-    case SHL_TOKEN_ID:
+    case SHL_TOKEN_NAME:
     {   
         if (shl_ast* funccall = shl_parse_funccall(env, lexer))
             return funccall;
@@ -974,23 +983,63 @@ shl_ast* shl_parse_value(shl_environment& env, shl_lexer& lexer)
     return nullptr;
 }
 
+shl_ast* shl_parse_assign(shl_environment& env, shl_lexer& lexer)
+{
+    shl_token name_token = lexer.curr;
+    shl_token eq_token = lexer.next;
+    if (name_token.id != SHL_TOKEN_NAME || eq_token.id != SHL_TOKEN_ASSIGN)
+        return nullptr;
+
+    shl_lexer_move(env, lexer); // eat name
+    shl_lexer_move(env, lexer); // eat =
+
+    shl_ast* expr = shl_parse_expr(env, lexer);
+    if (expr == nullptr)
+    {
+        SHL_PARSE_ERROR(env, lexer, "Assignment expected expression after \"=\"");
+        return nullptr;
+    }
+
+    shl_ast* assign = shl_ast_new(SHL_AST_ASSIGN, name_token);
+    assign->children.push_back(expr);
+    return assign;
+}
+
 shl_ast* shl_parse_stmt(shl_environment& env, shl_lexer& lexer)
 {
     //TODO: assignment, funcdef etc..
     // Default, epxression parsing. 
-    if (shl_ast* expr = shl_parse_expr(env, lexer))
+    shl_ast* stmt = nullptr;
+    bool expect_semicolon = true;
+
+    shl_token token = lexer.curr;
+    switch (token.id)
     {
-        if(lexer.curr.id != SHL_TOKEN_SEMICOLON)
+    case SHL_TOKEN_NAME:
+        stmt = shl_parse_assign(env, lexer);
+        if(!stmt)
+            stmt = shl_parse_expr(env, lexer);
+        break;
+    case SHL_TOKEN_FUNC:
+        expect_semicolon = false;
+    default:
+        stmt = shl_parse_expr(env, lexer);
+        break;
+    }
+
+    if (stmt && expect_semicolon)
+    {
+        if (lexer.curr.id != SHL_TOKEN_SEMICOLON)
         {
-            shl_ast_delete(expr);    
-            SHL_PARSE_ERROR(env, lexer,  "Missing semicolon at end of expression");
+            shl_ast_delete(stmt);
+            SHL_PARSE_ERROR(env, lexer, "Missing semicolon at end of expression");
             return nullptr;
         }
 
         shl_lexer_move(env, lexer); // eat ;
-        return expr;
     }
-    return nullptr;
+
+    return stmt;
 }
 
 shl_ast* shl_parse_block(shl_environment& env, shl_lexer& lexer)
@@ -1052,8 +1101,9 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 	SHL_OPCODE(PUSH_INT)       \
 	SHL_OPCODE(PUSH_FLOAT)     \
 	SHL_OPCODE(PUSH_STRING)    \
+	SHL_OPCODE(PUSH_NULL)      \
 	SHL_OPCODE(PUSH_LOCAL)     \
-	SHL_OPCODE(PUSH_GLOBAL)    \
+	SHL_OPCODE(LOAD_LOCAL)     \
 	SHL_OPCODE(POP)            \
 	SHL_OPCODE(ADD)            \
 	SHL_OPCODE(SUB)            \
@@ -1064,13 +1114,12 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 	SHL_OPCODE(MOD)            \
 	SHL_OPCODE(SHL)            \
 	SHL_OPCODE(SHR)            \
-	SHL_OPCODE(SAR)            \
 	SHL_OPCODE(AND)            \
 	SHL_OPCODE(OR)             \
 	SHL_OPCODE(XOR)            \
 	SHL_OPCODE(NOT)            \
 	SHL_OPCODE(NEG)            \
-	SHL_OPCODE(COMPARE)        \
+	SHL_OPCODE(CMP)            \
 	SHL_OPCODE(ABS)            \
 	SHL_OPCODE(SIN)            \
 	SHL_OPCODE(COS)            \
@@ -1085,18 +1134,6 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 	SHL_OPCODE(NE)             \
 	SHL_OPCODE(GE)             \
 	SHL_OPCODE(GT)             \
-	SHL_OPCODE(MEM_ADDR)       \
-	SHL_OPCODE(MEM_GET)        \
-	SHL_OPCODE(MEM_SET)        \
-	SHL_OPCODE(MEM_INC)        \
-	SHL_OPCODE(MEM_DEC)        \
-	SHL_OPCODE(ELEM_ADDR)      \
-	SHL_OPCODE(ELEM_GET)       \
-	SHL_OPCODE(ELEM_SET)       \
-	SHL_OPCODE(FIELD_ADDR)     \
-	SHL_OPCODE(FIELD_GET)      \
-	SHL_OPCODE(FIELD_SET)      \
-	SHL_OPCODE(LABEL)          \
 	SHL_OPCODE(JUMP)           \
 	SHL_OPCODE(JUMP_ZERO)      \
 	SHL_OPCODE(JUMP_NZERO)     \
@@ -1106,7 +1143,6 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 	SHL_OPCODE(JUMP_NE)        \
 	SHL_OPCODE(JUMP_GE)        \
 	SHL_OPCODE(JUMP_GT)        \
-	SHL_OPCODE(MULADD)         \
 	SHL_OPCODE(CALL)           \
 	SHL_OPCODE(RET)            \
 	SHL_OPCODE(ASSERT)         \
@@ -1159,6 +1195,7 @@ struct shl_ir_block
 {
     shl_string label;
     shl_list<shl_ir_operation> operations;
+    size_t local_offset = 0; // used to track local variable memory on stack
 };
 
 // All the blocks within a compilation/translation unit (i.e. file, code literal)
@@ -1167,16 +1204,26 @@ struct shl_ir_module
     shl_list<shl_ir_block> blocks;
 };
 
+struct shl_ir_symtable
+{
+    shl_map<shl_string, long> var_addr_map;
+};
+
+
 // IR Module Builder
 struct shl_ir
 {		
     shl_ir_module module;
-    shl_list<shl_ir_block> block_stack; 
+    shl_list<shl_ir_block> block_stack;
+    shl_list<shl_ir_symtable> symtables;
     int generated_label_count = 0;
 };
 
 void shl_ir_push_block(shl_ir& ir, shl_string label)
 {
+    shl_ir_symtable symtable;
+    ir.symtables.push_front(symtable);
+
     if(label.size() == 0)
     {
         char generated_label[8];
@@ -1197,9 +1244,17 @@ void shl_ir_push_block(shl_ir& ir, shl_string label)
 
 void shl_ir_pop_block(shl_ir& ir)
 {
+    ir.symtables.pop_front();
+
     assert(ir.block_stack.size() > 0);
     ir.module.blocks.push_front(ir.block_stack.back());
     ir.block_stack.pop_back();
+}
+
+shl_ir_block& shl_ir_top_block(shl_ir& ir)
+{
+    assert(ir.block_stack.size() > 0);
+    return ir.block_stack.back();
 }
 
 void shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_list<shl_ir_operand>& operands)
@@ -1226,7 +1281,38 @@ void shl_ir_add_operation(shl_ir& ir, shl_opcode opcode)
     shl_ir_add_operation(ir, opcode, operand);
 }
 
+shl_ir_operand shl_ir_operand_from_int(long data)
+{
+    // Pass the function arg count
+    char arg_data[sizeof(long)]; // Max number of arguments is 99 so only need 3 bytes
+    const int arg_data_len = snprintf(arg_data, sizeof(arg_data), "%d", data);
+
+    shl_ir_operand operand;
+    operand.flags = SHL_IR_OPERAND_DECIMAL;
+    operand.data = std::string(arg_data, arg_data_len);
+    return operand;
+}
+
+long shl_context_set_var_addr(shl_ir& ir, const shl_string& name)
+{
+    shl_ir_block& block = shl_ir_top_block(ir);
+    long offset = block.local_offset++;
+    ir.symtables.front().var_addr_map[name] = offset;
+    return offset;
+}
+
+long shl_context_get_var_addr(shl_ir& ir, const shl_string& name)
+{
+    for (const shl_ir_symtable symtable : ir.symtables)
+    {
+        if (symtable.var_addr_map.count(name))
+            return symtable.var_addr_map.at(name);
+    }
+    return -1;
+}
+
 // -------------------------------------- Virtual Machine / Bytecode ----------------------------------------------// 
+
 struct shl_bytecode_chunk
 {
     char bytecode[SHL_BYTECODE_CHUNK_SIZE];
@@ -1247,13 +1333,20 @@ struct shl_vm
     size_t chunk_index;
  
     shl_value stack[SHL_STACK_SIZE]; 
-    size_t stack_offset;
+    long stack_offset;
+
+    shl_array<size_t> frame_stack;
 };
 
 #define SHL_VM_ERROR(env, vm, ...)     \
 {                                      \
     SHL_LOG_ERROR(env, __VA_ARGS__);   \
     vm.instruction = nullptr;          \
+}
+
+shl_value* shl_vm_top(shl_environment& env, shl_vm& vm)
+{
+    return &vm.stack[vm.stack_offset];
 }
 
 shl_value* shl_vm_push(shl_environment& env, shl_vm& vm)
@@ -1266,7 +1359,7 @@ shl_value* shl_vm_push(shl_environment& env, shl_vm& vm)
         return nullptr;                           
     }
 
-    return &vm.stack[vm.stack_offset];
+    return shl_vm_top(env, vm);
 }
 
 shl_value* shl_vm_pop(shl_environment& env, shl_vm& vm)
@@ -1278,9 +1371,42 @@ shl_value* shl_vm_pop(shl_environment& env, shl_vm& vm)
         return nullptr;                           
     }
 
-    shl_value* value = &vm.stack[vm.stack_offset];
+    shl_value* top = shl_vm_top(env, vm);
     --vm.stack_offset;
-    return value;
+    return top;
+}
+
+void shl_vm_push_frame(shl_environment& env, shl_vm& vm)
+{
+    vm.frame_stack.push_back(vm.stack_offset);
+}
+
+void shl_vm_pop_frame(shl_environment& env, shl_vm& vm)
+{
+    // TODO: Test logic, likely incorrect
+    vm.stack_offset = vm.frame_stack.back();
+    vm.frame_stack.pop_back();
+    if (vm.frame_stack.size() == 0)
+        return;
+
+    //while (vm.stack_offset > vm.frame_stack.back())
+    //{
+    //    // TODO: Free all objects in frame
+    // --vm.stack_offset;
+    //}
+}
+
+shl_value* shl_vm_get(shl_environment& env, shl_vm& vm, size_t frame_offset)
+{
+    const size_t offset = vm.frame_stack.back() + frame_offset;
+    if (offset < 0)
+    {
+        if (vm.instruction)
+            SHL_VM_ERROR(env, vm, "Stack overerflow");
+        return nullptr;
+    }
+
+    return &vm.stack[offset];
 }
 
 #define SHL_OPCODE_BINOP_EXEC(opcode, out, x, y) \
@@ -1321,7 +1447,7 @@ void shl_vm_execute_binop(shl_environment& env, shl_vm& vm, shl_opcode opcode)
         }
         else if (rhs->type == SHL_FLOAT)
         {
-            SHL_OPCODE_BINOP_EXEC(opcode, target->i, lhs->i, rhs->f);
+            SHL_OPCODE_BINOP_EXEC(opcode, target->f, lhs->i, rhs->f);
             target->type = SHL_FLOAT;
         }
     }
@@ -1355,7 +1481,8 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<shl_byteco
     vm.bytecode_chunks = bytecode_chunks;
     vm.stack_offset = -1;
     vm.instruction = &bytecode_chunks[vm.chunk_index]->bytecode[0];
-   
+    vm.frame_stack.push_back(0);
+
     // Objects to deserialize data from bytecode
     shl_bytecode_value bytecode_value;
     shl_array<char> bytecode_string;
@@ -1366,8 +1493,13 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<shl_byteco
         ++vm.instruction;
 
 #if SHL_DEBUG
-        printf("%s", shl_opcode_labels[(int)opcode]);
-        getchar();
+        {
+            printf("%s\n", shl_opcode_labels[(int)opcode]);
+
+            shl_value* top = shl_vm_top(env, vm);
+            shl_string str = shl_value_to_string(top);
+            printf("BEFORE TOP: %s\n", str.c_str());
+        }
 #endif
 
         switch(opcode)
@@ -1429,6 +1561,36 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<shl_byteco
                 value->str = (vm.instruction - (len+1)); 
                 break;
             }
+            case SHL_OPCODE_PUSH_LOCAL:
+            {
+                // Read int
+                for (size_t i = 0; i < sizeof(bytecode_value.i); ++i)
+                    bytecode_value.bytes[i] = *(vm.instruction++);
+
+                shl_value* top = shl_vm_push(env, vm);
+                if (top == nullptr)
+                    break;
+                shl_value* local = shl_vm_get(env, vm, bytecode_value.i);
+                if (local == nullptr)
+                    break;
+                *top = *local;
+                break;
+            }
+            case SHL_OPCODE_LOAD_LOCAL:
+            {
+                // Read int
+                for (size_t i = 0; i < sizeof(bytecode_value.i); ++i)
+                    bytecode_value.bytes[i] = *(vm.instruction++);
+
+                shl_value* top = shl_vm_pop(env, vm);
+                if (top == nullptr)
+                    break;
+                shl_value* local = shl_vm_get(env, vm, bytecode_value.i);
+                if (local == nullptr)
+                    break;
+                *local = *top;
+                break;
+            }
             case SHL_OPCODE_CALL:
             {
                 // Read int
@@ -1456,6 +1618,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<shl_byteco
 
                 break;
             }
+
             case SHL_OPCODE_ADD:
             case SHL_OPCODE_SUB:
             case SHL_OPCODE_MUL:
@@ -1471,10 +1634,11 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<shl_byteco
         }
 
 #if SHL_DEBUG
-        shl_value* top = &vm.stack[vm.stack_offset];
-        shl_string str = shl_value_to_string(top);
-        printf("TOP: %s", str.c_str());
-        getchar();
+        {
+            shl_value* top = shl_vm_top(env, vm);
+            shl_string str = shl_value_to_string(top);
+            printf("AFTER TOP: %s\n", str.c_str());
+        }
 #endif
     }
 
@@ -1494,27 +1658,48 @@ bool shl_pass_semantic_check(const shl_ast* node)
 
 // -------------------------------------- Transformations ---------------------------------------// 
 
-void shl_ast_to_ir(const shl_ast* node, shl_ir& ir)
+void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
 {
     const shl_token token = node->token;
     const shl_array<shl_ast*>& children = node->children;
+    shl_map<shl_string, size_t> variable_to_offsetmap;
 
     switch(node->id)
     {
         case SHL_AST_ROOT:
+        {
             assert(children.size() == 1);
-            shl_ast_to_ir(children[0], ir);
+            shl_ast_to_ir(env, children[0], ir);
             break;
+        }
         case SHL_AST_BLOCK: 
+        {
             shl_ir_push_block(ir, "");
             for (shl_ast* stmt : children)
-                shl_ast_to_ir(stmt, ir);
+                shl_ast_to_ir(env, stmt, ir);
             shl_ir_pop_block(ir);
             break;
+        }
         case SHL_AST_ASSIGN:
-            //TODO
-            assert(0);
+        {
+            assert(children.size() == 1);
+            if (children.size() == 1)
+                shl_ast_to_ir(env, children[0], ir);
+
+            // If the variable has not been assigned, push a new instance onto the stack
+            // otherwise, use the offset to the existing stack instance
+            long offset = shl_context_get_var_addr(ir, token.data);
+            if (offset == -1)
+            {
+                offset = shl_context_set_var_addr(ir, token.data);
+                const shl_ir_operand& address_operand = shl_ir_operand_from_int(offset);
+                shl_ir_add_operation(ir, SHL_OPCODE_PUSH_LOCAL, address_operand);
+            }
+            //load top into address
+            const shl_ir_operand& address_operand = shl_ir_operand_from_int(offset);
+            shl_ir_add_operation(ir, SHL_OPCODE_LOAD_LOCAL, address_operand);
             break;
+        }
         case SHL_AST_LITERAL:
         {
             shl_ir_operand operand;
@@ -1548,16 +1733,22 @@ void shl_ast_to_ir(const shl_ast* node, shl_ir& ir)
         }
         case SHL_AST_VARIABLE:
         {
-            shl_ir_operand operand;
-            operand.data = token.data;
+            const long offset = shl_context_get_var_addr(ir, token.data);
+            if (offset == -1)
+            {
+                SHL_LOG_ERROR(env, "Variable %s not defined in current context", token.data.c_str());
+                break;
+            }
+
             // TODO: determine if variable is local or global
-            shl_ir_add_operation(ir, SHL_OPCODE_PUSH_LOCAL, operand);
+            const shl_ir_operand& address_operand = shl_ir_operand_from_int(offset);
+            shl_ir_add_operation(ir, SHL_OPCODE_PUSH_LOCAL, address_operand);
             break;
         }
         case SHL_AST_UNARY_OP:
         {
             assert(children.size() == 1);
-            shl_ast_to_ir(children[0], ir);
+            shl_ast_to_ir(env, children[0], ir);
 
             switch(token.id)
             {
@@ -1569,8 +1760,8 @@ void shl_ast_to_ir(const shl_ast* node, shl_ir& ir)
         case SHL_AST_BINARY_OP:
         {
             assert(children.size() == 2);
-            shl_ast_to_ir(children[1], ir); // RHS
-            shl_ast_to_ir(children[0], ir); // LHS
+            shl_ast_to_ir(env, children[1], ir); // RHS
+            shl_ast_to_ir(env, children[0], ir); // LHS
 
             switch(token.id)
             {
@@ -1586,15 +1777,10 @@ void shl_ast_to_ir(const shl_ast* node, shl_ir& ir)
         {
             // Pass arguments
             for(const shl_ast* arg : children)
-                shl_ast_to_ir(arg, ir);
+                shl_ast_to_ir(env, arg, ir);
 
             // Pass the function arg count
-            char arg_data[3]; // Max number of arguments is 99 so only need 3 bytes
-            const int arg_data_len = snprintf(arg_data, sizeof(arg_data), "%d", children.size());
-
-            shl_ir_operand arg_count_operand;
-            arg_count_operand.data = shl_string(arg_data, arg_data_len);
-            arg_count_operand.flags = SHL_IR_OPERAND_DECIMAL;
+            const shl_ir_operand& arg_count_operand = shl_ir_operand_from_int(children.size());
 
             // Pass the function name
             shl_ir_operand func_name_operand;
@@ -1733,7 +1919,7 @@ void shl_execute(shl_environment& env, const char* filename)
 
     // Generate IR
     shl_ir ir;
-    shl_ast_to_ir(root, ir);
+    shl_ast_to_ir(env, root, ir);
     shl_ast_delete(root);
 
     // Load bytecode into VM
@@ -1758,7 +1944,7 @@ void shl_evaluate(shl_environment& env, const char* code)
 
     // Generate IR
     shl_ir ir;
-    shl_ast_to_ir(root, ir);
+    shl_ast_to_ir(env, root, ir);
     shl_ast_delete(root);
 
     // Load bytecode into VM
@@ -1780,7 +1966,7 @@ shl_string shl_value_to_string(const shl_value* value)
     switch(value->type)
     {
         case SHL_INT:
-            len = snprintf(out, sizeof(out), "int:%l", value->i);
+            len = snprintf(out, sizeof(out), "int:%d", value->i);
             break;
         case SHL_FLOAT:
             len = snprintf(out, sizeof(out), "float:%f", value->f);

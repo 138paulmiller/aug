@@ -126,7 +126,7 @@ namespace
 		test_ast_print_tree(root);
 
 		shl_ir ir;
-		shl_ast_to_ir(root, ir);
+		shl_ast_to_ir(env, root, ir);
 		shl_ast_delete(root);
 
 		test_ir(ir.module);
