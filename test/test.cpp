@@ -142,13 +142,13 @@ void print(const shl_list<shl_value*>& args)
 		switch (arg->type)
 		{
 		case SHL_INT:
-			printf("%d", arg->i);
+			printf("%ld", arg->i);
 			break;
 		case SHL_FLOAT:
 			printf("%f", arg->f);
 			break;
 		case SHL_STRING:
-			printf(arg->str);
+			printf("%s", arg->str);
 			break;
 		case SHL_OBJECT:
 			printf("object");

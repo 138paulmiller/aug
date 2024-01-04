@@ -11,7 +11,7 @@
     - Framework - Add filewatchers to recompile if source file changed.
     - VM - Execute compiled bytecode from file
     - VM - Print Stack trace on error. Link back to source file if running uncompiled bytecode
-
+    - Type - Support boolean types
 */
 
 #include <functional>
@@ -39,7 +39,6 @@ enum shl_type
     SHL_INT, 
     SHL_FLOAT, 
     SHL_STRING, 
-    SHL_BOOL, 
     SHL_OBJECT
 };
 
@@ -501,7 +500,7 @@ bool shl_lexer_tokenize_name(shl_environment& env, shl_lexer& lexer, shl_token& 
 
     // find token id for keyword
     shl_token_id id = SHL_TOKEN_NAME;
-    for (int i = 0; i < (int)SHL_TOKEN_COUNT; ++i)
+    for (size_t i = 0; i < (size_t)SHL_TOKEN_COUNT; ++i)
     {
         const shl_token_detail& detail = shl_token_details[i];
         if (detail.keyword && detail.keyword == name)
@@ -679,7 +678,7 @@ shl_token shl_lexer_tokenize(shl_environment& env, shl_lexer& lexer)
         if (shl_lexer_tokenize_number(env, lexer, token))
             break;
 
-        SHL_LEXER_ERROR(env, lexer, token, "invalid character % c", c);
+        SHL_LEXER_ERROR(env, lexer, token, "invalid character %c", c);
         break;
     }
 
@@ -1169,6 +1168,8 @@ static const char* shl_opcode_labels[] =
 
 // -------------------------------------- IR --------------------------------------------// 
 
+#define SHL_IR_INVALID_ADDR -1
+
 enum shl_ir_operand_flags : uint8_t
 {
     // type if operand is constant or literal
@@ -1209,8 +1210,6 @@ struct shl_ir_symtable
     shl_map<shl_string, long> var_addr_map;
 };
 
-
-// IR Module Builder
 struct shl_ir
 {		
     shl_ir_module module;
@@ -1285,7 +1284,7 @@ shl_ir_operand shl_ir_operand_from_int(long data)
 {
     // Pass the function arg count
     char arg_data[sizeof(long)]; // Max number of arguments is 99 so only need 3 bytes
-    const int arg_data_len = snprintf(arg_data, sizeof(arg_data), "%d", data);
+    const int arg_data_len = snprintf(arg_data, sizeof(arg_data), "%ld", data);
 
     shl_ir_operand operand;
     operand.flags = SHL_IR_OPERAND_DECIMAL;
@@ -1293,7 +1292,7 @@ shl_ir_operand shl_ir_operand_from_int(long data)
     return operand;
 }
 
-long shl_context_set_var_addr(shl_ir& ir, const shl_string& name)
+long shl_ir_set_var_addr(shl_ir& ir, const shl_string& name)
 {
     shl_ir_block& block = shl_ir_top_block(ir);
     long offset = block.local_offset++;
@@ -1301,14 +1300,14 @@ long shl_context_set_var_addr(shl_ir& ir, const shl_string& name)
     return offset;
 }
 
-long shl_context_get_var_addr(shl_ir& ir, const shl_string& name)
+long shl_ir_get_var_addr(shl_ir& ir, const shl_string& name)
 {
-    for (const shl_ir_symtable symtable : ir.symtables)
+    for (const shl_ir_symtable& symtable : ir.symtables)
     {
         if (symtable.var_addr_map.count(name))
             return symtable.var_addr_map.at(name);
     }
-    return -1;
+    return SHL_IR_INVALID_ADDR;
 }
 
 // -------------------------------------- Virtual Machine / Bytecode ----------------------------------------------// 
@@ -1568,12 +1567,10 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<shl_byteco
                     bytecode_value.bytes[i] = *(vm.instruction++);
 
                 shl_value* top = shl_vm_push(env, vm);
-                if (top == nullptr)
-                    break;
                 shl_value* local = shl_vm_get(env, vm, bytecode_value.i);
-                if (local == nullptr)
-                    break;
-                *top = *local;
+                if (top !=  nullptr || local != nullptr)
+                    *top = *local;
+
                 break;
             }
             case SHL_OPCODE_LOAD_LOCAL:
@@ -1582,13 +1579,20 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<shl_byteco
                 for (size_t i = 0; i < sizeof(bytecode_value.i); ++i)
                     bytecode_value.bytes[i] = *(vm.instruction++);
 
+                const int address = bytecode_value.i;
+                
                 shl_value* top = shl_vm_pop(env, vm);
-                if (top == nullptr)
-                    break;
-                shl_value* local = shl_vm_get(env, vm, bytecode_value.i);
-                if (local == nullptr)
-                    break;
-                *local = *top;
+
+                // If local address was not supplied, i.e. not defined, push new instance onto stack
+                shl_value* local;
+                if(address == SHL_IR_INVALID_ADDR)
+                    local = shl_vm_push(env, vm);
+                else
+                    local = shl_vm_get(env, vm, address);
+                    
+                if (top !=  nullptr || local != nullptr)
+                    *local = *top;
+
                 break;
             }
             case SHL_OPCODE_CALL:
@@ -1643,7 +1647,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<shl_byteco
     }
 
     // Free bytecode
-    for (int i = 0; i < vm.bytecode_chunks.size(); ++i)
+    for (size_t i = 0; i < vm.bytecode_chunks.size(); ++i)
         delete vm.bytecode_chunks[i];
     vm.bytecode_chunks.clear();
 }
@@ -1688,13 +1692,10 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
 
             // If the variable has not been assigned, push a new instance onto the stack
             // otherwise, use the offset to the existing stack instance
-            long offset = shl_context_get_var_addr(ir, token.data);
-            if (offset == -1)
-            {
-                offset = shl_context_set_var_addr(ir, token.data);
-                const shl_ir_operand& address_operand = shl_ir_operand_from_int(offset);
-                shl_ir_add_operation(ir, SHL_OPCODE_PUSH_LOCAL, address_operand);
-            }
+            long offset = shl_ir_get_var_addr(ir, token.data);
+            if (offset == SHL_IR_INVALID_ADDR)
+                shl_ir_set_var_addr(ir, token.data);
+
             //load top into address
             const shl_ir_operand& address_operand = shl_ir_operand_from_int(offset);
             shl_ir_add_operation(ir, SHL_OPCODE_LOAD_LOCAL, address_operand);
@@ -1733,7 +1734,7 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
         }
         case SHL_AST_VARIABLE:
         {
-            const long offset = shl_context_get_var_addr(ir, token.data);
+            const long offset = shl_ir_get_var_addr(ir, token.data);
             if (offset == -1)
             {
                 SHL_LOG_ERROR(env, "Variable %s not defined in current context", token.data.c_str());
@@ -1966,7 +1967,7 @@ shl_string shl_value_to_string(const shl_value* value)
     switch(value->type)
     {
         case SHL_INT:
-            len = snprintf(out, sizeof(out), "int:%d", value->i);
+            len = snprintf(out, sizeof(out), "int:%ld", value->i);
             break;
         case SHL_FLOAT:
             len = snprintf(out, sizeof(out), "float:%f", value->f);

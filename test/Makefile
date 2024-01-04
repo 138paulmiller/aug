@@ -1,10 +1,10 @@
 
-OUT_DIR = build
+OUT_DIR = ../build
 TARGET = $(OUT_DIR)/shl_test
-SRC = $(wildcard source/*.cpp)
+SRC = $(wildcard *.cpp)
 CC = g++
 CFLAGS = -Wall
-LIBS = -std=c++17
+LIBS = -I../ -std=c++17
 
 all: $(OUT_DIR) $(TARGET)
 	echo "Done"
