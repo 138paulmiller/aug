@@ -76,6 +76,7 @@ void shl_execute(shl_environment& env, const char* filename);
 void shl_evaluate(shl_environment& env, const char* code);
 
 shl_string shl_value_to_string(const shl_value* value);
+bool shl_value_to_bool(const shl_value* value);
 
 #endif //__SHL_HEADER__
 
@@ -181,7 +182,6 @@ shl_string shl_value_to_string(const shl_value* value);
     /* Labels */                                   \
     SHL_TOKEN(NAME,           0, 0, 1, NULL)       \
     /* Keywords */                                 \
-    SHL_TOKEN(VAR,            0, 0, 1, "var")      \
     SHL_TOKEN(IF,             0, 0, 1, "if")       \
     SHL_TOKEN(IN,             0, 0, 1, "in")       \
     SHL_TOKEN(FOR,            0, 0, 1, "for")      \
@@ -778,7 +778,8 @@ enum shl_ast_id : uint8_t
 {
     SHL_AST_ROOT,
     SHL_AST_BLOCK, 
-    SHL_AST_ASSIGN, 
+    SHL_AST_STMT_ASSIGN, 
+    SHL_AST_STMT_IF, 
     SHL_AST_LITERAL, 
     SHL_AST_VARIABLE, 
     SHL_AST_UNARY_OP, 
@@ -794,6 +795,10 @@ struct shl_ast
     shl_token token;
     shl_array<shl_ast*> children;
 };
+
+// Forward declared. 
+shl_ast* shl_parse_value(shl_environment& env, shl_lexer& lexer); 
+shl_ast* shl_parse_block(shl_environment& env, shl_lexer& lexer);
 
 shl_ast* shl_ast_new(shl_ast_id id, const shl_token& token = shl_token())
 {
@@ -846,8 +851,6 @@ bool shl_parse_expr_pop(shl_environment& env, shl_lexer& lexer, shl_list<shl_tok
     expr_stack.push_back(binaryop);
     return true;
 }
-
-shl_ast* shl_parse_value(shl_environment& env, shl_lexer& lexer); 
 
 shl_ast* shl_parse_expr(shl_environment& env, shl_lexer& lexer)
 {
@@ -996,7 +999,25 @@ shl_ast* shl_parse_value(shl_environment& env, shl_lexer& lexer)
     return nullptr;
 }
 
-shl_ast* shl_parse_assign(shl_environment& env, shl_lexer& lexer)
+shl_ast* shl_parse_stmt_expr(shl_environment& env, shl_lexer& lexer)
+{
+    shl_ast* stmt_expr = shl_parse_expr(env, lexer);
+    if (stmt_expr == nullptr)
+        return nullptr;
+    
+    if (lexer.curr.id != SHL_TOKEN_SEMICOLON)
+    {
+        shl_ast_delete(stmt_expr);
+        SHL_PARSE_ERROR(env, lexer, "Missing semicolon at end of expression");
+        return nullptr;
+    }
+
+    shl_lexer_move(env, lexer); // eat ;
+    
+    return stmt_expr;
+}
+
+shl_ast* shl_parse_stmt_assign(shl_environment& env, shl_lexer& lexer)
 {
     shl_token name_token = lexer.curr;
     shl_token eq_token = lexer.next;
@@ -1013,9 +1034,61 @@ shl_ast* shl_parse_assign(shl_environment& env, shl_lexer& lexer)
         return nullptr;
     }
 
-    shl_ast* assign = shl_ast_new(SHL_AST_ASSIGN, name_token);
-    assign->children.push_back(expr);
-    return assign;
+    if (lexer.curr.id != SHL_TOKEN_SEMICOLON)
+    {
+        shl_ast_delete(expr);
+        SHL_PARSE_ERROR(env, lexer, "Missing semicolon at end of expression");
+        return nullptr;
+    }
+
+    shl_lexer_move(env, lexer); // eat ;
+
+    shl_ast* stmt_assign = shl_ast_new(SHL_AST_STMT_ASSIGN, name_token);
+    stmt_assign->children.push_back(expr);
+    return stmt_assign;
+}
+
+shl_ast* shl_parse_stmt_if(shl_environment& env, shl_lexer& lexer)
+{
+    const shl_token if_token = lexer.curr;
+    if (if_token.id != SHL_TOKEN_IF)
+        return nullptr;
+
+    shl_lexer_move(env, lexer); // eat if
+
+    shl_ast* expr = shl_parse_expr(env, lexer);
+    if(expr == nullptr)
+    {
+        SHL_PARSE_ERROR(env, lexer, "If statement missing expression");
+        return nullptr;      
+    }
+
+    const shl_token open_token = lexer.curr;
+    if(open_token.id != SHL_TOKEN_LBRACE)
+    {
+        SHL_PARSE_ERROR(env, lexer, "If block missing \"{\"");
+        return nullptr;      
+    }
+
+    shl_lexer_move(env, lexer); // eat {
+
+    shl_ast* block = shl_parse_block(env, lexer);
+
+    const shl_token close_token = lexer.curr;
+    if(close_token.id != SHL_TOKEN_RBRACE)
+    {
+        shl_ast_delete(expr);
+        shl_ast_delete(block);
+        SHL_PARSE_ERROR(env, lexer, "If block missing \"}\"");
+        return nullptr;      
+    }
+
+    shl_lexer_move(env, lexer); // eat }
+
+    shl_ast* if_stmt = shl_ast_new(SHL_AST_STMT_IF);
+    if_stmt->children.push_back(expr);
+    if_stmt->children.push_back(block);
+    return if_stmt;
 }
 
 shl_ast* shl_parse_stmt(shl_environment& env, shl_lexer& lexer)
@@ -1023,33 +1096,23 @@ shl_ast* shl_parse_stmt(shl_environment& env, shl_lexer& lexer)
     //TODO: assignment, funcdef etc..
     // Default, epxression parsing. 
     shl_ast* stmt = nullptr;
-    bool expect_semicolon = true;
 
     shl_token token = lexer.curr;
     switch (token.id)
     {
     case SHL_TOKEN_NAME:
-        stmt = shl_parse_assign(env, lexer);
+        stmt = shl_parse_stmt_assign(env, lexer);
         if(!stmt)
-            stmt = shl_parse_expr(env, lexer);
+            stmt = shl_parse_stmt_expr(env, lexer);
+        break;
+    case SHL_TOKEN_IF:
+        stmt = shl_parse_stmt_if(env, lexer);
         break;
     case SHL_TOKEN_FUNC:
-        expect_semicolon = false;
-    default:
-        stmt = shl_parse_expr(env, lexer);
         break;
-    }
-
-    if (stmt && expect_semicolon)
-    {
-        if (lexer.curr.id != SHL_TOKEN_SEMICOLON)
-        {
-            shl_ast_delete(stmt);
-            SHL_PARSE_ERROR(env, lexer, "Missing semicolon at end of expression");
-            return nullptr;
-        }
-
-        shl_lexer_move(env, lexer); // eat ;
+    default:
+        stmt = shl_parse_stmt_expr(env, lexer);
+        break;
     }
 
     return stmt;
@@ -1077,7 +1140,7 @@ shl_ast* shl_parse_root(shl_environment& env, shl_lexer& lexer)
 
     shl_ast* root = new shl_ast();
     root->id = SHL_AST_ROOT;
-    root->children = { std::move(block) };
+    root->children.push_back(std::move(block));
     return root;
 }
 
@@ -1194,6 +1257,14 @@ enum shl_ir_operand_flags : uint8_t
     SHL_IR_OPERAND_STRING = 1 << 4, 
 };
 
+// Used to convert values to/from bytes for constant values
+union shl_ir_bytecode_value
+{
+    long i;
+    double f;
+    unsigned char bytes[16];
+};
+
 struct shl_ir_operand
 {
     shl_string data;
@@ -1203,20 +1274,10 @@ struct shl_ir_operand
 struct shl_ir_operation
 {
     shl_opcode opcode;
-    shl_list<shl_ir_operand> operands; //optional parameter. will be encoded in following bytes
-};
-
-struct shl_ir_block
-{
-    shl_string label;
-    shl_list<shl_ir_operation> operations;
-    size_t local_offset = 0; // used to track local variable memory on stack
-};
-
-// All the blocks within a compilation/translation unit (i.e. file, code literal)
-struct shl_ir_module
-{
-    shl_list<shl_ir_block> blocks;
+    shl_array<shl_ir_operand> operands; //optional parameter. will be encoded in following bytes
+   
+    // DEBUG
+    size_t bytecode_offset;
 };
 
 struct shl_ir_symtable
@@ -1224,43 +1285,36 @@ struct shl_ir_symtable
     shl_map<shl_string, long> var_addr_map;
 };
 
+struct shl_ir_block
+{
+    shl_ir_symtable symtable;
+    size_t local_offset; // used to track local variable memory on stack
+};
+
+// All the blocks within a compilation/translation unit (i.e. file, code literal)
+struct shl_ir_module
+{
+    shl_array<shl_ir_operation> operations;
+};
+
 struct shl_ir
 {		
     shl_ir_module module;
-    shl_list<shl_ir_block> block_stack;
-    shl_list<shl_ir_symtable> symtables;
-    int generated_label_count = 0;
+    shl_array<shl_ir_block> block_stack;
+    int label_count = 0;
+    size_t bytecode_count = 0;
 };
 
 void shl_ir_push_block(shl_ir& ir, shl_string label)
 {
-    shl_ir_symtable symtable;
-    ir.symtables.push_front(symtable);
-
-    if(label.size() == 0)
-    {
-        char generated_label[8];
-        int generated_label_len = snprintf(generated_label, sizeof(generated_label), "L%d", ir.generated_label_count);
-        ++ir.generated_label_count;
-
-        shl_ir_block block;
-        block.label = shl_string(&generated_label[0], generated_label_len);
-        ir.block_stack.push_back(block);
-    }
-    else
-    {
-        shl_ir_block block;
-        block.label = label;
-        ir.block_stack.push_back(block);
-    }
+    shl_ir_block block;
+    block.local_offset = 0;
+    ir.block_stack.push_back(block);
 }
 
 void shl_ir_pop_block(shl_ir& ir)
 {
-    ir.symtables.pop_front();
-
     assert(ir.block_stack.size() > 0);
-    ir.module.blocks.push_front(ir.block_stack.back());
     ir.block_stack.pop_back();
 }
 
@@ -1270,28 +1324,65 @@ shl_ir_block& shl_ir_top_block(shl_ir& ir)
     return ir.block_stack.back();
 }
 
-void shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_list<shl_ir_operand>& operands)
+size_t shl_ir_operation_size(const shl_ir_operation& operation)
+{
+    shl_ir_bytecode_value value;
+    size_t size = sizeof(operation.opcode);
+    for(const shl_ir_operand& operand : operation.operands)
+    {
+        if(operand.data.size() == 0)
+            continue;
+
+        if(operand.flags & SHL_IR_OPERAND_BINARY)
+            size += sizeof(value.i);
+        else if(operand.flags & SHL_IR_OPERAND_HEXIDECIMAL)
+            size += sizeof(value.i);
+        else if(operand.flags & SHL_IR_OPERAND_DECIMAL)
+            size += sizeof(value.i);
+        else if(operand.flags & SHL_IR_OPERAND_FLOAT)
+            size += sizeof(value.f);
+        else if(operand.flags & SHL_IR_OPERAND_STRING)
+            size += operand.data.size() + 1; // +1 for null term
+    }
+    return size;
+}
+
+size_t shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_array<shl_ir_operand>& operands)
 {
     shl_ir_operation operation;
     operation.opcode = opcode;
     operation.operands = operands;
-    
-    ir.block_stack.back().operations.push_back(std::move(operation));
+    operation.bytecode_offset = ir.bytecode_count;
+    ir.bytecode_count += shl_ir_operation_size(operation);
+
+    ir.module.operations.push_back(std::move(operation));
+    return ir.module.operations.size()-1;
 }
 
-void shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_ir_operand& operand)
+size_t shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_ir_operand& operand)
 {
     shl_ir_operation operation;
     operation.opcode = opcode;
     operation.operands.push_back(operand);
-
-    ir.block_stack.back().operations.push_back(std::move(operation));
+    operation.bytecode_offset = ir.bytecode_count;
+    ir.bytecode_count += shl_ir_operation_size(operation);
+    
+    assert(ir.block_stack.size());
+    ir.module.operations.push_back(std::move(operation));
+    return ir.module.operations.size()-1;
 }
 
-void shl_ir_add_operation(shl_ir& ir, shl_opcode opcode)
+size_t shl_ir_add_operation(shl_ir& ir, shl_opcode opcode)
 {
     shl_ir_operand operand;
-    shl_ir_add_operation(ir, opcode, operand);
+    return shl_ir_add_operation(ir, opcode, operand);
+}
+
+shl_ir_operation& shl_ir_get_operation(shl_ir& ir, size_t operation_index)
+{
+    assert(ir.block_stack.size());
+    assert(operation_index < ir.module.operations.size());
+    return ir.module.operations.at(operation_index);
 }
 
 shl_ir_operand shl_ir_operand_from_int(long data)
@@ -1310,44 +1401,32 @@ long shl_ir_set_var_addr(shl_ir& ir, const shl_string& name)
 {
     shl_ir_block& block = shl_ir_top_block(ir);
     long offset = block.local_offset++;
-    ir.symtables.front().var_addr_map[name] = offset;
+    block.symtable.var_addr_map[name] = offset;
     return offset;
 }
 
 long shl_ir_get_var_addr(shl_ir& ir, const shl_string& name)
 {
-    for (const shl_ir_symtable& symtable : ir.symtables)
+    for (int i = ir.block_stack.size()-1; i >=0; --i)
     {
-        if (symtable.var_addr_map.count(name))
-            return symtable.var_addr_map.at(name);
+        shl_ir_block& block = ir.block_stack.at(i);
+        if (block.symtable.var_addr_map.count(name))
+            return block.symtable.var_addr_map[name];
     }
     return SHL_IR_INVALID_ADDR;
 }
 
 // -------------------------------------- Virtual Machine / Bytecode ----------------------------------------------// 
 
-struct shl_bytecode_chunk
-{
-    char bytecode[SHL_BYTECODE_CHUNK_SIZE];
-};
-
-// Used to convert values to/from bytes for constant values
-union shl_bytecode_value
-{
-    long i;
-    double f;
-    unsigned char bytes[16];
-};
-
 struct shl_vm
 {
-    char* instruction;
-    shl_array<shl_bytecode_chunk*> bytecode_chunks;
-    size_t chunk_index;
+    const char* instruction;
+    const char* bytecode;
  
     shl_value stack[SHL_STACK_SIZE]; 
     long stack_offset;
 
+    // Address to return to when Ret is called. Pops all local from stack
     shl_array<size_t> frame_stack;
 };
 
@@ -1485,19 +1564,18 @@ void shl_vm_execute_binop(shl_environment& env, shl_vm& vm, shl_opcode opcode)
     }
 }
 
-void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<shl_bytecode_chunk*>& bytecode_chunks)
+void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& bytecode)
 {
-    if (bytecode_chunks.size() == 0)
-        return;
-
-    vm.chunk_index = 0;
-    vm.bytecode_chunks = bytecode_chunks;
+    vm.bytecode = &bytecode[0];
+    vm.instruction = vm.bytecode;
     vm.stack_offset = -1;
-    vm.instruction = &bytecode_chunks[vm.chunk_index]->bytecode[0];
     vm.frame_stack.push_back(0);
 
+    if (vm.bytecode == nullptr)
+        return;
+
     // Objects to deserialize data from bytecode
-    shl_bytecode_value bytecode_value;
+    shl_ir_bytecode_value bytecode_value;
     shl_array<char> bytecode_string;
 
     while(vm.instruction)
@@ -1522,15 +1600,6 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<shl_byteco
                 break;
             case SHL_OPCODE_NO_OP:
                 break;
-            case SHL_OPCODE_NEXT_CHUNK:
-            {
-                ++vm.chunk_index;
-                if (vm.chunk_index < vm.bytecode_chunks.size())
-                    vm.instruction = &vm.bytecode_chunks[vm.chunk_index]->bytecode[0];
-                else
-                    SHL_VM_ERROR(env, vm, "Unexpected types for operator")
-                break;
-            }
             case SHL_OPCODE_PUSH_INT:   
             {
                 // Read int
@@ -1645,6 +1714,17 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<shl_byteco
                 shl_vm_execute_binop(env, vm, opcode);
                 break;
             }
+            case SHL_OPCODE_JUMP_ZERO:
+            {
+                // Read int              
+                for(size_t i = 0; i < sizeof(bytecode_value.i); ++i)
+                    bytecode_value.bytes[i] = *(vm.instruction++);
+
+                // need to check if the chunk can be jumped to
+                shl_value* value = shl_vm_pop(env, vm);
+                if(shl_value_to_bool(value) == 0)
+                    vm.instruction = vm.bytecode + bytecode_value.i;
+            }
             default:
                 // UNSUPPORTED!!!!
             break;
@@ -1659,11 +1739,6 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<shl_byteco
         }
 #endif
     }
-
-    // Free bytecode
-    for (size_t i = 0; i < vm.bytecode_chunks.size(); ++i)
-        delete vm.bytecode_chunks[i];
-    vm.bytecode_chunks.clear();
 }
 
 // -------------------------------------- Passes ------------------------------------------------// 
@@ -1678,6 +1753,9 @@ bool shl_pass_semantic_check(const shl_ast* node)
 
 void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
 {
+    if(node == nullptr)
+        return;
+
     const shl_token token = node->token;
     const shl_array<shl_ast*>& children = node->children;
     shl_map<shl_string, size_t> variable_to_offsetmap;
@@ -1696,23 +1774,6 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
             for (shl_ast* stmt : children)
                 shl_ast_to_ir(env, stmt, ir);
             shl_ir_pop_block(ir);
-            break;
-        }
-        case SHL_AST_ASSIGN:
-        {
-            assert(children.size() == 1);
-            if (children.size() == 1)
-                shl_ast_to_ir(env, children[0], ir);
-
-            // If the variable has not been assigned, push a new instance onto the stack
-            // otherwise, use the offset to the existing stack instance
-            long offset = shl_ir_get_var_addr(ir, token.data);
-            if (offset == SHL_IR_INVALID_ADDR)
-                shl_ir_set_var_addr(ir, token.data);
-
-            //load top into address
-            const shl_ir_operand& address_operand = shl_ir_operand_from_int(offset);
-            shl_ir_add_operation(ir, SHL_OPCODE_LOAD_LOCAL, address_operand);
             break;
         }
         case SHL_AST_LITERAL:
@@ -1802,8 +1863,74 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
             func_name_operand.data = token.data;
             func_name_operand.flags = SHL_IR_OPERAND_STRING;
 
-            const shl_list<shl_ir_operand> operands = { arg_count_operand, func_name_operand };
+            shl_array<shl_ir_operand> operands;
+            operands.push_back(arg_count_operand);
+            operands.push_back(func_name_operand);
             shl_ir_add_operation(ir, SHL_OPCODE_CALL, operands);
+            break;
+        }
+        case SHL_AST_STMT_ASSIGN:
+        {
+            assert(children.size() == 1);
+            if (children.size() == 1)
+                shl_ast_to_ir(env, children[0], ir);
+
+            long offset = shl_ir_get_var_addr(ir, token.data);
+            if (offset == SHL_IR_INVALID_ADDR)
+                shl_ir_set_var_addr(ir, token.data);
+
+            //load top into address
+            const shl_ir_operand& address_operand = shl_ir_operand_from_int(offset);
+            shl_ir_add_operation(ir, SHL_OPCODE_LOAD_LOCAL, address_operand);
+            break;
+        }
+        case SHL_AST_STMT_IF:
+        {
+            if(children.size() == 2)  //if ([0]) {[1]}
+            {            
+                // stub for proper bytecode offsetting
+                shl_ir_operand stub_operand = shl_ir_operand_from_int(0);
+
+                // Evaluate expression. 
+                shl_ast_to_ir(env, children[0], ir);
+                //Jump to end of true block if false
+                const size_t end_block_jmp = shl_ir_add_operation(ir, SHL_OPCODE_JUMP_ZERO, stub_operand);
+
+                // True block
+                shl_ast_to_ir(env, children[1], ir);
+                const size_t end_block_addr = ir.bytecode_count;
+
+                // adjust the operand values to jump to the correct block offsets
+                shl_ir_operation& end_block_jmp_operation = shl_ir_get_operation(ir, end_block_jmp);
+                end_block_jmp_operation.operands[0] = shl_ir_operand_from_int(end_block_addr);
+            }
+            else if(children.size() == 3) //if ([0]) {[1]} else {[2]}
+            {
+                // stub for proper bytecode offsetting
+                shl_ir_operand stub_operand = shl_ir_operand_from_int(0);
+
+                // Evaluate expression. Jump to end of true block if fale
+                shl_ast_to_ir(env, children[0], ir);
+                const size_t else_block_jmp = shl_ir_add_operation(ir, SHL_OPCODE_JUMP_ZERO, stub_operand);
+
+                // True block
+                shl_ast_to_ir(env, children[1], ir);
+                const size_t else_block_addr = ir.bytecode_count;
+                const size_t end_block_jmp = shl_ir_add_operation(ir, SHL_OPCODE_JUMP, stub_operand);
+
+                // Else block
+                shl_ast_to_ir(env, children[2], ir);
+                const size_t end_block_addr = ir.bytecode_count;
+
+
+                // adjust the operand values to jump to the correct block offsets
+                shl_ir_operation& else_block_jmp_operation = shl_ir_get_operation(ir, else_block_jmp);
+                else_block_jmp_operation.operands[0] = shl_ir_operand_from_int(else_block_addr);
+
+                shl_ir_operation& end_block_jmp_operation = shl_ir_get_operation(ir, end_block_jmp);
+                end_block_jmp_operation.operands[0] = shl_ir_operand_from_int(end_block_addr);
+            }
+
             break;
         }
         case SHL_AST_FUNC_DEF:
@@ -1819,95 +1946,77 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
     }
 }
 
-int shl_bytecode_serialize(shl_array<char> bytes, int& chunk_offset, shl_array<shl_bytecode_chunk*>& bytecode_chunks)
+void shl_ir_to_bytecode(shl_ir& ir, shl_array<char>& bytecode)
 {
-    shl_bytecode_chunk* chunk = bytecode_chunks.back();
-    if(chunk_offset + bytes.size() >= (SHL_BYTECODE_CHUNK_SIZE-1))
+    
+    bytecode.resize(ir.bytecode_count+1, SHL_OPCODE_NO_OP) ;
+
+    char* instruction = &bytecode[0];
+    shl_ir_bytecode_value value;
+
+    for(const shl_ir_operation& operation : ir.module.operations)
     {
-        // pad remaining with NO_OPs
-        while(chunk_offset < SHL_BYTECODE_CHUNK_SIZE-1)
+        *instruction = (char)operation.opcode;
+        ++instruction;    
+
+        for(const shl_ir_operand& operand : operation.operands)
         {
-            chunk->bytecode[chunk_offset] = SHL_OPCODE_NO_OP;
-            chunk_offset++;
-        }
-        chunk->bytecode[chunk_offset] = SHL_OPCODE_NEXT_CHUNK;
-        chunk_offset = 0;
-        bytecode_chunks.push_back(new shl_bytecode_chunk());
-        chunk = bytecode_chunks.back();
-    }
+            if(operand.data.size() == 0)
+                continue;
 
-    for(char byte : bytes)
-    {
-        chunk->bytecode[chunk_offset] = byte;
-        chunk_offset++; 
-    }
-  
-    return bytes.size();
-}
-
-void shl_ir_to_bytecode(shl_ir& ir, shl_array<shl_bytecode_chunk*>& bytecode_chunks)
-{
-    int instruction_offset = 0;
-    int chunk_offset = 0;
-    shl_map<const char*, int> label_offset; 
-    shl_bytecode_value value;
-
-    bytecode_chunks.push_back(new shl_bytecode_chunk());
-
-	for(const shl_ir_block& block : ir.module.blocks)
-	{
-        // TODO: handle JMP operations by translating from label to instr offet
-		label_offset[block.label.c_str()] =  instruction_offset;
-		for(const shl_ir_operation& operation : block.operations)
-		{
-            shl_array<char> bytes;
-            bytes.push_back((char)operation.opcode);
-
-            for(const shl_ir_operand& operand : operation.operands)
+            if(operand.flags & SHL_IR_OPERAND_BINARY)
             {
-                if(operand.data.size() == 0)
-                    continue;
-
-                if(operand.flags & SHL_IR_OPERAND_BINARY)
+                value.i = strtoul(operand.data.c_str(), NULL, 2);
+                for(size_t i = 0; i < sizeof(value.i); ++i)
                 {
-                    value.i = strtoul(operand.data.c_str(), NULL, 2);
-                    for(size_t i = 0; i < sizeof(value.i); ++i)
-                        bytes.push_back(value.bytes[i]);
-                }
-                else if(operand.flags & SHL_IR_OPERAND_HEXIDECIMAL)
-                {
-                    value.i = strtoul(operand.data.c_str(), NULL, 16);
-                    for(size_t i = 0; i < sizeof(value.i); ++i)
-                        bytes.push_back(value.bytes[i]);
-                }
-                else if(operand.flags & SHL_IR_OPERAND_DECIMAL)
-                {
-                    // Note: Signed string to long call
-                    value.i = strtol(operand.data.c_str(), NULL, 10);
-                    for(size_t i = 0; i < sizeof(value.i); ++i)
-                        bytes.push_back(value.bytes[i]);
-                }
-                else if(operand.flags & SHL_IR_OPERAND_FLOAT)
-                {
-                    value.f = strtof(operand.data.c_str(), NULL);
-                    for(size_t i = 0; i < sizeof(value.f); ++i)
-                        bytes.push_back(value.bytes[i]);
-                }
-                else if(operand.flags & SHL_IR_OPERAND_STRING)
-                {
-                    for(size_t i = 0; i < operand.data.size(); ++i)
-                        bytes.push_back(operand.data[i]);
-                    bytes.push_back(0);
+                    *instruction = value.bytes[i];
+                    ++instruction;
                 }
             }
+            else if(operand.flags & SHL_IR_OPERAND_HEXIDECIMAL)
+            {
+                value.i = strtoul(operand.data.c_str(), NULL, 16);
+                for(size_t i = 0; i < sizeof(value.i); ++i)
+                {
+                    *instruction = value.bytes[i];
+                    ++instruction;
+                }
+            }
+            else if(operand.flags & SHL_IR_OPERAND_DECIMAL)
+            {
+                // Note: Signed string to long call
+                value.i = strtol(operand.data.c_str(), NULL, 10);
+                for(size_t i = 0; i < sizeof(value.i); ++i)
+                {
+                    *instruction = value.bytes[i];
+                    ++instruction;
+                }
+            }
+            else if(operand.flags & SHL_IR_OPERAND_FLOAT)
+            {
+                value.f = strtof(operand.data.c_str(), NULL);
+                for(size_t i = 0; i < sizeof(value.f); ++i)
+                {
+                    *instruction = value.bytes[i];;
+                    ++instruction;
+                }
+            }
+            else if(operand.flags & SHL_IR_OPERAND_STRING)
+            {
+                for(size_t i = 0; i < operand.data.size(); ++i)
+                {
+                    *instruction = operand.data[i];
+                    ++instruction;
+                }
 
-            instruction_offset += shl_bytecode_serialize(bytes, chunk_offset, bytecode_chunks);
-		}
-	}
+                *instruction = 0;
+                ++instruction;
+            }
+        }
+    }
 
-    shl_array<char> bytes;
-    bytes.push_back(SHL_OPCODE_EXIT);
-    instruction_offset += shl_bytecode_serialize(bytes, chunk_offset, bytecode_chunks);
+    *instruction = (char)SHL_OPCODE_EXIT;
+    ++instruction;
 }
 // -------------------------------------- API ------ ---------------------------------------// 
 
@@ -1938,12 +2047,12 @@ void shl_execute(shl_environment& env, const char* filename)
     shl_ast_delete(root);
 
     // Load bytecode into VM
-    shl_array<shl_bytecode_chunk*> bytecode_chunks;
-    shl_ir_to_bytecode(ir, bytecode_chunks);
+    shl_array<char> bytecode;
+    shl_ir_to_bytecode(ir, bytecode);
 
     // Run VM
     shl_vm vm;
-    shl_vm_execute(env, vm, bytecode_chunks);
+    shl_vm_execute(env, vm, bytecode);
 }
 
 void shl_evaluate(shl_environment& env, const char* code)
@@ -1963,12 +2072,12 @@ void shl_evaluate(shl_environment& env, const char* code)
     shl_ast_delete(root);
 
     // Load bytecode into VM
-    shl_array<shl_bytecode_chunk*> bytecode_chunks;
-    shl_ir_to_bytecode(ir, bytecode_chunks);
+    shl_array<char> bytecode;
+    shl_ir_to_bytecode(ir, bytecode);
 
     // Run VM
     shl_vm vm;
-    shl_vm_execute(env, vm, bytecode_chunks);
+    shl_vm_execute(env, vm, bytecode);
 }
 
 shl_string shl_value_to_string(const shl_value* value)
@@ -1994,6 +2103,25 @@ shl_string shl_value_to_string(const shl_value* value)
             break;
     }
     return shl_string(out, len);
+}
+
+bool shl_value_to_bool(const shl_value* value)
+{
+    if(value == nullptr)
+        return false;
+
+    switch(value->type)
+    {
+        case SHL_INT:
+            return value->i == 0;
+        case SHL_FLOAT:
+            return value->f == 0.0f;
+        case SHL_STRING:
+            return value->str == nullptr;
+        case SHL_OBJECT:
+            return value->obj == nullptr;
+    }
+    return false;
 }
 
 #endif

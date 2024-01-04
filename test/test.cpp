@@ -59,10 +59,15 @@ namespace
 				for (size_t i = 0; i < children.size(); ++i)
 					test_ast_print_tree(children[i], prefix, i == children.size()-1);
 			break;
-			case SHL_AST_ASSIGN:
+			case SHL_AST_STMT_ASSIGN:
 				assert(children.size()==1);
 				printf("ASSIGN:%s", token.data.c_str());
 				test_ast_print_tree(children[0], prefix, true);
+			break;
+			case SHL_AST_STMT_IF:
+				printf("IF:%s", token.data.c_str());
+				for (size_t i = 0; i < children.size(); ++i)
+					test_ast_print_tree(children[i], prefix, i == children.size()-1);
 			break;
 			case SHL_AST_UNARY_OP:
 				assert(children.size() == 1);
@@ -100,16 +105,12 @@ namespace
 	void test_ir(const shl_ir_module& module)
 	{
 		printf("IR\n");
-		for(const shl_ir_block& block : module.blocks)
+		for(const shl_ir_operation& operation : module.operations)
 		{
-			printf("\t%s:\n", block.label.c_str());
-			for(const shl_ir_operation& operation : block.operations)
-			{
-				printf("\t\t%s", shl_opcode_labels[(int)operation.opcode]);
-				for(shl_ir_operand operand : operation.operands)
-					printf(" %s", operand.data.c_str());
-				printf("\n");
-			}
+			printf("%d\t\t%s", (int)operation.bytecode_offset, shl_opcode_labels[(int)operation.opcode]);
+			for(shl_ir_operand operand : operation.operands)
+				printf(" %s", operand.data.c_str());
+			printf("\n");
 		}
 	}
 
