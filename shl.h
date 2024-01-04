@@ -20,6 +20,9 @@
 #include <vector>
 #include <unordered_map>
 
+struct shl_value;
+struct shl_object;
+
 using shl_string = std::string;
 
 template <class type>
@@ -32,7 +35,7 @@ template <class key, class type>
 using shl_map = std::unordered_map<key, type>;
 
 typedef void(shl_error_callback)(const char* /*msg*/);
-typedef void(shl_function_callback)(const shl_list<class shl_value*>& /*args*/);
+typedef void(shl_function_callback)(const shl_list<shl_value*>& /*args*/);
 
 enum shl_type
 {
@@ -47,10 +50,10 @@ struct shl_value
     shl_type type;
     union 
     {
-        long i; 
-        double f;
+        int i; 
+        float f;
         const char* str;
-        class shl_object* obj;
+        shl_object* obj;
     };
 };
 
@@ -90,7 +93,7 @@ bool shl_value_to_bool(const shl_value* value);
 #include <sstream>
 #include <memory>
 
-#define SHL_DEBUG 0
+#define SHL_DEBUG 1
 
 #ifndef SHL_TOKEN_BUFFER_LEN
     #define SHL_TOKEN_BUFFER_LEN 32
@@ -297,7 +300,7 @@ void shl_lexer_end_tracking(shl_lexer& lexer, shl_string& s)
     lexer.input->clear();
 
     const std::streampos pos_end = lexer.input->tellg();
-    const int len = pos_end - lexer.pos_start;
+    const std::streamoff len = (pos_end - lexer.pos_start);
 
     lexer.token_buffer[0] = '\0';
     lexer.input->seekg(lexer.pos_start);
@@ -1171,8 +1174,8 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 // -------------------------------------- OPCODE -----------------------------------------// 
 
 #define SHL_OPCODE_LIST\
-	SHL_OPCODE(NO_OP)          \
 	SHL_OPCODE(EXIT)           \
+	SHL_OPCODE(NO_OP)          \
 	SHL_OPCODE(NEXT_CHUNK)     \
 	SHL_OPCODE(PUSH_INT)       \
 	SHL_OPCODE(PUSH_FLOAT)     \
@@ -1247,28 +1250,21 @@ static const char* shl_opcode_labels[] =
 
 #define SHL_IR_INVALID_ADDR -1
 
-enum shl_ir_operand_flags : uint8_t
+enum shl_ir_operand_type : uint8_t
 {
     // type if operand is constant or literal
-    SHL_IR_OPERAND_DECIMAL = 1 << 0,
-    SHL_IR_OPERAND_HEXIDECIMAL = 1 << 1,
-    SHL_IR_OPERAND_BINARY = 1 << 2,
-    SHL_IR_OPERAND_FLOAT = 1 << 3, 
-    SHL_IR_OPERAND_STRING = 1 << 4, 
-};
-
-// Used to convert values to/from bytes for constant values
-union shl_ir_bytecode_value
-{
-    long i;
-    double f;
-    unsigned char bytes[16];
+    SHL_IR_OPERAND_NONE = 0,
+    SHL_IR_OPERAND_DECIMAL,
+    SHL_IR_OPERAND_HEXIDECIMAL,
+    SHL_IR_OPERAND_BINARY,
+    SHL_IR_OPERAND_FLOAT,  
+    SHL_IR_OPERAND_STRING,
 };
 
 struct shl_ir_operand
 {
-    shl_string data;
-    uint8_t flags = 0;
+    shl_string data; // string representation of data
+    shl_ir_operand_type type = SHL_IR_OPERAND_NONE;
 };
 
 struct shl_ir_operation
@@ -1276,13 +1272,14 @@ struct shl_ir_operation
     shl_opcode opcode;
     shl_array<shl_ir_operand> operands; //optional parameter. will be encoded in following bytes
    
-    // DEBUG
+#if SHL_DEBUG
     size_t bytecode_offset;
+#endif SHL_DEBUG
 };
 
 struct shl_ir_symtable
 {
-    shl_map<shl_string, long> var_addr_map;
+    shl_map<shl_string, int> var_addr_map;
 };
 
 struct shl_ir_block
@@ -1326,23 +1323,27 @@ shl_ir_block& shl_ir_top_block(shl_ir& ir)
 
 size_t shl_ir_operation_size(const shl_ir_operation& operation)
 {
-    shl_ir_bytecode_value value;
+    shl_value value;
     size_t size = sizeof(operation.opcode);
     for(const shl_ir_operand& operand : operation.operands)
     {
         if(operand.data.size() == 0)
             continue;
 
-        if(operand.flags & SHL_IR_OPERAND_BINARY)
+        switch (operand.type)
+        {
+        case SHL_IR_OPERAND_BINARY:
+        case SHL_IR_OPERAND_HEXIDECIMAL:
+        case SHL_IR_OPERAND_DECIMAL:
             size += sizeof(value.i);
-        else if(operand.flags & SHL_IR_OPERAND_HEXIDECIMAL)
-            size += sizeof(value.i);
-        else if(operand.flags & SHL_IR_OPERAND_DECIMAL)
-            size += sizeof(value.i);
-        else if(operand.flags & SHL_IR_OPERAND_FLOAT)
+            break;
+        case SHL_IR_OPERAND_FLOAT:
             size += sizeof(value.f);
-        else if(operand.flags & SHL_IR_OPERAND_STRING)
+            break;
+        case SHL_IR_OPERAND_STRING:
             size += operand.data.size() + 1; // +1 for null term
+            break;
+        }
     }
     return size;
 }
@@ -1352,7 +1353,9 @@ size_t shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_array<shl_i
     shl_ir_operation operation;
     operation.opcode = opcode;
     operation.operands = operands;
+#if SHL_DEBUG
     operation.bytecode_offset = ir.bytecode_count;
+#endif //SHL_DEBUG
     ir.bytecode_count += shl_ir_operation_size(operation);
 
     ir.module.operations.push_back(std::move(operation));
@@ -1364,7 +1367,9 @@ size_t shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_ir_operand&
     shl_ir_operation operation;
     operation.opcode = opcode;
     operation.operands.push_back(operand);
+#if SHL_DEBUG
     operation.bytecode_offset = ir.bytecode_count;
+#endif //SHL_DEBUG
     ir.bytecode_count += shl_ir_operation_size(operation);
     
     assert(ir.block_stack.size());
@@ -1385,27 +1390,27 @@ shl_ir_operation& shl_ir_get_operation(shl_ir& ir, size_t operation_index)
     return ir.module.operations.at(operation_index);
 }
 
-shl_ir_operand shl_ir_operand_from_int(long data)
+shl_ir_operand shl_ir_operand_from_int(int data)
 {
     // Pass the function arg count
-    char arg_data[sizeof(long)]; // Max number of arguments is 99 so only need 3 bytes
+    char arg_data[3]; // Max number of arguments is 99 so only need 3 bytes
     const int arg_data_len = snprintf(arg_data, sizeof(arg_data), "%ld", data);
 
     shl_ir_operand operand;
-    operand.flags = SHL_IR_OPERAND_DECIMAL;
+    operand.type = SHL_IR_OPERAND_DECIMAL;
     operand.data = std::string(arg_data, arg_data_len);
     return operand;
 }
 
-long shl_ir_set_var_addr(shl_ir& ir, const shl_string& name)
+int shl_ir_set_var_addr(shl_ir& ir, const shl_string& name)
 {
     shl_ir_block& block = shl_ir_top_block(ir);
-    long offset = block.local_offset++;
+    int offset = block.local_offset++;
     block.symtable.var_addr_map[name] = offset;
     return offset;
 }
 
-long shl_ir_get_var_addr(shl_ir& ir, const shl_string& name)
+int shl_ir_get_var_addr(shl_ir& ir, const shl_string& name)
 {
     for (int i = ir.block_stack.size()-1; i >=0; --i)
     {
@@ -1424,10 +1429,18 @@ struct shl_vm
     const char* bytecode;
  
     shl_value stack[SHL_STACK_SIZE]; 
-    long stack_offset;
+    int stack_offset;
 
     // Address to return to when Ret is called. Pops all local from stack
     shl_array<size_t> frame_stack;
+};
+
+// Used to convert values to/from bytes for constant values
+union shl_vm_bytecode_value
+{
+    int i;
+    float f;
+    unsigned char bytes[16];
 };
 
 #define SHL_VM_ERROR(env, vm, ...)     \
@@ -1575,7 +1588,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
         return;
 
     // Objects to deserialize data from bytecode
-    shl_ir_bytecode_value bytecode_value;
+    shl_vm_bytecode_value bytecode_value;
     shl_array<char> bytecode_string;
 
     while(vm.instruction)
@@ -1583,7 +1596,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
         shl_opcode opcode = (shl_opcode) (*vm.instruction);
         ++vm.instruction;
 
-#if SHL_DEBUG
+#if 0
         {
             printf("%s\n", shl_opcode_labels[(int)opcode]);
 
@@ -1714,6 +1727,25 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_vm_execute_binop(env, vm, opcode);
                 break;
             }
+            case SHL_OPCODE_JUMP:
+            {
+                // Read int              
+                for (size_t i = 0; i < sizeof(bytecode_value.i); ++i)
+                    bytecode_value.bytes[i] = *(vm.instruction++);
+
+                vm.instruction = vm.bytecode + bytecode_value.i;
+            }
+            case SHL_OPCODE_JUMP_NZERO:
+            {
+                // Read int              
+                for (size_t i = 0; i < sizeof(bytecode_value.i); ++i)
+                    bytecode_value.bytes[i] = *(vm.instruction++);
+
+                // need to check if the chunk can be jumped to
+                shl_value* value = shl_vm_pop(env, vm);
+                if (shl_value_to_bool(value) != 0)
+                    vm.instruction = vm.bytecode + bytecode_value.i;
+            }
             case SHL_OPCODE_JUMP_ZERO:
             {
                 // Read int              
@@ -1731,7 +1763,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
 
         }
 
-#if SHL_DEBUG
+#if 0
         {
             shl_value* top = shl_vm_top(env, vm);
             shl_string str = shl_value_to_string(top);
@@ -1766,6 +1798,12 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
         {
             assert(children.size() == 1);
             shl_ast_to_ir(env, children[0], ir);
+
+            // Temp to end
+            shl_ir_push_block(ir, "");
+            shl_ir_add_operation(ir, SHL_OPCODE_EXIT);
+            shl_ir_pop_block(ir);
+
             break;
         }
         case SHL_AST_BLOCK: 
@@ -1783,23 +1821,23 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
             switch(token.id)
             {
                 case SHL_TOKEN_DECIMAL:     
-                    operand.flags = SHL_IR_OPERAND_DECIMAL;     
+                    operand.type = SHL_IR_OPERAND_DECIMAL;
                     shl_ir_add_operation(ir, SHL_OPCODE_PUSH_INT, operand);
                     break;
                 case SHL_TOKEN_HEXIDECIMAL: 
-                    operand.flags = SHL_IR_OPERAND_HEXIDECIMAL; 
+                    operand.type = SHL_IR_OPERAND_HEXIDECIMAL;
                     shl_ir_add_operation(ir, SHL_OPCODE_PUSH_INT, operand);
                     break;
                 case SHL_TOKEN_BINARY:      
-                    operand.flags = SHL_IR_OPERAND_BINARY;
+                    operand.type = SHL_IR_OPERAND_BINARY;
                     shl_ir_add_operation(ir, SHL_OPCODE_PUSH_INT, operand);
                     break;
                 case SHL_TOKEN_FLOAT:       
-                    operand.flags = SHL_IR_OPERAND_FLOAT;
+                    operand.type = SHL_IR_OPERAND_FLOAT;
                     shl_ir_add_operation(ir, SHL_OPCODE_PUSH_FLOAT, operand);
                     break;
                 case SHL_TOKEN_STRING:      
-                    operand.flags = SHL_IR_OPERAND_STRING;
+                    operand.type = SHL_IR_OPERAND_STRING;
                     shl_ir_add_operation(ir, SHL_OPCODE_PUSH_STRING, operand);
                     break;
                 default: 
@@ -1809,7 +1847,7 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
         }
         case SHL_AST_VARIABLE:
         {
-            const long offset = shl_ir_get_var_addr(ir, token.data);
+            const int offset = shl_ir_get_var_addr(ir, token.data);
             if (offset == -1)
             {
                 SHL_LOG_ERROR(env, "Variable %s not defined in current context", token.data.c_str());
@@ -1861,7 +1899,7 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
             // Pass the function name
             shl_ir_operand func_name_operand;
             func_name_operand.data = token.data;
-            func_name_operand.flags = SHL_IR_OPERAND_STRING;
+            func_name_operand.type = SHL_IR_OPERAND_STRING;
 
             shl_array<shl_ir_operand> operands;
             operands.push_back(arg_count_operand);
@@ -1875,7 +1913,7 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
             if (children.size() == 1)
                 shl_ast_to_ir(env, children[0], ir);
 
-            long offset = shl_ir_get_var_addr(ir, token.data);
+            int offset = shl_ir_get_var_addr(ir, token.data);
             if (offset == SHL_IR_INVALID_ADDR)
                 shl_ir_set_var_addr(ir, token.data);
 
@@ -1947,12 +1985,11 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
 }
 
 void shl_ir_to_bytecode(shl_ir& ir, shl_array<char>& bytecode)
-{
-    
-    bytecode.resize(ir.bytecode_count+1, SHL_OPCODE_NO_OP) ;
+{  
+    bytecode.resize(ir.bytecode_count, SHL_OPCODE_NO_OP) ;
 
     char* instruction = &bytecode[0];
-    shl_ir_bytecode_value value;
+    shl_vm_bytecode_value value;
 
     for(const shl_ir_operation& operation : ir.module.operations)
     {
@@ -1964,46 +2001,51 @@ void shl_ir_to_bytecode(shl_ir& ir, shl_array<char>& bytecode)
             if(operand.data.size() == 0)
                 continue;
 
-            if(operand.flags & SHL_IR_OPERAND_BINARY)
+            switch (operand.type)
+            {
+            case SHL_IR_OPERAND_BINARY:
             {
                 value.i = strtoul(operand.data.c_str(), NULL, 2);
-                for(size_t i = 0; i < sizeof(value.i); ++i)
+                for (size_t i = 0; i < sizeof(value.i); ++i)
                 {
                     *instruction = value.bytes[i];
                     ++instruction;
                 }
             }
-            else if(operand.flags & SHL_IR_OPERAND_HEXIDECIMAL)
+            break;
+            case SHL_IR_OPERAND_HEXIDECIMAL:
             {
                 value.i = strtoul(operand.data.c_str(), NULL, 16);
-                for(size_t i = 0; i < sizeof(value.i); ++i)
+                for (size_t i = 0; i < sizeof(value.i); ++i)
                 {
                     *instruction = value.bytes[i];
                     ++instruction;
                 }
             }
-            else if(operand.flags & SHL_IR_OPERAND_DECIMAL)
+            break;
+            case SHL_IR_OPERAND_DECIMAL:
             {
-                // Note: Signed string to long call
                 value.i = strtol(operand.data.c_str(), NULL, 10);
-                for(size_t i = 0; i < sizeof(value.i); ++i)
+                for (size_t i = 0; i < sizeof(value.i); ++i)
                 {
                     *instruction = value.bytes[i];
                     ++instruction;
                 }
             }
-            else if(operand.flags & SHL_IR_OPERAND_FLOAT)
+            break;
+            case SHL_IR_OPERAND_FLOAT:
             {
                 value.f = strtof(operand.data.c_str(), NULL);
-                for(size_t i = 0; i < sizeof(value.f); ++i)
+                for (size_t i = 0; i < sizeof(value.f); ++i)
                 {
                     *instruction = value.bytes[i];;
                     ++instruction;
                 }
             }
-            else if(operand.flags & SHL_IR_OPERAND_STRING)
+            break;
+            case SHL_IR_OPERAND_STRING:
             {
-                for(size_t i = 0; i < operand.data.size(); ++i)
+                for (size_t i = 0; i < operand.data.size(); ++i)
                 {
                     *instruction = operand.data[i];
                     ++instruction;
@@ -2012,11 +2054,10 @@ void shl_ir_to_bytecode(shl_ir& ir, shl_array<char>& bytecode)
                 *instruction = 0;
                 ++instruction;
             }
+            }
+ 
         }
     }
-
-    *instruction = (char)SHL_OPCODE_EXIT;
-    ++instruction;
 }
 // -------------------------------------- API ------ ---------------------------------------// 
 

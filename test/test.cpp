@@ -109,7 +109,7 @@ namespace
 		{
 			printf("%d\t\t%s", (int)operation.bytecode_offset, shl_opcode_labels[(int)operation.opcode]);
 			for(shl_ir_operand operand : operation.operands)
-				printf(" %s", operand.data.c_str());
+				printf(" %s", &operand.data[0]);
 			printf("\n");
 		}
 	}
