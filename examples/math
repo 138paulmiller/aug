@@ -2,22 +2,23 @@ a = 1;
 b = 2.0;
 c = a/b;
 d = 1.0/2.0;
+1.0 + 2.0 * 3 / 4.0 - 5;
 
-print("a=", a, "\n");
-print("b=", b, "\n");
-print("c=", c, "\n");
-print("d=", d, "\n");
+#print("a=", a);
+ #     print("b=", b);
+#print("c=", c);
+                 #print("d=", d);
 
-print("1.0 + 2.0 * 3 / 4.0 - 5=", 1.0 + 2.0 * 3 / 4.0 - 5, "\n");
+#print("1.0 + 2.0 * 3 / 4.0 - 5=", 1.0 + 2.0 * 3 / 4.0 - 5);
 
 a = 1;
 b = 10;
 c = 100;
 d = 1000;
+a + b + c + d;
 
-print("a=", a, "\n");
-print("b=", b, "\n");
-print("c=", c, "\n");
-print("d=", d, "\n");
-
-print("a + b + c + d=", a + b + c + d, "\n");
+#print("a=", a, "\n");
+#print("b=", b, "\n");
+#print("c=", c, "\n");
+#print("d=", d, "\n");
+#print("a + b + c + d=", a + b + c + d);

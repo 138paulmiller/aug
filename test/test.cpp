@@ -155,6 +155,8 @@ void print(const shl_list<shl_value*>& args)
 			break;
 		}
 	}
+
+	printf("\n");
 }
 
 #ifdef  _WIN32

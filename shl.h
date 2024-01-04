@@ -640,12 +640,26 @@ shl_token shl_lexer_tokenize(shl_environment& env, shl_lexer& lexer)
     }
 
     // skip comments
-    if (c == SHL_COMMENT_SYMBOL)
-    {
-        while (c != EOF && c != '\n')
+    while(c == SHL_COMMENT_SYMBOL)
+    {        
+        while (c != EOF)
+        {
             c = shl_lexer_get(lexer);
-        if (c == '\n')
-            c = shl_lexer_peek(lexer);
+
+            if (c == '\n')
+            {
+                c = shl_lexer_peek(lexer);
+                break;
+            }
+        }
+
+        // skip whitespace
+        if (isspace(c))
+        {
+            while (isspace(c))
+                c = shl_lexer_get(lexer);
+            shl_lexer_unget(lexer);
+        }
     }
 
     // handle eof
