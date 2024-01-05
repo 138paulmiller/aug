@@ -113,8 +113,23 @@ namespace
 		for(const shl_ir_operation& operation : module.operations)
 		{
 			printf("%d\t\t%s", (int)operation.bytecode_offset, shl_opcode_labels[(int)operation.opcode]);
-			for(shl_ir_operand operand : operation.operands)
-				printf(" %s", &operand.data[0]);
+			for (shl_ir_operand operand : operation.operands)
+			{
+				switch (operand.type)
+				{
+				case SHL_IR_OPERAND_INT:
+					printf(" %d", operand.data.i);
+					break;
+				case SHL_IR_OPERAND_FLOAT:
+					printf(" %f", operand.data.f);
+					break;
+				case SHL_IR_OPERAND_BYTES:
+					printf(" %s", operand.data.str);
+					break;
+				case SHL_IR_OPERAND_NONE:
+					break;
+				}
+			}
 			printf("\n");
 		}
 	}
@@ -133,9 +148,11 @@ namespace
 
 		shl_ir ir;
 		shl_ast_to_ir(env, root, ir);
-		shl_ast_delete(root);
 
 		test_ir(ir.module);
+
+		// Cleanup
+		shl_ast_delete(root);
 
 		shl_execute(env, filename);
 	}
