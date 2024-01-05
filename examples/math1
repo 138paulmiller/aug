@@ -1,8 +1,27 @@
+print("Test");
 
-print("1+2=", 1+2);
-print("1-2=", 1-2);
-print("1*2=", 1*2);
-print("1/2=", 1/2);
+a = 0;
+if a + 1  {  
+    print("True a=", a); 
+}
+else {
+    print("False a=", a); 
+}
+
+if a  {  
+    print("True a=", a); 
+}
+else {
+    print("False a=", a); 
+}
+
+if 1 {
+    print("1+2=", 1+2);
+    print("1-2=", 1-2);
+    print("1*2=", 1*2);
+    print("1/2=", 1/2);
+}
+
 
 a = 1;
 b = 2.0;
@@ -19,15 +38,19 @@ print(a, " + ", b, " * ", c, " / ", d, " - 5 =", e);
 print("1.0 + 2.0 * 3 / 4.0 - 5=", 1.0 + 2.0 * 3 / 4.0 - 5);
 print("(1.0 + 2.0 * 3) / (4.0 - 5) - (9/8*7)=", (1.0 + 2.0 * 3) / (4.0 - 5) - (9/8*7));
 
-a = 1;
-b = 10;
-c = 100;
-d = 1000;
-e = 10000;
+if 1 {
+    a = 1;
+    b = 10;
+    c = 100;
+    d = 1000;
+    e = 10000;
 
-print("a=", a);
-print("b=", b);
-print("c=", c);
-print("d=", d);
-print("e=", e);
-print("a + b + c + d + e =", a + b + c + d + e);
+    print("a=", a);
+    print("b=", b);
+    print("c=", c);
+    print("d=", d);
+    print("e=", e);
+    print("a + b + c + d + e =", a + b + c + d + e);
+}
+
+print("Done");

@@ -811,7 +811,8 @@ enum shl_ast_id : uint8_t
     SHL_AST_ROOT,
     SHL_AST_BLOCK, 
     SHL_AST_STMT_ASSIGN, 
-    SHL_AST_STMT_IF, 
+    SHL_AST_STMT_IF,
+    SHL_AST_STMT_ELSE,
     SHL_AST_LITERAL, 
     SHL_AST_VARIABLE, 
     SHL_AST_UNARY_OP, 
@@ -1123,6 +1124,7 @@ shl_ast* shl_parse_stmt_if(shl_environment& env, shl_lexer& lexer)
                 shl_ast_delete(if_stmt);
                 return nullptr;
             }
+            if_stmt->children.push_back(trailing_if_stmt);
         }
         else
         {
@@ -1751,7 +1753,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_value* lhs = shl_vm_pop(env, vm);
                 shl_value* rhs = shl_vm_pop(env, vm);
                 shl_value* target = shl_vm_push(env, vm);    
-                if(!shl_value_add(target, lhs, rhs))
+                if(!shl_value_add(target, lhs, rhs) && lhs != nullptr && rhs != nullptr)
                     SHL_VM_ERROR(env, vm, "%s + %s not defined", shl_type_labels[(int)lhs->type], shl_type_labels[(int)rhs->type] );
 
                 break;
@@ -1761,7 +1763,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_value* lhs = shl_vm_pop(env, vm);
                 shl_value* rhs = shl_vm_pop(env, vm);
                 shl_value* target = shl_vm_push(env, vm);    
-                if(!shl_value_sub(target, lhs, rhs))
+                if (!shl_value_sub(target, lhs, rhs) && lhs != nullptr && rhs != nullptr)
                     SHL_VM_ERROR(env, vm, "%s - %s not defined", shl_type_labels[(int)lhs->type], shl_type_labels[(int)rhs->type] );
                 break;
             }
@@ -1770,7 +1772,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_value* lhs = shl_vm_pop(env, vm);
                 shl_value* rhs = shl_vm_pop(env, vm);
                 shl_value* target = shl_vm_push(env, vm);    
-                if(!shl_value_mul(target, lhs, rhs))
+                if (!shl_value_mul(target, lhs, rhs) && lhs != nullptr && rhs != nullptr)
                     SHL_VM_ERROR(env, vm, "%s * %s not defined", shl_type_labels[(int)lhs->type], shl_type_labels[(int)rhs->type] );
                 break;
             }
@@ -1779,7 +1781,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_value* lhs = shl_vm_pop(env, vm);
                 shl_value* rhs = shl_vm_pop(env, vm);
                 shl_value* target = shl_vm_push(env, vm);    
-                if(!shl_value_div(target, lhs, rhs))
+                if(!shl_value_div(target, lhs, rhs) && lhs != nullptr && rhs != nullptr)
                     SHL_VM_ERROR(env, vm, "%s / %s not defined", shl_type_labels[(int)lhs->type], shl_type_labels[(int)rhs->type] );
                 break;
             }
@@ -1998,7 +2000,7 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
         case SHL_AST_STMT_IF:
         {
             if(children.size() == 2)  //if ([0]) {[1]}
-            {            
+            {
                 // stub for proper bytecode offsetting, adjusted below
                 shl_ir_operand stub_operand = shl_ir_operand_from_int(0);
 
