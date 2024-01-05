@@ -1,6 +1,8 @@
-
 print("Test");
-a = 1;
-if a - 1 { print("a=", a); }
+
+a = 0;
+if a - 1  {  
+    print("a=", a); 
+}
 
 print("Done");

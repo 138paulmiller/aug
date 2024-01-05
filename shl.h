@@ -45,6 +45,10 @@ enum shl_type
     SHL_OBJECT
 };
 
+const char* shl_type_labels[] = {
+    "int", "float", "string", "object"
+};
+
 struct shl_value
 {
     shl_type type;
@@ -80,6 +84,10 @@ void shl_evaluate(shl_environment& env, const char* code);
 
 shl_string shl_value_to_string(const shl_value* value);
 bool shl_value_to_bool(const shl_value* value);
+bool shl_value_add(shl_value* result, shl_value* lhs, shl_value* rhs);
+bool shl_value_sub(shl_value* result, shl_value* lhs, shl_value* rhs);
+bool shl_value_mul(shl_value* result, shl_value* lhs, shl_value* rhs);
+bool shl_value_div(shl_value* result, shl_value* lhs, shl_value* rhs);
 
 #endif //__SHL_HEADER__
 
@@ -528,7 +536,7 @@ bool shl_lexer_tokenize_number(shl_environment& env, shl_lexer& lexer, shl_token
     {
         shl_lexer_unget(lexer);
         return false;
-    }
+    } 
 
     shl_token_id id = SHL_TOKEN_ERR;
 
@@ -681,9 +689,25 @@ shl_token shl_lexer_tokenize(shl_environment& env, shl_lexer& lexer)
     case '.': 
     case '+':
     case '-':
-        if (!shl_lexer_tokenize_number(env, lexer, token))
+    {
+        // To prevent contention with sign as an operator, if the proceeding token is a number
+        // treat sign as an operator, else, treat as the number's sign
+        bool allow_sign = true;
+        switch(lexer.curr.id)
+        {
+            case SHL_TOKEN_BINARY:
+            case SHL_TOKEN_HEXIDECIMAL:
+            case SHL_TOKEN_FLOAT:
+            case SHL_TOKEN_DECIMAL:
+                allow_sign = false;
+                break;
+            default:
+                break;
+        }
+        if (!allow_sign || !shl_lexer_tokenize_number(env, lexer, token))
             shl_lexer_tokenize_symbol(env, lexer, token);
         break;
+    }
     case '\"':
         shl_lexer_tokenize_string(env, lexer, token);
         break;
@@ -1274,7 +1298,7 @@ struct shl_ir_operation
    
 #if SHL_DEBUG
     size_t bytecode_offset;
-#endif SHL_DEBUG
+#endif //SHL_DEBUG
 };
 
 struct shl_ir_symtable
@@ -1331,7 +1355,9 @@ size_t shl_ir_operation_size(const shl_ir_operation& operation)
             continue;
 
         switch (operand.type)
-        {
+        {         
+        case SHL_IR_OPERAND_NONE:
+            break;   
         case SHL_IR_OPERAND_BINARY:
         case SHL_IR_OPERAND_HEXIDECIMAL:
         case SHL_IR_OPERAND_DECIMAL:
@@ -1394,7 +1420,7 @@ shl_ir_operand shl_ir_operand_from_int(int data)
 {
     // Pass the function arg count
     char arg_data[3]; // Max number of arguments is 99 so only need 3 bytes
-    const int arg_data_len = snprintf(arg_data, sizeof(arg_data), "%ld", data);
+    const int arg_data_len = snprintf(arg_data, sizeof(arg_data), "%d", data);
 
     shl_ir_operand operand;
     operand.type = SHL_IR_OPERAND_DECIMAL;
@@ -1514,68 +1540,7 @@ shl_value* shl_vm_get(shl_environment& env, shl_vm& vm, size_t frame_offset)
     return &vm.stack[offset];
 }
 
-#define SHL_OPCODE_BINOP_EXEC(opcode, out, x, y) \
-{                                                 \
-    switch(opcode)                                \
-    {                                             \
-        case SHL_OPCODE_ADD:                      \
-            out = x + y;                          \
-            break;                                \
-        case SHL_OPCODE_SUB:                      \
-            out = x - y;                          \
-            break;                                \
-        case SHL_OPCODE_MUL:                      \
-            out = x * y;                          \
-            break;                                \
-        case SHL_OPCODE_DIV:                      \
-            out = x / y;                          \
-            break;                                \
-        default:                                  \
-            break;                                \
-    }                                             \
-}
-
-void shl_vm_execute_binop(shl_environment& env, shl_vm& vm, shl_opcode opcode)
-{
-    shl_value* lhs = shl_vm_pop(env, vm);
-    shl_value* rhs = shl_vm_pop(env, vm);
-    shl_value* target = shl_vm_push(env, vm);
-    if(rhs == nullptr || lhs == nullptr || target == nullptr)
-        return;
-    
-    if (lhs->type == SHL_INT)
-    {
-        if (rhs->type == SHL_INT)
-        {
-            SHL_OPCODE_BINOP_EXEC(opcode, target->i, lhs->i, rhs->i);
-            target->type = SHL_INT;
-        }
-        else if (rhs->type == SHL_FLOAT)
-        {
-            SHL_OPCODE_BINOP_EXEC(opcode, target->f, lhs->i, rhs->f);
-            target->type = SHL_FLOAT;
-        }
-    }
-    else if (lhs->type == SHL_FLOAT)
-    {
-        if (rhs->type == SHL_INT)
-        {
-            SHL_OPCODE_BINOP_EXEC(opcode, target->f, lhs->f, rhs->i);
-            target->type = SHL_FLOAT;
-        }
-        else if (rhs->type == SHL_FLOAT)
-        {
-            SHL_OPCODE_BINOP_EXEC(opcode, target->f, lhs->f, rhs->f);
-            target->type = SHL_FLOAT;
-        }
-    }
-    else
-    {
-        //Undefined, should we support operator overloading? fallback to user?
-        SHL_VM_ERROR(env, vm, "Unexpected types for operator")
-        return;
-    }
-}
+#define SHL_VM_DEBUG_TOP 0
 
 void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& bytecode)
 {
@@ -1596,13 +1561,13 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
         shl_opcode opcode = (shl_opcode) (*vm.instruction);
         ++vm.instruction;
 
-#if 0
+#if SHL_VM_DEBUG_TOP
         {
             printf("%s\n", shl_opcode_labels[(int)opcode]);
 
-            shl_value* top = shl_vm_top(env, vm);
-            shl_string str = shl_value_to_string(top);
+            shl_string str = shl_value_to_string(shl_vm_top(env, vm));
             printf("BEFORE TOP: %s\n", str.c_str());
+            getchar();
         }
 #endif
 
@@ -1615,6 +1580,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 break;
             case SHL_OPCODE_PUSH_INT:   
             {
+
                 // Read int
                 for(size_t i = 0; i < sizeof(bytecode_value.i); ++i)
                     bytecode_value.bytes[i] = *(vm.instruction++);
@@ -1720,13 +1686,43 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
             }
 
             case SHL_OPCODE_ADD:
-            case SHL_OPCODE_SUB:
-            case SHL_OPCODE_MUL:
-            case SHL_OPCODE_DIV:
             {
-                shl_vm_execute_binop(env, vm, opcode);
+                shl_value* lhs = shl_vm_pop(env, vm);
+                shl_value* rhs = shl_vm_pop(env, vm);
+                shl_value* target = shl_vm_push(env, vm);    
+                if(!shl_value_add(target, lhs, rhs))
+                    SHL_VM_ERROR(env, vm, "%s + %s not defined", shl_type_labels[(int)lhs->type], shl_type_labels[(int)rhs->type] );
+
                 break;
             }
+            case SHL_OPCODE_SUB:
+            {
+                shl_value* lhs = shl_vm_pop(env, vm);
+                shl_value* rhs = shl_vm_pop(env, vm);
+                shl_value* target = shl_vm_push(env, vm);    
+                if(!shl_value_sub(target, lhs, rhs))
+                    SHL_VM_ERROR(env, vm, "%s - %s not defined", shl_type_labels[(int)lhs->type], shl_type_labels[(int)rhs->type] );
+                break;
+            }
+            case SHL_OPCODE_MUL:
+            {
+                shl_value* lhs = shl_vm_pop(env, vm);
+                shl_value* rhs = shl_vm_pop(env, vm);
+                shl_value* target = shl_vm_push(env, vm);    
+                if(!shl_value_mul(target, lhs, rhs))
+                    SHL_VM_ERROR(env, vm, "%s * %s not defined", shl_type_labels[(int)lhs->type], shl_type_labels[(int)rhs->type] );
+                break;
+            }
+            case SHL_OPCODE_DIV:
+            {
+                shl_value* lhs = shl_vm_pop(env, vm);
+                shl_value* rhs = shl_vm_pop(env, vm);
+                shl_value* target = shl_vm_push(env, vm);    
+                if(!shl_value_div(target, lhs, rhs))
+                    SHL_VM_ERROR(env, vm, "%s / %s not defined", shl_type_labels[(int)lhs->type], shl_type_labels[(int)rhs->type] );
+                break;
+            }
+
             case SHL_OPCODE_JUMP:
             {
                 // Read int              
@@ -1734,6 +1730,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                     bytecode_value.bytes[i] = *(vm.instruction++);
 
                 vm.instruction = vm.bytecode + bytecode_value.i;
+                break;
             }
             case SHL_OPCODE_JUMP_NZERO:
             {
@@ -1745,6 +1742,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_value* value = shl_vm_pop(env, vm);
                 if (shl_value_to_bool(value) != 0)
                     vm.instruction = vm.bytecode + bytecode_value.i;
+                break;
             }
             case SHL_OPCODE_JUMP_ZERO:
             {
@@ -1756,6 +1754,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_value* value = shl_vm_pop(env, vm);
                 if(shl_value_to_bool(value) == 0)
                     vm.instruction = vm.bytecode + bytecode_value.i;
+                break;
             }
             default:
                 // UNSUPPORTED!!!!
@@ -1763,7 +1762,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
 
         }
 
-#if 0
+#if SHL_VM_DEBUG_TOP
         {
             shl_value* top = shl_vm_top(env, vm);
             shl_string str = shl_value_to_string(top);
@@ -2003,6 +2002,9 @@ void shl_ir_to_bytecode(shl_ir& ir, shl_array<char>& bytecode)
 
             switch (operand.type)
             {
+            case SHL_IR_OPERAND_NONE:
+                break;
+                
             case SHL_IR_OPERAND_BINARY:
             {
                 value.i = strtoul(operand.data.c_str(), NULL, 2);
@@ -2131,16 +2133,16 @@ shl_string shl_value_to_string(const shl_value* value)
     switch(value->type)
     {
         case SHL_INT:
-            len = snprintf(out, sizeof(out), "int:%ld", value->i);
+            len = snprintf(out, sizeof(out), "%s:%d", shl_type_labels[value->type], value->i);
             break;
         case SHL_FLOAT:
-            len = snprintf(out, sizeof(out), "float:%f", value->f);
+            len = snprintf(out, sizeof(out), "%s:%f", shl_type_labels[value->type], value->f);
             break;
         case SHL_STRING:
-            len = snprintf(out, sizeof(out), "string:%s", value->str);
+            len = snprintf(out, sizeof(out), "%s:%s", shl_type_labels[value->type], value->str);
             break;
         case SHL_OBJECT:
-            len = snprintf(out, sizeof(out), "object");
+            len = snprintf(out, sizeof(out), "%s", shl_type_labels[value->type]);
             break;
     }
     return shl_string(out, len);
@@ -2154,15 +2156,90 @@ bool shl_value_to_bool(const shl_value* value)
     switch(value->type)
     {
         case SHL_INT:
-            return value->i == 0;
+            return value->i != 0;
         case SHL_FLOAT:
-            return value->f == 0.0f;
+            return value->f != 0.0f;
         case SHL_STRING:
-            return value->str == nullptr;
+            return value->str != nullptr;
         case SHL_OBJECT:
-            return value->obj == nullptr;
+            return value->obj != nullptr;
     }
     return false;
+}
+
+
+#define SHL_ARITHMETIC(result, lhs, rhs,                                        \
+    int_int,     int_int_type,                                                  \
+    int_float,   int_float_type,                                                \
+    float_int,   float_int_type,                                                \
+    float_float, float_float_type                                               \
+)                                                                               \
+{                                                                               \
+    if(result == nullptr || lhs == nullptr || rhs == nullptr )                  \
+        return false;                                                           \
+    switch(lhs->type)                                                           \
+    {                                                                           \
+        case SHL_INT:                                                           \
+            switch(rhs->type)                                                   \
+            {                                                                   \
+                case SHL_INT:  int_int; result->type = int_int_type;            \
+                    return true;                                                \
+                case SHL_FLOAT: int_float; result->type = int_float_type;       \
+                    return true;                                                \
+                default: return false;                                          \
+            }                                                                   \
+        case SHL_FLOAT:                                                         \
+           switch(rhs->type)                                                    \
+            {                                                                   \
+                case SHL_INT:  float_int; result->type = float_int_type;        \
+                    return true;                                                \
+                case SHL_FLOAT: float_float; result->type = float_float_type;   \
+                    return true;                                                \
+                default: return false;                                          \
+            }                                                                   \
+        default: break;                                                         \
+    }                                                                           \
+    return false;                                                               \
+}
+
+bool shl_value_add(shl_value* result, shl_value* lhs, shl_value* rhs)
+{
+    SHL_ARITHMETIC(result, lhs, rhs,
+        result->i = lhs->i + rhs->i, SHL_INT,
+        result->f = lhs->i + rhs->f, SHL_FLOAT,
+        result->f = lhs->f + rhs->i, SHL_FLOAT,
+        result->f = lhs->f + rhs->f, SHL_FLOAT
+    )
+}
+
+bool shl_value_sub(shl_value* result, shl_value* lhs, shl_value* rhs)
+{
+    SHL_ARITHMETIC(result, lhs, rhs,
+        result->i = lhs->i - rhs->i, SHL_INT,
+        result->f = lhs->i - rhs->f, SHL_FLOAT,
+        result->f = lhs->f - rhs->i, SHL_FLOAT,
+        result->f = lhs->f - rhs->f, SHL_FLOAT
+    )
+}
+
+bool shl_value_mul(shl_value* result, shl_value* lhs, shl_value* rhs)
+{
+    SHL_ARITHMETIC(result, lhs, rhs,
+        result->i = lhs->i * rhs->i, SHL_INT,
+        result->f = lhs->i * rhs->f, SHL_FLOAT,
+        result->f = lhs->f * rhs->i, SHL_FLOAT,
+        result->f = lhs->f * rhs->f, SHL_FLOAT
+    )
+}
+
+bool shl_value_div(shl_value* result, shl_value* lhs, shl_value* rhs)
+{
+    SHL_ARITHMETIC(result, lhs, rhs,
+        result->f = (float)lhs->i / rhs->i, SHL_FLOAT,
+        result->f =        lhs->i / rhs->f, SHL_FLOAT,
+        result->f =        lhs->f / rhs->i, SHL_FLOAT,
+        result->f =        lhs->f / rhs->f, SHL_FLOAT
+    )
 }
 
 #endif

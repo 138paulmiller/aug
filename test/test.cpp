@@ -17,7 +17,12 @@ namespace
 		shl_lexer lexer;
 		shl_lexer_open_file(env, lexer, filename);
 		while (shl_lexer_move(env, lexer) && lexer.curr.id != SHL_TOKEN_END)
-			printf("\t%s (%s)%d:%d\n", lexer.curr.detail->label, lexer.curr.data.c_str(), lexer.curr.line, lexer.curr.col);
+		{
+			printf("\tPREV: %s (%s)%d:%d\n", lexer.prev.detail->label, lexer.prev.data.c_str(), lexer.prev.line, lexer.prev.col);
+			printf("\tCURR: %s (%s) %d:%d\n", lexer.curr.detail->label, lexer.curr.data.c_str(), lexer.curr.line, lexer.curr.col);
+			//printf("\tNEXT: %s (%s)%d:%d\n", lexer.next.detail->label, lexer.next.data.c_str(), lexer.next.line, lexer.next.col);
+			printf("\n");
+		}
 		shl_lexer_close(lexer);
 
 		printf("End Tokenizing File: %s\n", filename);
@@ -118,7 +123,7 @@ namespace
 	{
 		printf("----------%s------------\n", filename );
 
-		//test_lexer(filename);
+		test_lexer(filename);
 
 		shl_ast* root = shl_parse_file(env, filename);
 		if(root == nullptr)
@@ -143,7 +148,7 @@ void print(const shl_list<shl_value*>& args)
 		switch (arg->type)
 		{
 		case SHL_INT:
-			printf("%ld", arg->i);
+			printf("%d", arg->i);
 			break;
 		case SHL_FLOAT:
 			printf("%f", arg->f);
