@@ -812,7 +812,8 @@ enum shl_ast_id : uint8_t
     SHL_AST_BLOCK, 
     SHL_AST_STMT_ASSIGN, 
     SHL_AST_STMT_IF,
-    SHL_AST_STMT_ELSE,
+    SHL_AST_STMT_IF_ELSE,
+    SHL_AST_STMT_WHILE,
     SHL_AST_LITERAL, 
     SHL_AST_VARIABLE, 
     SHL_AST_UNARY_OP, 
@@ -831,7 +832,7 @@ struct shl_ast
 
 // Forward declared. 
 shl_ast* shl_parse_value(shl_environment& env, shl_lexer& lexer); 
-shl_ast* shl_parse_block(shl_environment& env, shl_lexer& lexer, bool expect_braces);
+shl_ast* shl_parse_block(shl_environment& env, shl_lexer& lexer);
 
 shl_ast* shl_ast_new(shl_ast_id id, const shl_token& token = shl_token())
 {
@@ -1087,6 +1088,7 @@ shl_ast* shl_parse_stmt_if(shl_environment& env, shl_lexer& lexer)
 {
     // stmt_if := if { block }
     //         |  if { block } else { block }
+    //         |  if { block } else stmt_if
     if (lexer.curr.id != SHL_TOKEN_IF)
         return nullptr;
 
@@ -1099,7 +1101,7 @@ shl_ast* shl_parse_stmt_if(shl_environment& env, shl_lexer& lexer)
         return nullptr;      
     }
 
-    shl_ast* block = shl_parse_block(env, lexer, true);
+    shl_ast* block = shl_parse_block(env, lexer);
     if (block == nullptr)
     {
         shl_ast_delete(expr);
@@ -1107,46 +1109,85 @@ shl_ast* shl_parse_stmt_if(shl_environment& env, shl_lexer& lexer)
         return nullptr;
     }
 
-    shl_ast* if_stmt = shl_ast_new(SHL_AST_STMT_IF);
-    if_stmt->children.push_back(expr);
-    if_stmt->children.push_back(block);
-
     // Parse else 
     if (lexer.curr.id == SHL_TOKEN_ELSE)
     {
         shl_lexer_move(env, lexer); // eat else
-        // TODO: recurse on the if
+
+        shl_ast* if_else_stmt = shl_ast_new(SHL_AST_STMT_IF_ELSE);
+        if_else_stmt->children.push_back(expr);
+        if_else_stmt->children.push_back(block);
+
+        // Handling else if becomes else { if ... }
         if (lexer.curr.id == SHL_TOKEN_IF)
         {
             shl_ast* trailing_if_stmt = shl_parse_stmt_if(env, lexer);
             if (trailing_if_stmt == nullptr)
             {
-                shl_ast_delete(if_stmt);
+                shl_ast_delete(if_else_stmt);
                 return nullptr;
             }
-            if_stmt->children.push_back(trailing_if_stmt);
+            if_else_stmt->children.push_back(trailing_if_stmt);
         }
         else
         {
-            shl_ast* else_block = shl_parse_block(env, lexer, true);
+            shl_ast* else_block = shl_parse_block(env, lexer);
             if (else_block == nullptr)
             {
-                shl_ast_delete(if_stmt);
+                shl_ast_delete(if_else_stmt);
                 SHL_PARSE_ERROR(env, lexer, "If Else statement missing block");
                 return nullptr;
             }
-            if_stmt->children.push_back(else_block);
+            if_else_stmt->children.push_back(else_block);
         }
+
+        return if_else_stmt;
     }
+
+    shl_ast* if_stmt = shl_ast_new(SHL_AST_STMT_IF);
+    if_stmt->children.push_back(expr);
+    if_stmt->children.push_back(block);
     return if_stmt;
+}
+
+shl_ast* shl_parse_stmt_while(shl_environment& env, shl_lexer& lexer)
+{
+    // stmt_case := WHILE expr { for_exprs }
+    // expr_stmt := expr_stmt | NULL
+    if (lexer.curr.id != SHL_TOKEN_WHILE)
+        return nullptr;
+
+    shl_lexer_move(env, lexer); // eat while
+
+    shl_ast* expr = shl_parse_expr(env, lexer);
+    if (expr == nullptr)
+    {
+        SHL_PARSE_ERROR(env, lexer, "While statement missing expression");
+        return nullptr;
+    }
+
+    shl_ast* block = shl_parse_block(env, lexer);
+    if (block == nullptr)
+    {
+        shl_ast_delete(expr);
+        SHL_PARSE_ERROR(env, lexer, "While statement missing block");
+        return nullptr;
+    }
+
+    shl_ast* while_stmt = shl_ast_new(SHL_AST_STMT_WHILE);
+    while_stmt->children.push_back(expr);
+    while_stmt->children.push_back(block);
+
+    return while_stmt;
 }
 
 shl_ast* shl_parse_stmt_case(shl_environment& env, shl_lexer& lexer)
 {
     // stmt_case := CASE { case_exprs }
-    // case_exprs := expr : expr  
+    // case_exprs := expr_stmt | NULL
     return nullptr;
 }
+
 
 shl_ast* shl_parse_stmt(shl_environment& env, shl_lexer& lexer)
 {
@@ -1165,6 +1206,9 @@ shl_ast* shl_parse_stmt(shl_environment& env, shl_lexer& lexer)
     case SHL_TOKEN_IF:
         stmt = shl_parse_stmt_if(env, lexer);
         break;
+    case SHL_TOKEN_WHILE:
+        stmt = shl_parse_stmt_while(env, lexer);
+        break;
     case SHL_TOKEN_FUNC:
         break;
     default:
@@ -1175,17 +1219,14 @@ shl_ast* shl_parse_stmt(shl_environment& env, shl_lexer& lexer)
     return stmt;
 }
 
-shl_ast* shl_parse_block(shl_environment& env, shl_lexer& lexer, bool expect_braces)
+shl_ast* shl_parse_block(shl_environment& env, shl_lexer& lexer)
 {
-    if (expect_braces)
+    if (lexer.curr.id != SHL_TOKEN_LBRACE)
     {
-        if (lexer.curr.id != SHL_TOKEN_LBRACE)
-        {
-            SHL_PARSE_ERROR(env, lexer, "Block missing opening \"{\"");
-            return nullptr;
-        }
-        shl_lexer_move(env, lexer); // eat {
+        SHL_PARSE_ERROR(env, lexer, "Block missing opening \"{\"");
+        return nullptr;
     }
+    shl_lexer_move(env, lexer); // eat {
 
     shl_array<shl_ast*> stmts;
     while(shl_ast* stmt = shl_parse_stmt(env, lexer))
@@ -1197,29 +1238,33 @@ shl_ast* shl_parse_block(shl_environment& env, shl_lexer& lexer, bool expect_bra
     shl_ast* block = shl_ast_new(SHL_AST_BLOCK);
     block->children = std::move(stmts);
 
-    if (expect_braces)
+
+    if (lexer.curr.id != SHL_TOKEN_RBRACE)
     {
-        if (lexer.curr.id != SHL_TOKEN_RBRACE)
-        {
-            SHL_PARSE_ERROR(env, lexer, "Block missing closing \"}\"");
-            shl_ast_delete(block);
-            return nullptr;
-        }
-        shl_lexer_move(env, lexer); // eat }
+        SHL_PARSE_ERROR(env, lexer, "Block missing closing \"}\"");
+        shl_ast_delete(block);
+        return nullptr;
     }
+    shl_lexer_move(env, lexer); // eat }
 
     return block;
 }
 
 shl_ast* shl_parse_root(shl_environment& env, shl_lexer& lexer)
 {
-    shl_ast* block = shl_parse_block(env, lexer, false);
-    if(block == nullptr)
+    shl_ast* block = shl_ast_new(SHL_AST_BLOCK);
+    while (shl_ast* stmt = shl_parse_stmt(env, lexer))
+        block->children.push_back(stmt);
+
+    if (block->children.size() == 0)
+    {
+        shl_ast_delete(block);
         return nullptr;
+    }
 
     shl_ast* root = new shl_ast();
     root->id = SHL_AST_ROOT;
-    root->children.push_back(std::move(block));
+    root->children.push_back(block);
     return root;
 }
 
@@ -1843,10 +1888,10 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
     {
         case SHL_AST_ROOT:
         {
-            assert(children.size() == 1);
+            assert(children.size() == 1);  // START [0] EXIT
             shl_ast_to_ir(env, children[0], ir);
 
-            // Temp to end
+            // End block, default exit
             shl_ir_push_block(ir, "");
             shl_ir_add_operation(ir, SHL_OPCODE_EXIT);
             shl_ir_pop_block(ir);
@@ -1915,13 +1960,12 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
 
             // TODO: determine if variable is local or global
             const shl_ir_operand& address_operand = shl_ir_operand_from_int(offset);
-
             shl_ir_add_operation(ir, SHL_OPCODE_PUSH_LOCAL, address_operand);
             break;
         }
         case SHL_AST_UNARY_OP:
         {
-            assert(children.size() == 1);
+            assert(children.size() == 1); // token [0]
             shl_ast_to_ir(env, children[0], ir);
 
             switch(token.id)
@@ -1933,7 +1977,7 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
         }
         case SHL_AST_BINARY_OP:
         {
-            assert(children.size() == 2);
+            assert(children.size() == 2); // [0] token [1]
             shl_ast_to_ir(env, children[1], ir); // RHS
             shl_ast_to_ir(env, children[0], ir); // LHS
 
@@ -1949,14 +1993,10 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
         }
         case SHL_AST_FUNC_CALL:
         {
-            // Pass arguments
             for(const shl_ast* arg : children)
                 shl_ast_to_ir(env, arg, ir);
 
-            // Pass the function arg count
             const shl_ir_operand& arg_count_operand = shl_ir_operand_from_int(children.size());
-
-            // Pass the function name
             const shl_ir_operand& func_name_operand = shl_ir_operand_from_str(token.data.c_str());
 
             shl_array<shl_ir_operand> operands;
@@ -1967,7 +2007,7 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
         }
         case SHL_AST_STMT_ASSIGN:
         {
-            assert(children.size() == 1);
+            assert(children.size() == 1); // token = [0]
             if (children.size() == 1)
                 shl_ast_to_ir(env, children[0], ir);
 
@@ -1984,50 +2024,86 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
         }
         case SHL_AST_STMT_IF:
         {
-            if(children.size() == 2)  //if ([0]) {[1]}
-            {
-                // stub for proper bytecode offsetting, adjusted below
-                shl_ir_operand stub_operand = shl_ir_operand_from_int(0);
+            assert(children.size() == 2); //if ([0]) {[1]}
 
-                // Evaluate expression. 
-                shl_ast_to_ir(env, children[0], ir);
-                //Jump to end of true block if false
-                const size_t end_block_jmp = shl_ir_add_operation(ir, SHL_OPCODE_JUMP_ZERO, stub_operand);
+            const shl_ir_operand stub_operand = shl_ir_operand_from_int(0);
 
-                // True block
-                shl_ast_to_ir(env, children[1], ir);
-                const size_t end_block_addr = ir.bytecode_count;
+            // Evaluate expression. 
+            shl_ast_to_ir(env, children[0], ir);
 
-                // adjust the operand values to jump to the correct block offsets
-                shl_ir_operation& end_block_jmp_operation = shl_ir_get_operation(ir, end_block_jmp);
-                end_block_jmp_operation.operands[0] = shl_ir_operand_from_int(end_block_addr);
-            }
-            else if(children.size() == 3) //if ([0]) {[1]} else {[2]}
-            {
-                // stub for proper bytecode offsetting
-                shl_ir_operand stub_operand = shl_ir_operand_from_int(0);
+            //Jump to end if false
+            const size_t end_block_jmp = shl_ir_add_operation(ir, SHL_OPCODE_JUMP_ZERO, stub_operand);
 
-                // Evaluate expression. Jump to end of true block if fale
-                shl_ast_to_ir(env, children[0], ir);
-                const size_t else_block_jmp = shl_ir_add_operation(ir, SHL_OPCODE_JUMP_ZERO, stub_operand);
+            // True block
+            shl_ast_to_ir(env, children[1], ir);
+            const size_t end_block_addr = ir.bytecode_count;
 
-                // True block
-                shl_ast_to_ir(env, children[1], ir);
-                const size_t end_block_jmp = shl_ir_add_operation(ir, SHL_OPCODE_JUMP, stub_operand);
-                const size_t else_block_addr = ir.bytecode_count;
+            // Fixup stubbed block offsets
+            shl_ir_operation& end_block_jmp_operation = shl_ir_get_operation(ir, end_block_jmp);
+            end_block_jmp_operation.operands[0] = shl_ir_operand_from_int(end_block_addr);
+            
+            break;
+        }
+        case SHL_AST_STMT_IF_ELSE:
+        {
+            assert(children.size() == 3); //if ([0]) {[1]} else {[2]}
 
-                // Else block
-                shl_ast_to_ir(env, children[2], ir);
-                const size_t end_block_addr = ir.bytecode_count;
+            const shl_ir_operand stub_operand = shl_ir_operand_from_int(0);
 
-                // adjust the operand values to jump to the correct block offsets
-                shl_ir_operation& else_block_jmp_operation = shl_ir_get_operation(ir, else_block_jmp);
-                else_block_jmp_operation.operands[0] = shl_ir_operand_from_int(else_block_addr);
+            // Evaluate expression. 
+            shl_ast_to_ir(env, children[0], ir);
 
-                shl_ir_operation& end_block_jmp_operation = shl_ir_get_operation(ir, end_block_jmp);
-                end_block_jmp_operation.operands[0] = shl_ir_operand_from_int(end_block_addr);
-            }
+            //Jump to else if false
+            const size_t else_block_jmp = shl_ir_add_operation(ir, SHL_OPCODE_JUMP_ZERO, stub_operand);
 
+            // True block
+            shl_ast_to_ir(env, children[1], ir);
+                
+            //Jump to end after true
+            const size_t end_block_jmp = shl_ir_add_operation(ir, SHL_OPCODE_JUMP, stub_operand);
+            const size_t else_block_addr = ir.bytecode_count;
+
+            // Else block
+            shl_ast_to_ir(env, children[2], ir);
+
+            // Tag end address
+            const size_t end_block_addr = ir.bytecode_count;
+
+            // Fixup stubbed block offsets
+            shl_ir_operation& else_block_jmp_operation = shl_ir_get_operation(ir, else_block_jmp);
+            else_block_jmp_operation.operands[0] = shl_ir_operand_from_int(else_block_addr);
+
+            shl_ir_operation& end_block_jmp_operation = shl_ir_get_operation(ir, end_block_jmp);
+            end_block_jmp_operation.operands[0] = shl_ir_operand_from_int(end_block_addr);
+            
+            break;
+        }
+        case SHL_AST_STMT_WHILE:
+        {
+            assert(children.size() == 2); //while ([0]) {[1]}
+
+            const shl_ir_operand stub_operand = shl_ir_operand_from_int(0);
+
+            const shl_ir_operand& begin_block_operand = shl_ir_operand_from_int(ir.bytecode_count);
+
+            // Evaluate expression. 
+            shl_ast_to_ir(env, children[0], ir);
+
+            //Jump to end if false
+            const size_t end_block_jmp = shl_ir_add_operation(ir, SHL_OPCODE_JUMP_ZERO, stub_operand);
+
+            // Loop block
+            shl_ast_to_ir(env, children[1], ir);
+
+            // Jump back to beginning, expr evaluation 
+            const size_t begin_block_jmp = shl_ir_add_operation(ir, SHL_OPCODE_JUMP, begin_block_operand);
+
+            // Tag end address
+            const size_t end_block_addr = ir.bytecode_count;
+
+            // Fixup stubbed block offsets
+            shl_ir_operation& end_block_jmp_operation = shl_ir_get_operation(ir, end_block_jmp);
+            end_block_jmp_operation.operands[0] = shl_ir_operand_from_int(end_block_addr);
             break;
         }
         case SHL_AST_FUNC_DEF:
