@@ -6,7 +6,7 @@ while a {
     a = a - 1;
 }
 
-if 0 {  
+if 0 {
     print("if"); 
 }
 else if 0 {

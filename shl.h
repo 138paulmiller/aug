@@ -1483,6 +1483,8 @@ size_t shl_ir_operand_size(const shl_ir_operand& operand)
         return sizeof(operand.data.f);
     case SHL_IR_OPERAND_BYTES:
         return strlen(operand.data.str) + 1; // +1 for null term
+    default:
+        break;
     }
     return 0;
 }
@@ -2121,7 +2123,7 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
             shl_ast_to_ir(env, children[1], ir);
 
             // Jump back to beginning, expr evaluation 
-            const size_t begin_block_jmp = shl_ir_add_operation(ir, SHL_OPCODE_JUMP, begin_block_operand);
+            shl_ir_add_operation(ir, SHL_OPCODE_JUMP, begin_block_operand);
 
             // Tag end address
             const size_t end_block_addr = ir.bytecode_count;

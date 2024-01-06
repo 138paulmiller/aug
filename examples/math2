@@ -1,2 +1,10 @@
-a+b*c/d-e;
-a+b*c/(d-e);
+
+natalie_is_cute = 0;
+
+if natalie_is_cute
+{
+    print("Momo has a cute momma");
+}else
+{
+    print("Momo has a sexy momma");
+}

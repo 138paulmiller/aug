@@ -71,6 +71,16 @@ namespace
 			break;
 			case SHL_AST_STMT_IF:
 				printf("IF:%s", token.data.c_str());
+				test_ast_print_tree(children[0], prefix, true);
+			break;
+			case SHL_AST_STMT_IF_ELSE:
+				printf("IF:%s", token.data.c_str());
+				test_ast_print_tree(children[0], prefix, false);
+				printf("ELSE:%s", token.data.c_str());
+				test_ast_print_tree(children[1], prefix, true);
+			break;
+			case SHL_AST_STMT_WHILE:
+				printf("WHILE");
 				for (size_t i = 0; i < children.size(); ++i)
 					test_ast_print_tree(children[i], prefix, i == children.size()-1);
 			break;
