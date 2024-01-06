@@ -1,17 +1,59 @@
 #ifndef __SHL_HEADER__
 #define __SHL_HEADER__
 /*
-    Single Header Language 
-    Author: 138paulmiller
+    Curb Programming Language
+        Single File parser, bytecode compiler, and virtual machine for the Curb programming
+    Author: https://github.com/138paulmiller
+
+    Use 
+        `#define SHL_IMPLEMENTATION`
+        `#include "shl.h"`
+
+    Syntax:
+        expr := value 
+              | expr BINOP expr 
+              | UNOP expr
+    
+        func_call := NAME ( args )
+
+        args := expr 
+              | expr , args
+              | NULL
+
+        value := NAME 
+               | func_call 
+               | NUMBER 
+               | STRING 
+               | ( expr )
+ 
+        stmt_expr := expr ;
+    
+        stmt_assign := NAME = expr ;
+    
+        stmt_if := IF block 
+                |  IF block ELSE block 
+                |  IF block ELSE stmt_if
+    
+        stmt_while := WHILE expr { stmts }
+
+        stmt := stmt_expr 
+              | stmt_assign 
+              | stmt_expr
+              | stmt_while
+    
+        stmts := stmt stmts 
+               | NULL
+
+        block := { stmts }
 
     Todo: 
-    - Parsing - statement, assignment, object, func dec
-    - IR - reduce all local function calls (user defined) to jump operations
-    - Semantic Pass- check variable, function, field names, check binary/unary ops
-    - Framework - Add filewatchers to recompile if source file changed.
-    - VM - Execute compiled bytecode from file
+    - Semantic Pass - check variable, function, field names, check binary/unary ops
+    - VM - Serialize Bytecode to external file. Execute compiled bytecode from file
+    - VM - Serialize debug map to file. Link from bytecode to source file. 
     - VM - Print Stack trace on error. Link back to source file if running uncompiled bytecode
     - Type - Support boolean types
+    - Native - Support return value in function callbacks
+    - Convert to C
 */
 
 #include <functional>
@@ -45,7 +87,8 @@ enum shl_type
     SHL_OBJECT
 };
 
-const char* shl_type_labels[] = {
+const char* shl_type_labels[] = 
+{
     "int", "float", "string", "object"
 };
 
@@ -68,13 +111,9 @@ struct shl_object
 
 struct shl_environment
 {
-    // user defined functions
     shl_map<shl_string, shl_function_callback*> functions;
     shl_error_callback* error_callback = nullptr;
 };
-
-//void shl_register(shl_environment& env, const char* function_signature, shl_function_callback callback); //TODO parse the func types ? 
-//void shl_unregister(shl_environment& env, const char* function_signature);
 
 void shl_register(shl_environment& env, const char* function_id, shl_function_callback* callback); //TODO parse the func types ? 
 void shl_unregister(shl_environment& env, const char* function_id);
@@ -90,6 +129,8 @@ bool shl_value_mul(shl_value* result, shl_value* lhs, shl_value* rhs);
 bool shl_value_div(shl_value* result, shl_value* lhs, shl_value* rhs);
 
 #endif //__SHL_HEADER__
+
+// -------------------------------------- Implementation Details ---------------------------------------// 
 
 #if defined(SHL_IMPLEMENTATION)
 
@@ -888,8 +929,6 @@ bool shl_parse_expr_pop(shl_environment& env, shl_lexer& lexer, shl_list<shl_tok
 
 shl_ast* shl_parse_expr(shl_environment& env, shl_lexer& lexer)
 {
-    // expr := value | expr BINOP expr | UNOP expr
-
     // Shunting yard algorithm
     shl_list<shl_token> op_stack;
     shl_list<shl_ast*> expr_stack;
@@ -945,9 +984,6 @@ shl_ast* shl_parse_expr(shl_environment& env, shl_lexer& lexer)
 
 shl_ast* shl_parse_funccall(shl_environment& env, shl_lexer& lexer)
 {
-    // funccall := NAME ( args )
-    // args := NULL | expr | expr , args 
-
     shl_token name_token = lexer.curr;
     if (name_token.id != SHL_TOKEN_NAME)
         return nullptr;
@@ -989,7 +1025,6 @@ shl_ast* shl_parse_funccall(shl_environment& env, shl_lexer& lexer)
 
 shl_ast* shl_parse_value(shl_environment& env, shl_lexer& lexer)
 {
-    // value := NAME | funccall | NUMBER | STRING | ( expr )
     shl_token token = lexer.curr;
     switch (token.id)
     {
@@ -1035,7 +1070,6 @@ shl_ast* shl_parse_value(shl_environment& env, shl_lexer& lexer)
 
 shl_ast* shl_parse_stmt_expr(shl_environment& env, shl_lexer& lexer)
 {
-    // stmt_expr := expr ;
     shl_ast* stmt_expr = shl_parse_expr(env, lexer);
     if (stmt_expr == nullptr)
         return nullptr;
@@ -1054,7 +1088,6 @@ shl_ast* shl_parse_stmt_expr(shl_environment& env, shl_lexer& lexer)
 
 shl_ast* shl_parse_stmt_assign(shl_environment& env, shl_lexer& lexer)
 {
-    // stmt_assign := NAME = expr ;
     shl_token name_token = lexer.curr;
     shl_token eq_token = lexer.next;
     if (name_token.id != SHL_TOKEN_NAME || eq_token.id != SHL_TOKEN_ASSIGN)
@@ -1086,9 +1119,6 @@ shl_ast* shl_parse_stmt_assign(shl_environment& env, shl_lexer& lexer)
 
 shl_ast* shl_parse_stmt_if(shl_environment& env, shl_lexer& lexer)
 {
-    // stmt_if := if { block }
-    //         |  if { block } else { block }
-    //         |  if { block } else stmt_if
     if (lexer.curr.id != SHL_TOKEN_IF)
         return nullptr;
 
@@ -1152,8 +1182,6 @@ shl_ast* shl_parse_stmt_if(shl_environment& env, shl_lexer& lexer)
 
 shl_ast* shl_parse_stmt_while(shl_environment& env, shl_lexer& lexer)
 {
-    // stmt_case := WHILE expr { for_exprs }
-    // expr_stmt := expr_stmt | NULL
     if (lexer.curr.id != SHL_TOKEN_WHILE)
         return nullptr;
 
@@ -1183,8 +1211,6 @@ shl_ast* shl_parse_stmt_while(shl_environment& env, shl_lexer& lexer)
 
 shl_ast* shl_parse_stmt_case(shl_environment& env, shl_lexer& lexer)
 {
-    // stmt_case := CASE { case_exprs }
-    // case_exprs := expr_stmt | NULL
     return nullptr;
 }
 
@@ -1882,7 +1908,6 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
 
     const shl_token& token = node->token;
     const shl_array<shl_ast*>& children = node->children;
-    shl_map<shl_string, size_t> variable_to_offsetmap;
 
     switch(node->id)
     {
