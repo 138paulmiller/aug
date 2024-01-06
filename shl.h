@@ -1603,6 +1603,30 @@ shl_value* shl_vm_get(shl_environment& env, shl_vm& vm, size_t frame_offset)
     return &vm.stack[offset];
 }
 
+int shl_vm_read_int(shl_vm& vm)
+{
+    shl_vm_bytecode_value bytecode_value;
+    for (size_t i = 0; i < sizeof(bytecode_value.i); ++i)
+        bytecode_value.bytes[i] = *(vm.instruction++);
+    return bytecode_value.i;
+}
+
+float shl_vm_read_float(shl_vm& vm)
+{
+    shl_vm_bytecode_value bytecode_value;
+    for (size_t i = 0; i < sizeof(bytecode_value.f); ++i)
+        bytecode_value.bytes[i] = *(vm.instruction++);
+    return bytecode_value.f;
+}
+
+const char* shl_vm_read_bytes(shl_vm& vm)
+{
+    size_t len = 1; // include null terminating
+    while (*(vm.instruction++))
+        len++;
+    return vm.instruction - len;
+}
+
 #define SHL_VM_DEBUG_TOP 0
 
 void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& bytecode)
@@ -1614,10 +1638,6 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
 
     if (vm.bytecode == nullptr)
         return;
-
-    // Objects to deserialize data from bytecode
-    shl_vm_bytecode_value bytecode_value;
-    shl_array<char> bytecode_string;
 
     while(vm.instruction)
     {
@@ -1643,56 +1663,41 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 break;
             case SHL_OPCODE_PUSH_INT:   
             {
-
-                // Read int
-                for(size_t i = 0; i < sizeof(bytecode_value.i); ++i)
-                    bytecode_value.bytes[i] = *(vm.instruction++);
-
                 shl_value* value = shl_vm_push(env, vm);
                 if(value == nullptr) 
                     break;
                 value->type = SHL_INT;
-                value->i = bytecode_value.i;
+                value->i = shl_vm_read_int(vm);
                 break;
             }
             case SHL_OPCODE_PUSH_FLOAT:
             {
-                // Read float              
-                for(size_t i = 0; i < sizeof(bytecode_value.f); ++i)
-                    bytecode_value.bytes[i] = *(vm.instruction++);
-
                 shl_value* value = shl_vm_push(env, vm);
                 if(value == nullptr) 
                     break;
                 
                 value->type = SHL_FLOAT;
-                value->f = bytecode_value.f;
+                value->f = shl_vm_read_float(vm);
                 break;
             }                                  
             case SHL_OPCODE_PUSH_STRING:
             {
-                // Read until 0         
-                size_t len = 0;   
-                while(*(vm.instruction++)) 
-                    len++;
-
                 shl_value* value = shl_vm_push(env, vm);
                 if(value == nullptr) 
                     break;
 
                 value->type = SHL_STRING;
                 // TODO: Duplicate string ? When popping string from stack, clean up allocated string ?  
-                value->str = (vm.instruction - (len+1)); 
+                value->str = shl_vm_read_bytes(vm);
                 break;
             }
             case SHL_OPCODE_PUSH_LOCAL:
             {
-                // Read int
-                for (size_t i = 0; i < sizeof(bytecode_value.i); ++i)
-                    bytecode_value.bytes[i] = *(vm.instruction++);
+                // address on stack
+                const int address = shl_vm_read_int(vm);
 
                 shl_value* top = shl_vm_push(env, vm);
-                shl_value* local = shl_vm_get(env, vm, bytecode_value.i);
+                shl_value* local = shl_vm_get(env, vm, address);
                 if (top !=  nullptr || local != nullptr)
                     *top = *local;
 
@@ -1700,11 +1705,9 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
             }
             case SHL_OPCODE_LOAD_LOCAL:
             {
-                // Read int
-                for (size_t i = 0; i < sizeof(bytecode_value.i); ++i)
-                    bytecode_value.bytes[i] = *(vm.instruction++);
 
-                const int address = bytecode_value.i;
+                // address on stack
+                const int address = shl_vm_read_int(vm);
                 
                 shl_value* top = shl_vm_pop(env, vm);
 
@@ -1722,17 +1725,8 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
             }
             case SHL_OPCODE_CALL:
             {
-                // Read int
-                for(size_t i = 0; i < sizeof(bytecode_value.i); ++i)
-                    bytecode_value.bytes[i] = *(vm.instruction++);
-                
-                // Read func name
-                size_t len = 0;   
-                while(*(vm.instruction++)) 
-                    len++;
-                
-                size_t arg_count = bytecode_value.i;
-                const char* func_name = (vm.instruction - (len+1)); 
+                size_t arg_count = shl_vm_read_int(vm);
+                const char* func_name = shl_vm_read_bytes(vm);;
 
                 shl_list<shl_value*> args;
                 for(size_t i = 0; i < arg_count; ++i)
@@ -1785,44 +1779,35 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                     SHL_VM_ERROR(env, vm, "%s / %s not defined", shl_type_labels[(int)lhs->type], shl_type_labels[(int)rhs->type] );
                 break;
             }
-
             case SHL_OPCODE_JUMP:
             {
-                // Read int              
-                for (size_t i = 0; i < sizeof(bytecode_value.i); ++i)
-                    bytecode_value.bytes[i] = *(vm.instruction++);
-
-                vm.instruction = vm.bytecode + bytecode_value.i;
+                const int instruction_offset = shl_vm_read_int(vm);
+                vm.instruction = vm.bytecode + instruction_offset;
                 break;
             }
             case SHL_OPCODE_JUMP_NZERO:
             {
-                // Read int              
-                for (size_t i = 0; i < sizeof(bytecode_value.i); ++i)
-                    bytecode_value.bytes[i] = *(vm.instruction++);
+                const int instruction_offset = shl_vm_read_int(vm);
 
                 // need to check if the chunk can be jumped to
                 shl_value* value = shl_vm_pop(env, vm);
                 if (shl_value_to_bool(value) != 0)
-                    vm.instruction = vm.bytecode + bytecode_value.i;
+                    vm.instruction = vm.bytecode + instruction_offset;
                 break;
             }
             case SHL_OPCODE_JUMP_ZERO:
             {
-                // Read int              
-                for(size_t i = 0; i < sizeof(bytecode_value.i); ++i)
-                    bytecode_value.bytes[i] = *(vm.instruction++);
+                const int instruction_offset = shl_vm_read_int(vm);
 
                 // need to check if the chunk can be jumped to
                 shl_value* value = shl_vm_pop(env, vm);
-                if(shl_value_to_bool(value) == 0)
-                    vm.instruction = vm.bytecode + bytecode_value.i;
+                if (shl_value_to_bool(value) == 0)
+                    vm.instruction = vm.bytecode + instruction_offset;
                 break;
             }
             default:
                 // UNSUPPORTED!!!!
             break;
-
         }
 
 #if SHL_VM_DEBUG_TOP
