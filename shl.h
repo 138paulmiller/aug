@@ -158,6 +158,8 @@ bool shl_value_neq(shl_value* result, shl_value* lhs, shl_value* rhs);
 #include <memory>
 
 #define SHL_DEBUG 1
+#define SHL_VM_DEBUG_TOP 0
+
 
 #ifndef SHL_VM_OPERAND_LEN
     #define SHL_VM_OPERAND_LEN 8
@@ -217,61 +219,61 @@ struct shl_token_detail
     const char* keyword;  // if non-null, the token must match the provided keyword
 };
 
-#define SHL_TOKEN_LIST                             \
-    /* State */                                    \
-    SHL_TOKEN(NONE,           0, 0, 0, NULL)       \
-    SHL_TOKEN(ERR,	          0, 0, 1, NULL)       \
-    SHL_TOKEN(END,            0, 0, 1, NULL)       \
-    /* Symbols */			                       \
-    SHL_TOKEN(DOT,            0, 0, 0, NULL)       \
-    SHL_TOKEN(COMMA,          0, 0, 0, NULL)       \
-    SHL_TOKEN(COLON,          0, 0, 0, NULL)       \
-    SHL_TOKEN(SEMICOLON,      0, 0, 0, NULL)       \
-    SHL_TOKEN(LPAREN,         0, 0, 0, NULL)       \
-    SHL_TOKEN(RPAREN,         0, 0, 0, NULL)       \
-    SHL_TOKEN(LBRACKET,       0, 0, 0, NULL)       \
-    SHL_TOKEN(RBRACKET,       0, 0, 0, NULL)       \
-    SHL_TOKEN(LBRACE,         0, 0, 0, NULL)       \
-    SHL_TOKEN(RBRACE,         0, 0, 0, NULL)       \
-    /* Operators - Arithmetic */                   \
-    SHL_TOKEN(AND,            1, 2, 0, NULL)       \
-    SHL_TOKEN(OR,             1, 2, 0, NULL)       \
-    SHL_TOKEN(ADD,            2, 2, 0, NULL)       \
-    SHL_TOKEN(ADD_EQ,         1, 2, 0, NULL)       \
-    SHL_TOKEN(SUB,            2, 2, 0, NULL)       \
-    SHL_TOKEN(SUB_EQ,         1, 2, 0, NULL)       \
-    SHL_TOKEN(MUL,            3, 2, 0, NULL)       \
-    SHL_TOKEN(MUL_EQ,         1, 2, 0, NULL)       \
-    SHL_TOKEN(DIV,            3, 2, 0, NULL)       \
-    SHL_TOKEN(DIV_EQ,         1, 2, 0, NULL)       \
-    SHL_TOKEN(POW,            3, 2, 0, NULL)       \
-    SHL_TOKEN(POW_EQ,         1, 2, 0, NULL)       \
-    /* Operators - Boolean */                      \
-    SHL_TOKEN(EQ,             2, 2, 0, NULL)       \
-    SHL_TOKEN(LT,             2, 2, 0, NULL)       \
-    SHL_TOKEN(GT,             2, 2, 0, NULL)       \
-    SHL_TOKEN(LT_EQ,          1, 2, 0, NULL)       \
-    SHL_TOKEN(GT_EQ,          1, 2, 0, NULL)       \
-    SHL_TOKEN(NOT,            3, 1, 0, NULL)       \
-    SHL_TOKEN(NOT_EQ,         3, 2, 0, NULL)       \
-    /* Literals */                                 \
-    SHL_TOKEN(DECIMAL,        0, 0, 1, NULL)       \
-    SHL_TOKEN(HEXIDECIMAL,    0, 0, 1, NULL)       \
-    SHL_TOKEN(BINARY,         0, 0, 1, NULL)       \
-    SHL_TOKEN(FLOAT,          0, 0, 1, NULL)       \
-    SHL_TOKEN(STRING,         0, 0, 1, NULL)       \
-    /* Misc */                                     \
-    SHL_TOKEN(NAME,           0, 0, 1, NULL)       \
-    SHL_TOKEN(ASSIGN,         0, 0, 0, NULL)       \
-    /* Keywords */                                 \
-    SHL_TOKEN(IF,             0, 0, 1, "if")       \
-    SHL_TOKEN(ELSE,           0, 0, 1, "else")     \
-    SHL_TOKEN(IN,             0, 0, 1, "in")       \
-    SHL_TOKEN(FOR,            0, 0, 1, "for")      \
-    SHL_TOKEN(WHILE,          0, 0, 1, "while")    \
-    SHL_TOKEN(FUNC,           0, 0, 1, "func")     \
-    SHL_TOKEN(TRUE,           0, 0, 1, "true")     \
-    SHL_TOKEN(FALSE,          0, 0, 1, "false")
+#define SHL_TOKEN_LIST                                \
+    /* State */                                       \
+    SHL_TOKEN(NONE,           0, 0, 0, nullptr)       \
+    SHL_TOKEN(ERR,	          0, 0, 0, nullptr)       \
+    SHL_TOKEN(END,            0, 0, 0, nullptr)       \
+    /* Symbols */			                          \
+    SHL_TOKEN(DOT,            0, 0, 0, nullptr)       \
+    SHL_TOKEN(COMMA,          0, 0, 0, nullptr)       \
+    SHL_TOKEN(COLON,          0, 0, 0, nullptr)       \
+    SHL_TOKEN(SEMICOLON,      0, 0, 0, nullptr)       \
+    SHL_TOKEN(LPAREN,         0, 0, 0, nullptr)       \
+    SHL_TOKEN(RPAREN,         0, 0, 0, nullptr)       \
+    SHL_TOKEN(LBRACKET,       0, 0, 0, nullptr)       \
+    SHL_TOKEN(RBRACKET,       0, 0, 0, nullptr)       \
+    SHL_TOKEN(LBRACE,         0, 0, 0, nullptr)       \
+    SHL_TOKEN(RBRACE,         0, 0, 0, nullptr)       \
+    /* Operators - Arithmetic */                      \
+    SHL_TOKEN(AND,            1, 2, 0, nullptr)       \
+    SHL_TOKEN(OR,             1, 2, 0, nullptr)       \
+    SHL_TOKEN(ADD,            2, 2, 0, nullptr)       \
+    SHL_TOKEN(ADD_EQ,         1, 2, 0, nullptr)       \
+    SHL_TOKEN(SUB,            2, 2, 0, nullptr)       \
+    SHL_TOKEN(SUB_EQ,         1, 2, 0, nullptr)       \
+    SHL_TOKEN(MUL,            3, 2, 0, nullptr)       \
+    SHL_TOKEN(MUL_EQ,         1, 2, 0, nullptr)       \
+    SHL_TOKEN(DIV,            3, 2, 0, nullptr)       \
+    SHL_TOKEN(DIV_EQ,         1, 2, 0, nullptr)       \
+    SHL_TOKEN(POW,            3, 2, 0, nullptr)       \
+    SHL_TOKEN(POW_EQ,         1, 2, 0, nullptr)       \
+    /* Operators - Boolean */                         \
+    SHL_TOKEN(EQ,             2, 2, 0, nullptr)       \
+    SHL_TOKEN(LT,             2, 2, 0, nullptr)       \
+    SHL_TOKEN(GT,             2, 2, 0, nullptr)       \
+    SHL_TOKEN(LT_EQ,          1, 2, 0, nullptr)       \
+    SHL_TOKEN(GT_EQ,          1, 2, 0, nullptr)       \
+    SHL_TOKEN(NOT,            3, 1, 0, nullptr)       \
+    SHL_TOKEN(NOT_EQ,         3, 2, 0, nullptr)       \
+    /* Literals */                                    \
+    SHL_TOKEN(DECIMAL,        0, 0, 1, nullptr)       \
+    SHL_TOKEN(HEXIDECIMAL,    0, 0, 1, nullptr)       \
+    SHL_TOKEN(BINARY,         0, 0, 1, nullptr)       \
+    SHL_TOKEN(FLOAT,          0, 0, 1, nullptr)       \
+    SHL_TOKEN(STRING,         0, 0, 1, nullptr)       \
+    /* Misc */                                        \
+    SHL_TOKEN(NAME,           0, 0, 1, nullptr)       \
+    SHL_TOKEN(ASSIGN,         0, 0, 0, nullptr)       \
+    /* Keywords */                                    \
+    SHL_TOKEN(IF,             0, 0, 0, "if")          \
+    SHL_TOKEN(ELSE,           0, 0, 0, "else")        \
+    SHL_TOKEN(IN,             0, 0, 0, "in")          \
+    SHL_TOKEN(FOR,            0, 0, 0, "for")         \
+    SHL_TOKEN(WHILE,          0, 0, 0, "while")       \
+    SHL_TOKEN(FUNC,           0, 0, 0, "func")        \
+    SHL_TOKEN(TRUE,           0, 0, 0, "true")        \
+    SHL_TOKEN(FALSE,          0, 0, 0, "false")
 
 // Token identifier. 
 enum shl_token_id : uint8_t 
@@ -887,7 +889,6 @@ struct shl_ast
     shl_array<shl_ast*> children;
 };
 
-// Forward declared. 
 shl_ast* shl_parse_value(shl_environment& env, shl_lexer& lexer); 
 shl_ast* shl_parse_block(shl_environment& env, shl_lexer& lexer);
 
@@ -1058,6 +1059,8 @@ shl_ast* shl_parse_value(shl_environment& env, shl_lexer& lexer)
     case SHL_TOKEN_BINARY:
     case SHL_TOKEN_FLOAT:
     case SHL_TOKEN_STRING:
+    case SHL_TOKEN_TRUE:
+    case SHL_TOKEN_FALSE:
     {
         shl_lexer_move(env, lexer);
         shl_ast* literal = shl_ast_new(SHL_AST_LITERAL, token);
@@ -1230,7 +1233,6 @@ shl_ast* shl_parse_stmt_case(shl_environment& env, shl_lexer& lexer)
     return nullptr;
 }
 
-
 shl_ast* shl_parse_stmt(shl_environment& env, shl_lexer& lexer)
 {
     //TODO: assignment, funcdef etc..
@@ -1340,6 +1342,7 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 	SHL_OPCODE(EXIT)           \
 	SHL_OPCODE(NO_OP)          \
 	SHL_OPCODE(NEXT_CHUNK)     \
+	SHL_OPCODE(PUSH_BOOL)      \
 	SHL_OPCODE(PUSH_INT)       \
 	SHL_OPCODE(PUSH_FLOAT)     \
 	SHL_OPCODE(PUSH_STRING)    \
@@ -1411,6 +1414,7 @@ enum shl_ir_operand_type
 {
     // type if operand is constant or literal
     SHL_IR_OPERAND_NONE = 0,
+    SHL_IR_OPERAND_BOOL,
     SHL_IR_OPERAND_INT,
     SHL_IR_OPERAND_FLOAT,  
     SHL_IR_OPERAND_BYTES,
@@ -1420,6 +1424,7 @@ struct shl_ir_operand
 {
     union
     {
+        bool b;
         int i;
         float f;
         const char* str; // NOTE: weak pointer to token data
@@ -1464,26 +1469,26 @@ struct shl_ir
     size_t bytecode_count = 0;
 };
 
-void shl_ir_push_block(shl_ir& ir, shl_string label)
+inline void shl_ir_push_block(shl_ir& ir, shl_string label)
 {
     shl_ir_block block;
     block.local_offset = 0;
     ir.block_stack.push_back(block);
 }
 
-void shl_ir_pop_block(shl_ir& ir)
+inline void shl_ir_pop_block(shl_ir& ir)
 {
     assert(ir.block_stack.size() > 0);
     ir.block_stack.pop_back();
 }
 
-shl_ir_block& shl_ir_top_block(shl_ir& ir)
+inline shl_ir_block& shl_ir_top_block(shl_ir& ir)
 {
     assert(ir.block_stack.size() > 0);
     return ir.block_stack.back();
 }
 
-size_t shl_ir_operand_size(const shl_ir_operand& operand)
+inline size_t shl_ir_operand_size(const shl_ir_operand& operand)
 {
     switch (operand.type)
     {
@@ -1499,7 +1504,7 @@ size_t shl_ir_operand_size(const shl_ir_operand& operand)
     return 0;
 }
 
-size_t shl_ir_operation_size(const shl_ir_operation& operation)
+inline size_t shl_ir_operation_size(const shl_ir_operation& operation)
 {
     size_t size = sizeof(operation.opcode);
     for(const shl_ir_operand& operand : operation.operands)
@@ -1509,7 +1514,7 @@ size_t shl_ir_operation_size(const shl_ir_operation& operation)
     return size;
 }
 
-size_t shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_array<shl_ir_operand>& operands)
+inline size_t shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_array<shl_ir_operand>& operands)
 {
     shl_ir_operation operation;
     operation.opcode = opcode;
@@ -1523,7 +1528,7 @@ size_t shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_array<shl_i
     return ir.module.operations.size()-1;
 }
 
-size_t shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_ir_operand& operand)
+inline size_t shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_ir_operand& operand)
 {
     shl_ir_operation operation;
     operation.opcode = opcode;
@@ -1537,20 +1542,28 @@ size_t shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_ir_operand&
     return ir.module.operations.size()-1;
 }
 
-size_t shl_ir_add_operation(shl_ir& ir, shl_opcode opcode)
+inline size_t shl_ir_add_operation(shl_ir& ir, shl_opcode opcode)
 {
     shl_ir_operand operand;
     return shl_ir_add_operation(ir, opcode, operand);
 }
 
-shl_ir_operation& shl_ir_get_operation(shl_ir& ir, size_t operation_index)
+inline shl_ir_operation& shl_ir_get_operation(shl_ir& ir, size_t operation_index)
 {
     assert(ir.block_stack.size());
     assert(operation_index < ir.module.operations.size());
     return ir.module.operations.at(operation_index);
 }
 
-shl_ir_operand shl_ir_operand_from_int(int data)
+inline shl_ir_operand shl_ir_operand_from_bool(bool data)
+{
+    shl_ir_operand operand;
+    operand.type = SHL_IR_OPERAND_BOOL;
+    operand.data.b = data;
+    return operand;
+}
+
+inline shl_ir_operand shl_ir_operand_from_int(int data)
 {
     shl_ir_operand operand;
     operand.type = SHL_IR_OPERAND_INT;
@@ -1558,7 +1571,7 @@ shl_ir_operand shl_ir_operand_from_int(int data)
     return operand;
 }
 
-shl_ir_operand shl_ir_operand_from_float(float data)
+inline shl_ir_operand shl_ir_operand_from_float(float data)
 {
     shl_ir_operand operand;
     operand.type = SHL_IR_OPERAND_FLOAT;
@@ -1566,7 +1579,7 @@ shl_ir_operand shl_ir_operand_from_float(float data)
     return operand;
 }
 
-shl_ir_operand shl_ir_operand_from_str(const char* data)
+inline shl_ir_operand shl_ir_operand_from_str(const char* data)
 {
     shl_ir_operand operand;
     operand.type = SHL_IR_OPERAND_BYTES;
@@ -1574,7 +1587,7 @@ shl_ir_operand shl_ir_operand_from_str(const char* data)
     return operand;
 }
 
-int shl_ir_set_var_addr(shl_ir& ir, const shl_string& name)
+inline int shl_ir_set_var_addr(shl_ir& ir, const shl_string& name)
 {
     shl_ir_block& block = shl_ir_top_block(ir);
     int offset = block.local_offset++;
@@ -1582,7 +1595,7 @@ int shl_ir_set_var_addr(shl_ir& ir, const shl_string& name)
     return offset;
 }
 
-int shl_ir_get_var_addr(shl_ir& ir, const shl_string& name)
+inline int shl_ir_get_var_addr(shl_ir& ir, const shl_string& name)
 {
     for (int i = ir.block_stack.size()-1; i >=0; --i)
     {
@@ -1610,6 +1623,7 @@ struct shl_vm
 // Used to convert values to/from bytes for constant values
 union shl_vm_bytecode_value
 {
+    bool b;
     int i;
     float f;
     unsigned char bytes[SHL_VM_OPERAND_LEN];
@@ -1694,6 +1708,14 @@ inline shl_value* shl_vm_get(shl_environment& env, shl_vm& vm, size_t frame_offs
     return &vm.stack[offset];
 }
 
+inline int shl_vm_read_bool(shl_vm& vm)
+{
+    shl_vm_bytecode_value bytecode_value;
+    for (size_t i = 0; i < sizeof(bytecode_value.b); ++i)
+        bytecode_value.bytes[i] = *(vm.instruction++);
+    return bytecode_value.i;
+}
+
 inline int shl_vm_read_int(shl_vm& vm)
 {
     shl_vm_bytecode_value bytecode_value;
@@ -1717,8 +1739,6 @@ inline const char* shl_vm_read_bytes(shl_vm& vm)
         len++;
     return vm.instruction - len;
 }
-
-#define SHL_VM_DEBUG_TOP 0
 
 void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& bytecode)
 {
@@ -1752,6 +1772,16 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 break;
             case SHL_OPCODE_NO_OP:
                 break;
+            case SHL_OPCODE_PUSH_BOOL:
+            {
+                shl_value* value = shl_vm_push(env, vm);
+                if (value == nullptr)
+                    break;
+
+                value->type = SHL_BOOL;
+                value->b = shl_vm_read_bool(vm);
+                break;
+            }
             case SHL_OPCODE_PUSH_INT:   
             {
                 shl_value* value = shl_vm_push(env, vm);
@@ -2037,6 +2067,18 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
                     shl_ir_add_operation(ir, SHL_OPCODE_PUSH_STRING, operand);
                     break;
                 }
+                case SHL_TOKEN_TRUE:
+                {
+                    const shl_ir_operand& operand = shl_ir_operand_from_bool(true);
+                    shl_ir_add_operation(ir, SHL_OPCODE_PUSH_BOOL, operand);
+                    break;
+                }
+                case SHL_TOKEN_FALSE:
+                {
+                    const shl_ir_operand& operand = shl_ir_operand_from_bool(false);
+                    shl_ir_add_operation(ir, SHL_OPCODE_PUSH_BOOL, operand);
+                    break;
+                }
                 default: 
                 break;
             }
@@ -2059,6 +2101,7 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
         case SHL_AST_UNARY_OP:
         {
             assert(children.size() == 1); // token [0]
+
             shl_ast_to_ir(env, children[0], ir);
 
             switch(token.id)
@@ -2071,6 +2114,7 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
         case SHL_AST_BINARY_OP:
         {
             assert(children.size() == 2); // [0] token [1]
+
             shl_ast_to_ir(env, children[1], ir); // RHS
             shl_ast_to_ir(env, children[0], ir); // LHS
 
@@ -2102,11 +2146,13 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
             operands.push_back(arg_count_operand);
             operands.push_back(func_name_operand);
             shl_ir_add_operation(ir, SHL_OPCODE_CALL_EXT, operands);
+            
             break;
         }
         case SHL_AST_STMT_ASSIGN:
         {
             assert(children.size() == 1); // token = [0]
+
             if (children.size() == 1)
                 shl_ast_to_ir(env, children[0], ir);
 
@@ -2114,11 +2160,9 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
             if (offset == SHL_IR_INVALID_ADDR)
                 shl_ir_set_var_addr(ir, token.data);
 
-            //load top into address
-
             const shl_ir_operand& address_operand = shl_ir_operand_from_int(offset);
-
             shl_ir_add_operation(ir, SHL_OPCODE_LOAD_LOCAL, address_operand);
+
             break;
         }
         case SHL_AST_STMT_IF:
@@ -2203,6 +2247,7 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
             // Fixup stubbed block offsets
             shl_ir_operation& end_block_jmp_operation = shl_ir_get_operation(ir, end_block_jmp);
             end_block_jmp_operation.operands[0] = shl_ir_operand_from_int(end_block_addr);
+            
             break;
         }
         case SHL_AST_FUNC_DEF:
@@ -2287,6 +2332,8 @@ void shl_execute(shl_environment& env, const char* filename)
     // Run VM
     shl_vm vm;
     shl_vm_execute(env, vm, bytecode);
+
+    // TODO: should this return top of stack to user?
 }
 
 void shl_evaluate(shl_environment& env, const char* code)
@@ -2314,6 +2361,8 @@ void shl_evaluate(shl_environment& env, const char* code)
     // Run VM
     shl_vm vm;
     shl_vm_execute(env, vm, bytecode);
+
+    // TODO: should this return top of stack to user?
 }
 
 shl_string shl_value_to_string(const shl_value* value)

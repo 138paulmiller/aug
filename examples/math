@@ -1,17 +1,11 @@
 print("---- BEGIN ---- ");
 
+running = true;
 a = 0;
-while a != 15 {
-
-    if a < 10 {
-        print(a); 
-    }
-    else if a >= 14{
-        print("..."); 
-    }
-
-    if a == 13 {
+while running {
+    if a == 1300000 {
         print("Found 13"); 
+        running = false;
     }
     a = a + 1;
 }
