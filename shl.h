@@ -81,6 +81,7 @@ typedef void(shl_function_callback)(const shl_list<shl_value*>& /*args*/);
 
 enum shl_type
 {
+    SHL_BOOL,
     SHL_INT, 
     SHL_FLOAT, 
     SHL_STRING, 
@@ -97,6 +98,7 @@ struct shl_value
     shl_type type;
     union 
     {
+        bool b;
         int i; 
         float f;
         const char* str;
@@ -104,9 +106,15 @@ struct shl_value
     };
 };
 
+struct shl_attribute
+{
+    shl_string id;
+    shl_value value;
+};
+
 struct shl_object
 {
-    shl_map<shl_string, shl_value> map;
+    shl_array<shl_attribute> attribs;
 };
 
 struct shl_environment
@@ -127,6 +135,11 @@ bool shl_value_add(shl_value* result, shl_value* lhs, shl_value* rhs);
 bool shl_value_sub(shl_value* result, shl_value* lhs, shl_value* rhs);
 bool shl_value_mul(shl_value* result, shl_value* lhs, shl_value* rhs);
 bool shl_value_div(shl_value* result, shl_value* lhs, shl_value* rhs);
+bool shl_value_lt(shl_value* result, shl_value* lhs, shl_value* rhs);
+bool shl_value_lte(shl_value* result, shl_value* lhs, shl_value* rhs);
+bool shl_value_gt(shl_value* result, shl_value* lhs, shl_value* rhs);
+bool shl_value_gte(shl_value* result, shl_value* lhs, shl_value* rhs);
+bool shl_value_eq(shl_value* result, shl_value* lhs, shl_value* rhs);
 
 #endif //__SHL_HEADER__
 
@@ -192,6 +205,16 @@ bool shl_value_div(shl_value* result, shl_value* lhs, shl_value* rhs);
 }
 
 // -------------------------------------- Lexer  ---------------------------------------// 
+// Static token details
+struct shl_token_detail
+{
+    const char* label;    // the string representation, used for visualization and debugging
+    char prec;            // if the token is an operator, this is the precedence (note: higher values take precendece)
+    int  argc;            // if the token is an operator, this is the number of operands
+    bool capture;         // if non-zero, the token will contain the source string value (i.e. integer and string literals)
+    const char* keyword;  // if non-null, the token must match the provided keyword
+};
+
 #define SHL_TOKEN_LIST                             \
     /* State */                                    \
     SHL_TOKEN(NONE,           0, 0, 0, NULL)       \
@@ -208,35 +231,36 @@ bool shl_value_div(shl_value* result, shl_value* lhs, shl_value* rhs);
     SHL_TOKEN(RBRACKET,       0, 0, 0, NULL)       \
     SHL_TOKEN(LBRACE,         0, 0, 0, NULL)       \
     SHL_TOKEN(RBRACE,         0, 0, 0, NULL)       \
-    /* Operators */                                \
+    /* Operators - Arithmetic */                   \
     SHL_TOKEN(AND,            1, 2, 0, NULL)       \
     SHL_TOKEN(OR,             1, 2, 0, NULL)       \
     SHL_TOKEN(ADD,            2, 2, 0, NULL)       \
-    SHL_TOKEN(ADD_EQUAL,      1, 2, 0, NULL)       \
+    SHL_TOKEN(ADD_EQ,         1, 2, 0, NULL)       \
     SHL_TOKEN(SUB,            2, 2, 0, NULL)       \
-    SHL_TOKEN(SUB_EQUAL,      1, 2, 0, NULL)       \
+    SHL_TOKEN(SUB_EQ,         1, 2, 0, NULL)       \
     SHL_TOKEN(MUL,            3, 2, 0, NULL)       \
-    SHL_TOKEN(MUL_EQUAL,      1, 2, 0, NULL)       \
+    SHL_TOKEN(MUL_EQ,         1, 2, 0, NULL)       \
     SHL_TOKEN(DIV,            3, 2, 0, NULL)       \
-    SHL_TOKEN(DIV_EQUAL,      1, 2, 0, NULL)       \
+    SHL_TOKEN(DIV_EQ,         1, 2, 0, NULL)       \
     SHL_TOKEN(POW,            3, 2, 0, NULL)       \
-    SHL_TOKEN(POW_EQUAL,      1, 2, 0, NULL)       \
-    SHL_TOKEN(LESS,           2, 2, 0, NULL)       \
-    SHL_TOKEN(GREATER,        2, 2, 0, NULL)       \
-    SHL_TOKEN(LESS_EQUAL,     1, 2, 0, NULL)       \
-    SHL_TOKEN(GREATER_EQUAL,  1, 2, 0, NULL)       \
-    SHL_TOKEN(ASSIGN,         1, 2, 0, NULL)       \
-    SHL_TOKEN(EQUAL,          2, 2, 0, NULL)       \
+    SHL_TOKEN(POW_EQ,         1, 2, 0, NULL)       \
+    /* Operators - Boolean */                      \
+    SHL_TOKEN(EQ,             2, 2, 0, NULL)       \
+    SHL_TOKEN(LT,             2, 2, 0, NULL)       \
+    SHL_TOKEN(GT,             2, 2, 0, NULL)       \
+    SHL_TOKEN(LT_EQ,          1, 2, 0, NULL)       \
+    SHL_TOKEN(GT_EQ,          1, 2, 0, NULL)       \
     SHL_TOKEN(NOT,            3, 1, 0, NULL)       \
-    SHL_TOKEN(NOT_EQUAL,      3, 2, 0, NULL)       \
+    SHL_TOKEN(NOT_EQ,         3, 2, 0, NULL)       \
     /* Literals */                                 \
     SHL_TOKEN(DECIMAL,        0, 0, 1, NULL)       \
     SHL_TOKEN(HEXIDECIMAL,    0, 0, 1, NULL)       \
     SHL_TOKEN(BINARY,         0, 0, 1, NULL)       \
     SHL_TOKEN(FLOAT,          0, 0, 1, NULL)       \
     SHL_TOKEN(STRING,         0, 0, 1, NULL)       \
-    /* Labels */                                   \
+    /* Misc */                                     \
     SHL_TOKEN(NAME,           0, 0, 1, NULL)       \
+    SHL_TOKEN(ASSIGN,         0, 0, 0, NULL)       \
     /* Keywords */                                 \
     SHL_TOKEN(IF,             0, 0, 1, "if")       \
     SHL_TOKEN(ELSE,           0, 0, 1, "else")     \
@@ -254,16 +278,6 @@ enum shl_token_id : uint8_t
     SHL_TOKEN_LIST
 #undef SHL_TOKEN
     SHL_TOKEN_COUNT
-};
-
-// Static token details
-struct shl_token_detail
-{
-    const char* label;    // the string representation, used for visualization and debugging
-    char prec;            // if the token is an operator, this is the precedence (note: higher values take precendece)
-    int  argc;            // if the token is an operator, this is the number of operands
-    bool capture;         // if non-zero, the token will contain the source string value (i.e. integer and string literals)
-    const char* keyword;  // if non-null, the token must match the provided keyword
 };
 
 // All token type info. Types map from id to type info
@@ -303,12 +317,12 @@ struct shl_lexer
     char token_buffer[SHL_TOKEN_BUFFER_LEN];
 };
 
-#define SHL_LEXER_ERROR(env, lexer, token, ...)          \
-{                                                        \
-    token.id = SHL_TOKEN_ERR;                            \
-    SHL_LOG_ERROR(env, "%s(%d,%d):",                     \
-        lexer.inputname.c_str(), lexer.line, lexer.col); \
-    SHL_LOG_ERROR(env, __VA_ARGS__);                     \
+#define SHL_LEXER_ERROR(env, lexer, token, ...)              \
+{                                                            \
+    token.id = SHL_TOKEN_ERR;                                \
+    SHL_LOG_ERROR(env, "%s(%d,%d):",                         \
+        lexer.inputname.c_str(), lexer.line+1, lexer.col+1); \
+    SHL_LOG_ERROR(env, __VA_ARGS__);                         \
 }
 
 char shl_lexer_get(shl_lexer& lexer)
@@ -471,55 +485,55 @@ bool shl_lexer_tokenize_symbol(shl_environment& env, shl_lexer& lexer, shl_token
     case '|': id = SHL_TOKEN_OR;        break;
     case '*':
         if (shl_lexer_peek(lexer) == '=' && shl_lexer_get(lexer))
-            id = SHL_TOKEN_MUL_EQUAL;
+            id = SHL_TOKEN_MUL_EQ;
         else
             id = SHL_TOKEN_MUL;
         break;
     case '/':
         if (shl_lexer_peek(lexer) == '=' && shl_lexer_get(lexer))
-            id = SHL_TOKEN_DIV_EQUAL;
+            id = SHL_TOKEN_DIV_EQ;
         else
             id = SHL_TOKEN_DIV;
         break;
     case '^':
         if (shl_lexer_peek(lexer) == '=' && shl_lexer_get(lexer))
-            id = SHL_TOKEN_POW_EQUAL;
+            id = SHL_TOKEN_POW_EQ;
         else
             id = SHL_TOKEN_POW;
         break;
     case '<':
         if (shl_lexer_peek(lexer) == '=' && shl_lexer_get(lexer))
-            id = SHL_TOKEN_LESS_EQUAL;
+            id = SHL_TOKEN_LT_EQ;
         else
-            id = SHL_TOKEN_LESS;
+            id = SHL_TOKEN_LT;
         break;
     case '>':
         if (shl_lexer_peek(lexer) == '=' && shl_lexer_get(lexer))
-            id = SHL_TOKEN_GREATER_EQUAL;
+            id = SHL_TOKEN_GT_EQ;
         else
-            id = SHL_TOKEN_GREATER;
+            id = SHL_TOKEN_GT;
         break;
     case '=':
         if (shl_lexer_peek(lexer) == '=' && shl_lexer_get(lexer))
-            id = SHL_TOKEN_EQUAL;
+            id = SHL_TOKEN_EQ;
         else
             id = SHL_TOKEN_ASSIGN;
         break;
     case '!':
         if (shl_lexer_peek(lexer) == '=' && shl_lexer_get(lexer))
-            id = SHL_TOKEN_NOT_EQUAL;
+            id = SHL_TOKEN_NOT_EQ;
         else
             id = SHL_TOKEN_NOT;
         break;
     case '+':
         if (shl_lexer_peek(lexer) == '=' && shl_lexer_get(lexer))
-            id = SHL_TOKEN_ADD_EQUAL;
+            id = SHL_TOKEN_ADD_EQ;
         else
             id = SHL_TOKEN_ADD;
         break;
     case '-':
         if (shl_lexer_peek(lexer) == '=' && shl_lexer_get(lexer))
-            id = SHL_TOKEN_SUB_EQUAL;
+            id = SHL_TOKEN_SUB_EQ;
         else
             id = SHL_TOKEN_SUB;
         break;
@@ -1354,22 +1368,16 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 	SHL_OPCODE(SQRT)           \
 	SHL_OPCODE(INC)            \
 	SHL_OPCODE(DEC)            \
-	SHL_OPCODE(LT)             \
-	SHL_OPCODE(LE)             \
+    SHL_OPCODE(LT)             \
+	SHL_OPCODE(LTE)            \
 	SHL_OPCODE(EQ)             \
 	SHL_OPCODE(NE)             \
-	SHL_OPCODE(GE)             \
 	SHL_OPCODE(GT)             \
+	SHL_OPCODE(GTE)            \
 	SHL_OPCODE(JUMP)           \
 	SHL_OPCODE(JUMP_ZERO)      \
 	SHL_OPCODE(JUMP_NZERO)     \
-	SHL_OPCODE(JUMP_LT)        \
-	SHL_OPCODE(JUMP_LE)        \
-	SHL_OPCODE(JUMP_EQ)        \
-	SHL_OPCODE(JUMP_NE)        \
-	SHL_OPCODE(JUMP_GE)        \
-	SHL_OPCODE(JUMP_GT)        \
-	SHL_OPCODE(CALL)           \
+	SHL_OPCODE(CALL_EXT)       \
 	SHL_OPCODE(RET)            \
 	SHL_OPCODE(ASSERT)         \
 	SHL_OPCODE(ASSERT_POSITIVE)\
@@ -1611,12 +1619,20 @@ union shl_vm_bytecode_value
     vm.instruction = nullptr;          \
 }
 
-shl_value* shl_vm_top(shl_environment& env, shl_vm& vm)
+#define SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, op)                \
+{                                                                \
+    if (lhs != nullptr && rhs != nullptr)                        \
+        SHL_VM_ERROR(env, vm, "%s "##op##" %s not defined",      \
+            shl_type_labels[(int)lhs->type],                     \
+            shl_type_labels[(int)rhs->type]);                    \
+}
+
+inline shl_value* shl_vm_top(shl_environment& env, shl_vm& vm)
 {
     return &vm.stack[vm.stack_offset];
 }
 
-shl_value* shl_vm_push(shl_environment& env, shl_vm& vm)
+inline shl_value* shl_vm_push(shl_environment& env, shl_vm& vm)
 {
     ++vm.stack_offset;
     if(vm.stack_offset >= SHL_STACK_SIZE)   
@@ -1629,7 +1645,7 @@ shl_value* shl_vm_push(shl_environment& env, shl_vm& vm)
     return shl_vm_top(env, vm);
 }
 
-shl_value* shl_vm_pop(shl_environment& env, shl_vm& vm)
+inline shl_value* shl_vm_pop(shl_environment& env, shl_vm& vm)
 {        
     if(vm.stack_offset < 0)   
     {   
@@ -1643,12 +1659,12 @@ shl_value* shl_vm_pop(shl_environment& env, shl_vm& vm)
     return top;
 }
 
-void shl_vm_push_frame(shl_environment& env, shl_vm& vm)
+inline void shl_vm_push_frame(shl_environment& env, shl_vm& vm)
 {
     vm.frame_stack.push_back(vm.stack_offset);
 }
 
-void shl_vm_pop_frame(shl_environment& env, shl_vm& vm)
+inline void shl_vm_pop_frame(shl_environment& env, shl_vm& vm)
 {
     // TODO: Test logic, likely incorrect
     vm.stack_offset = vm.frame_stack.back();
@@ -1663,7 +1679,7 @@ void shl_vm_pop_frame(shl_environment& env, shl_vm& vm)
     //}
 }
 
-shl_value* shl_vm_get(shl_environment& env, shl_vm& vm, size_t frame_offset)
+inline shl_value* shl_vm_get(shl_environment& env, shl_vm& vm, size_t frame_offset)
 {
     const size_t offset = vm.frame_stack.back() + frame_offset;
     if (offset < 0)
@@ -1676,7 +1692,7 @@ shl_value* shl_vm_get(shl_environment& env, shl_vm& vm, size_t frame_offset)
     return &vm.stack[offset];
 }
 
-int shl_vm_read_int(shl_vm& vm)
+inline int shl_vm_read_int(shl_vm& vm)
 {
     shl_vm_bytecode_value bytecode_value;
     for (size_t i = 0; i < sizeof(bytecode_value.i); ++i)
@@ -1684,7 +1700,7 @@ int shl_vm_read_int(shl_vm& vm)
     return bytecode_value.i;
 }
 
-float shl_vm_read_float(shl_vm& vm)
+inline float shl_vm_read_float(shl_vm& vm)
 {
     shl_vm_bytecode_value bytecode_value;
     for (size_t i = 0; i < sizeof(bytecode_value.f); ++i)
@@ -1692,7 +1708,7 @@ float shl_vm_read_float(shl_vm& vm)
     return bytecode_value.f;
 }
 
-const char* shl_vm_read_bytes(shl_vm& vm)
+inline const char* shl_vm_read_bytes(shl_vm& vm)
 {
     size_t len = 1; // include null terminating
     while (*(vm.instruction++))
@@ -1766,9 +1782,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
             }
             case SHL_OPCODE_PUSH_LOCAL:
             {
-                // address on stack
                 const int address = shl_vm_read_int(vm);
-
                 shl_value* top = shl_vm_push(env, vm);
                 shl_value* local = shl_vm_get(env, vm, address);
                 if (top !=  nullptr || local != nullptr)
@@ -1778,10 +1792,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
             }
             case SHL_OPCODE_LOAD_LOCAL:
             {
-
-                // address on stack
-                const int address = shl_vm_read_int(vm);
-                
+                const int address = shl_vm_read_int(vm);                
                 shl_value* top = shl_vm_pop(env, vm);
 
                 // If local address was not supplied, i.e. not defined, push new instance onto stack
@@ -1796,7 +1807,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
 
                 break;
             }
-            case SHL_OPCODE_CALL:
+            case SHL_OPCODE_CALL_EXT:
             {
                 size_t arg_count = shl_vm_read_int(vm);
                 const char* func_name = shl_vm_read_bytes(vm);;
@@ -1814,14 +1825,13 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
 
                 break;
             }
-
             case SHL_OPCODE_ADD:
             {
                 shl_value* lhs = shl_vm_pop(env, vm);
                 shl_value* rhs = shl_vm_pop(env, vm);
                 shl_value* target = shl_vm_push(env, vm);    
-                if(!shl_value_add(target, lhs, rhs) && lhs != nullptr && rhs != nullptr)
-                    SHL_VM_ERROR(env, vm, "%s + %s not defined", shl_type_labels[(int)lhs->type], shl_type_labels[(int)rhs->type] );
+                if (!shl_value_add(target, lhs, rhs))
+                    SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "+");
 
                 break;
             }
@@ -1830,8 +1840,8 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_value* lhs = shl_vm_pop(env, vm);
                 shl_value* rhs = shl_vm_pop(env, vm);
                 shl_value* target = shl_vm_push(env, vm);    
-                if (!shl_value_sub(target, lhs, rhs) && lhs != nullptr && rhs != nullptr)
-                    SHL_VM_ERROR(env, vm, "%s - %s not defined", shl_type_labels[(int)lhs->type], shl_type_labels[(int)rhs->type] );
+                if (!shl_value_sub(target, lhs, rhs))
+                    SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "-");
                 break;
             }
             case SHL_OPCODE_MUL:
@@ -1839,8 +1849,8 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_value* lhs = shl_vm_pop(env, vm);
                 shl_value* rhs = shl_vm_pop(env, vm);
                 shl_value* target = shl_vm_push(env, vm);    
-                if (!shl_value_mul(target, lhs, rhs) && lhs != nullptr && rhs != nullptr)
-                    SHL_VM_ERROR(env, vm, "%s * %s not defined", shl_type_labels[(int)lhs->type], shl_type_labels[(int)rhs->type] );
+                if (!shl_value_mul(target, lhs, rhs))
+                    SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "*");
                 break;
             }
             case SHL_OPCODE_DIV:
@@ -1848,8 +1858,53 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_value* lhs = shl_vm_pop(env, vm);
                 shl_value* rhs = shl_vm_pop(env, vm);
                 shl_value* target = shl_vm_push(env, vm);    
-                if(!shl_value_div(target, lhs, rhs) && lhs != nullptr && rhs != nullptr)
-                    SHL_VM_ERROR(env, vm, "%s / %s not defined", shl_type_labels[(int)lhs->type], shl_type_labels[(int)rhs->type] );
+                if(!shl_value_div(target, lhs, rhs))
+                    SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "/");
+                break;
+            }
+            case SHL_OPCODE_LT:
+            {
+                shl_value* lhs = shl_vm_pop(env, vm);
+                shl_value* rhs = shl_vm_pop(env, vm);
+                shl_value* target = shl_vm_push(env, vm);
+                if (!shl_value_lt(target, lhs, rhs))
+                    SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "<");
+                break;
+            }
+            case SHL_OPCODE_LTE:
+            {
+                shl_value* lhs = shl_vm_pop(env, vm);
+                shl_value* rhs = shl_vm_pop(env, vm);
+                shl_value* target = shl_vm_push(env, vm);
+                if (!shl_value_lte(target, lhs, rhs))
+                    SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "<=");
+                break;
+            }
+            case SHL_OPCODE_GT:
+            {
+                shl_value* lhs = shl_vm_pop(env, vm);
+                shl_value* rhs = shl_vm_pop(env, vm);
+                shl_value* target = shl_vm_push(env, vm);
+                if (!shl_value_gt(target, lhs, rhs))
+                    SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, ">");
+                break;
+            }
+            case SHL_OPCODE_GTE:
+            {
+                shl_value* lhs = shl_vm_pop(env, vm);
+                shl_value* rhs = shl_vm_pop(env, vm);
+                shl_value* target = shl_vm_push(env, vm);
+                if (!shl_value_gte(target, lhs, rhs))
+                    SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, ">=");
+                break;
+            }
+            case SHL_OPCODE_EQ:
+            {
+                shl_value* lhs = shl_vm_pop(env, vm);
+                shl_value* rhs = shl_vm_pop(env, vm);
+                shl_value* target = shl_vm_push(env, vm);
+                if (!shl_value_eq(target, lhs, rhs))
+                    SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "==");
                 break;
             }
             case SHL_OPCODE_JUMP:
@@ -2010,10 +2065,15 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
 
             switch(token.id)
             {
-                case SHL_TOKEN_ADD: shl_ir_add_operation(ir, SHL_OPCODE_ADD); break;
-                case SHL_TOKEN_SUB: shl_ir_add_operation(ir, SHL_OPCODE_SUB); break;
-                case SHL_TOKEN_MUL: shl_ir_add_operation(ir, SHL_OPCODE_MUL); break;
-                case SHL_TOKEN_DIV: shl_ir_add_operation(ir, SHL_OPCODE_DIV); break;
+                case SHL_TOKEN_ADD:   shl_ir_add_operation(ir, SHL_OPCODE_ADD); break;
+                case SHL_TOKEN_SUB:   shl_ir_add_operation(ir, SHL_OPCODE_SUB); break;
+                case SHL_TOKEN_MUL:   shl_ir_add_operation(ir, SHL_OPCODE_MUL); break;
+                case SHL_TOKEN_DIV:   shl_ir_add_operation(ir, SHL_OPCODE_DIV); break;
+                case SHL_TOKEN_LT:    shl_ir_add_operation(ir, SHL_OPCODE_LT);  break;
+                case SHL_TOKEN_LT_EQ: shl_ir_add_operation(ir, SHL_OPCODE_LTE); break;
+                case SHL_TOKEN_GT:    shl_ir_add_operation(ir, SHL_OPCODE_GT);  break;
+                case SHL_TOKEN_GT_EQ: shl_ir_add_operation(ir, SHL_OPCODE_GTE); break;
+                case SHL_TOKEN_EQ:    shl_ir_add_operation(ir, SHL_OPCODE_EQ); break;
                 default: break;
             }
             break;
@@ -2029,7 +2089,7 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
             shl_array<shl_ir_operand> operands;
             operands.push_back(arg_count_operand);
             operands.push_back(func_name_operand);
-            shl_ir_add_operation(ir, SHL_OPCODE_CALL, operands);
+            shl_ir_add_operation(ir, SHL_OPCODE_CALL_EXT, operands);
             break;
         }
         case SHL_AST_STMT_ASSIGN:
@@ -2253,6 +2313,9 @@ shl_string shl_value_to_string(const shl_value* value)
     int len = 0;
     switch(value->type)
     {
+        case SHL_BOOL:
+            len = snprintf(out, sizeof(out), "%s:%s", shl_type_labels[value->type], value->b ? "true" : "false");
+            break;
         case SHL_INT:
             len = snprintf(out, sizeof(out), "%s:%d", shl_type_labels[value->type], value->i);
             break;
@@ -2276,6 +2339,8 @@ bool shl_value_to_bool(const shl_value* value)
 
     switch(value->type)
     {
+        case SHL_BOOL:
+            return value->b;
         case SHL_INT:
             return value->i != 0;
         case SHL_FLOAT:
@@ -2288,7 +2353,7 @@ bool shl_value_to_bool(const shl_value* value)
     return false;
 }
 
-#define SHL_ARITHMETIC(result, lhs, rhs,                                        \
+#define SHL_DEFINE_BINOP(result, lhs, rhs,                                      \
     int_int,     int_int_type,                                                  \
     int_float,   int_float_type,                                                \
     float_int,   float_int_type,                                                \
@@ -2322,9 +2387,9 @@ bool shl_value_to_bool(const shl_value* value)
     return false;                                                               \
 }
 
-bool shl_value_add(shl_value* result, shl_value* lhs, shl_value* rhs)
+inline bool shl_value_add(shl_value* result, shl_value* lhs, shl_value* rhs)
 {
-    SHL_ARITHMETIC(result, lhs, rhs,
+    SHL_DEFINE_BINOP(result, lhs, rhs,
         result->i = lhs->i + rhs->i, SHL_INT,
         result->f = lhs->i + rhs->f, SHL_FLOAT,
         result->f = lhs->f + rhs->i, SHL_FLOAT,
@@ -2332,9 +2397,9 @@ bool shl_value_add(shl_value* result, shl_value* lhs, shl_value* rhs)
     )
 }
 
-bool shl_value_sub(shl_value* result, shl_value* lhs, shl_value* rhs)
+inline bool shl_value_sub(shl_value* result, shl_value* lhs, shl_value* rhs)
 {
-    SHL_ARITHMETIC(result, lhs, rhs,
+    SHL_DEFINE_BINOP(result, lhs, rhs,
         result->i = lhs->i - rhs->i, SHL_INT,
         result->f = lhs->i - rhs->f, SHL_FLOAT,
         result->f = lhs->f - rhs->i, SHL_FLOAT,
@@ -2342,9 +2407,9 @@ bool shl_value_sub(shl_value* result, shl_value* lhs, shl_value* rhs)
     )
 }
 
-bool shl_value_mul(shl_value* result, shl_value* lhs, shl_value* rhs)
+inline bool shl_value_mul(shl_value* result, shl_value* lhs, shl_value* rhs)
 {
-    SHL_ARITHMETIC(result, lhs, rhs,
+    SHL_DEFINE_BINOP(result, lhs, rhs,
         result->i = lhs->i * rhs->i, SHL_INT,
         result->f = lhs->i * rhs->f, SHL_FLOAT,
         result->f = lhs->f * rhs->i, SHL_FLOAT,
@@ -2352,13 +2417,64 @@ bool shl_value_mul(shl_value* result, shl_value* lhs, shl_value* rhs)
     )
 }
 
-bool shl_value_div(shl_value* result, shl_value* lhs, shl_value* rhs)
+inline bool shl_value_div(shl_value* result, shl_value* lhs, shl_value* rhs)
 {
-    SHL_ARITHMETIC(result, lhs, rhs,
-        result->f = (float)lhs->i / rhs->i, SHL_FLOAT,
+    SHL_DEFINE_BINOP(result, lhs, rhs,
+        result->i = (float)lhs->i / rhs->i, SHL_FLOAT,
         result->f =        lhs->i / rhs->f, SHL_FLOAT,
         result->f =        lhs->f / rhs->i, SHL_FLOAT,
         result->f =        lhs->f / rhs->f, SHL_FLOAT
+    )
+}
+
+inline bool shl_value_lt(shl_value* result, shl_value* lhs, shl_value* rhs)
+{
+    SHL_DEFINE_BINOP(result, lhs, rhs,
+        result->b = lhs->i < rhs->i, SHL_BOOL,
+        result->b = lhs->i < rhs->f, SHL_BOOL,
+        result->b = lhs->f < rhs->i, SHL_BOOL,
+        result->b = lhs->f < rhs->f, SHL_BOOL
+    )
+}
+
+inline bool shl_value_lte(shl_value* result, shl_value* lhs, shl_value* rhs)
+{
+    SHL_DEFINE_BINOP(result, lhs, rhs,
+        result->b = lhs->i <= rhs->i, SHL_BOOL,
+        result->b = lhs->i <= rhs->f, SHL_BOOL,
+        result->b = lhs->f <= rhs->i, SHL_BOOL,
+        result->b = lhs->f <= rhs->f, SHL_BOOL
+    )
+}
+
+inline bool shl_value_gt(shl_value* result, shl_value* lhs, shl_value* rhs)
+{
+    SHL_DEFINE_BINOP(result, lhs, rhs,
+        result->b = lhs->i > rhs->i, SHL_BOOL,
+        result->b = lhs->i > rhs->f, SHL_BOOL,
+        result->b = lhs->f > rhs->i, SHL_BOOL,
+        result->b = lhs->f > rhs->f, SHL_BOOL
+    )
+}
+
+inline bool shl_value_gte(shl_value* result, shl_value* lhs, shl_value* rhs)
+{
+    SHL_DEFINE_BINOP(result, lhs, rhs,
+        result->b = lhs->i >= rhs->i, SHL_BOOL,
+        result->b = lhs->i >= rhs->f, SHL_BOOL,
+        result->b = lhs->f >= rhs->i, SHL_BOOL,
+        result->b = lhs->f >= rhs->f, SHL_BOOL
+    )
+}
+
+inline bool shl_value_eq(shl_value* result, shl_value* lhs, shl_value* rhs)
+{
+    // TODO: add a special case for object equivalence (per field)
+    SHL_DEFINE_BINOP(result, lhs, rhs,
+        result->b = lhs->i == rhs->i, SHL_BOOL,
+        result->b = lhs->i == rhs->f, SHL_BOOL,
+        result->b = lhs->f == rhs->i, SHL_BOOL,
+        result->b = lhs->f == rhs->f, SHL_BOOL
     )
 }
 
