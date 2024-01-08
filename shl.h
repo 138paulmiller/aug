@@ -131,6 +131,7 @@ void shl_evaluate(shl_environment& env, const char* code);
 
 shl_string shl_value_to_string(const shl_value* value);
 bool shl_value_to_bool(const shl_value* value);
+
 bool shl_value_add(shl_value* result, shl_value* lhs, shl_value* rhs);
 bool shl_value_sub(shl_value* result, shl_value* lhs, shl_value* rhs);
 bool shl_value_mul(shl_value* result, shl_value* lhs, shl_value* rhs);
@@ -140,6 +141,7 @@ bool shl_value_lte(shl_value* result, shl_value* lhs, shl_value* rhs);
 bool shl_value_gt(shl_value* result, shl_value* lhs, shl_value* rhs);
 bool shl_value_gte(shl_value* result, shl_value* lhs, shl_value* rhs);
 bool shl_value_eq(shl_value* result, shl_value* lhs, shl_value* rhs);
+bool shl_value_neq(shl_value* result, shl_value* lhs, shl_value* rhs);
 
 #endif //__SHL_HEADER__
 
@@ -1371,7 +1373,7 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
     SHL_OPCODE(LT)             \
 	SHL_OPCODE(LTE)            \
 	SHL_OPCODE(EQ)             \
-	SHL_OPCODE(NE)             \
+	SHL_OPCODE(NEQ)            \
 	SHL_OPCODE(GT)             \
 	SHL_OPCODE(GTE)            \
 	SHL_OPCODE(JUMP)           \
@@ -1907,6 +1909,15 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                     SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "==");
                 break;
             }
+            case SHL_OPCODE_NEQ:
+            {
+                shl_value* lhs = shl_vm_pop(env, vm);
+                shl_value* rhs = shl_vm_pop(env, vm);
+                shl_value* target = shl_vm_push(env, vm);
+                if (!shl_value_neq(target, lhs, rhs))
+                    SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "==");
+                break;
+            }
             case SHL_OPCODE_JUMP:
             {
                 const int instruction_offset = shl_vm_read_int(vm);
@@ -2065,15 +2076,16 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
 
             switch(token.id)
             {
-                case SHL_TOKEN_ADD:   shl_ir_add_operation(ir, SHL_OPCODE_ADD); break;
-                case SHL_TOKEN_SUB:   shl_ir_add_operation(ir, SHL_OPCODE_SUB); break;
-                case SHL_TOKEN_MUL:   shl_ir_add_operation(ir, SHL_OPCODE_MUL); break;
-                case SHL_TOKEN_DIV:   shl_ir_add_operation(ir, SHL_OPCODE_DIV); break;
-                case SHL_TOKEN_LT:    shl_ir_add_operation(ir, SHL_OPCODE_LT);  break;
-                case SHL_TOKEN_LT_EQ: shl_ir_add_operation(ir, SHL_OPCODE_LTE); break;
-                case SHL_TOKEN_GT:    shl_ir_add_operation(ir, SHL_OPCODE_GT);  break;
-                case SHL_TOKEN_GT_EQ: shl_ir_add_operation(ir, SHL_OPCODE_GTE); break;
-                case SHL_TOKEN_EQ:    shl_ir_add_operation(ir, SHL_OPCODE_EQ); break;
+                case SHL_TOKEN_ADD:    shl_ir_add_operation(ir, SHL_OPCODE_ADD); break;
+                case SHL_TOKEN_SUB:    shl_ir_add_operation(ir, SHL_OPCODE_SUB); break;
+                case SHL_TOKEN_MUL:    shl_ir_add_operation(ir, SHL_OPCODE_MUL); break;
+                case SHL_TOKEN_DIV:    shl_ir_add_operation(ir, SHL_OPCODE_DIV); break;
+                case SHL_TOKEN_LT:     shl_ir_add_operation(ir, SHL_OPCODE_LT);  break;
+                case SHL_TOKEN_LT_EQ:  shl_ir_add_operation(ir, SHL_OPCODE_LTE); break;
+                case SHL_TOKEN_GT:     shl_ir_add_operation(ir, SHL_OPCODE_GT);  break;
+                case SHL_TOKEN_GT_EQ:  shl_ir_add_operation(ir, SHL_OPCODE_GTE); break;
+                case SHL_TOKEN_EQ:     shl_ir_add_operation(ir, SHL_OPCODE_EQ); break;
+                case SHL_TOKEN_NOT_EQ: shl_ir_add_operation(ir, SHL_OPCODE_NEQ); break;
                 default: break;
             }
             break;
@@ -2475,6 +2487,17 @@ inline bool shl_value_eq(shl_value* result, shl_value* lhs, shl_value* rhs)
         result->b = lhs->i == rhs->f, SHL_BOOL,
         result->b = lhs->f == rhs->i, SHL_BOOL,
         result->b = lhs->f == rhs->f, SHL_BOOL
+    )
+}
+
+inline bool shl_value_neq(shl_value* result, shl_value* lhs, shl_value* rhs)
+{
+    // TODO: add a special case for object equivalence (per field)
+    SHL_DEFINE_BINOP(result, lhs, rhs,
+        result->b = lhs->i != rhs->i, SHL_BOOL,
+        result->b = lhs->i != rhs->f, SHL_BOOL,
+        result->b = lhs->f != rhs->i, SHL_BOOL,
+        result->b = lhs->f != rhs->f, SHL_BOOL
     )
 }
 
