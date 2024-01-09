@@ -137,6 +137,8 @@ inline bool shl_value_add(shl_value* result, shl_value* lhs, shl_value* rhs);
 inline bool shl_value_sub(shl_value* result, shl_value* lhs, shl_value* rhs);
 inline bool shl_value_mul(shl_value* result, shl_value* lhs, shl_value* rhs);
 inline bool shl_value_div(shl_value* result, shl_value* lhs, shl_value* rhs);
+inline bool shl_value_pow(shl_value* result, shl_value* lhs, shl_value* rhs);
+inline bool shl_value_mod(shl_value* result, shl_value* lhs, shl_value* rhs);
 inline bool shl_value_lt(shl_value* result, shl_value* lhs, shl_value* rhs);
 inline bool shl_value_lte(shl_value* result, shl_value* lhs, shl_value* rhs);
 inline bool shl_value_gt(shl_value* result, shl_value* lhs, shl_value* rhs);
@@ -1373,10 +1375,7 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 	SHL_OPCODE(MUL)            \
 	SHL_OPCODE(DIV)            \
 	SHL_OPCODE(POW)            \
-	SHL_OPCODE(REM)            \
 	SHL_OPCODE(MOD)            \
-	SHL_OPCODE(SHL)            \
-	SHL_OPCODE(SHR)            \
 	SHL_OPCODE(AND)            \
 	SHL_OPCODE(OR)             \
 	SHL_OPCODE(XOR)            \
@@ -1922,6 +1921,24 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                     SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "/");
                 break;
             }
+            case SHL_OPCODE_POW:
+            {
+                shl_value* lhs = shl_vm_pop(env, vm);
+                shl_value* rhs = shl_vm_pop(env, vm);
+                shl_value* target = shl_vm_push(env, vm);
+                if (!shl_value_pow(target, lhs, rhs))
+                    SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "^");
+                break;
+            }
+            case SHL_OPCODE_MOD:
+            {
+                shl_value* lhs = shl_vm_pop(env, vm);
+                shl_value* rhs = shl_vm_pop(env, vm);
+                shl_value* target = shl_vm_push(env, vm);
+                if (!shl_value_mod(target, lhs, rhs))
+                    SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "%");
+                break;
+            }
             case SHL_OPCODE_NOT:
             {
                 shl_value* arg = shl_vm_pop(env, vm);
@@ -1981,7 +1998,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_value* rhs = shl_vm_pop(env, vm);
                 shl_value* target = shl_vm_push(env, vm);
                 if (!shl_value_neq(target, lhs, rhs))
-                    SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "==");
+                    SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "!=");
                 break;
             }
             case SHL_OPCODE_APPROXEQ:
@@ -1990,7 +2007,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_value* rhs = shl_vm_pop(env, vm);
                 shl_value* target = shl_vm_push(env, vm);
                 if (!shl_value_approxeq(target, lhs, rhs))
-                    SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "==");
+                    SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "~=");
                 break;
             }
             case SHL_OPCODE_JUMP:
@@ -2169,6 +2186,8 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
                 case SHL_TOKEN_SUB:    shl_ir_add_operation(ir, SHL_OPCODE_SUB); break;
                 case SHL_TOKEN_MUL:    shl_ir_add_operation(ir, SHL_OPCODE_MUL); break;
                 case SHL_TOKEN_DIV:    shl_ir_add_operation(ir, SHL_OPCODE_DIV); break;
+                case SHL_TOKEN_MOD:    shl_ir_add_operation(ir, SHL_OPCODE_MOD); break;
+                case SHL_TOKEN_POW:    shl_ir_add_operation(ir, SHL_OPCODE_POW); break;
                 case SHL_TOKEN_LT:     shl_ir_add_operation(ir, SHL_OPCODE_LT);  break;
                 case SHL_TOKEN_LT_EQ:  shl_ir_add_operation(ir, SHL_OPCODE_LTE); break;
                 case SHL_TOKEN_GT:     shl_ir_add_operation(ir, SHL_OPCODE_GT);  break;
@@ -2575,6 +2594,30 @@ inline bool shl_value_div(shl_value* result, shl_value* lhs, shl_value* rhs)
         return false
     )
      return false;
+}
+
+inline bool shl_value_pow(shl_value* result, shl_value* lhs, shl_value* rhs)
+{
+    SHL_DEFINE_BINOP(result, lhs, rhs,
+        return shl_value_set_float(result, pow(lhs->i, rhs->i)),
+        return shl_value_set_float(result, pow(lhs->i, rhs->f)),
+        return shl_value_set_float(result, pow(lhs->f, rhs->i)),
+        return shl_value_set_float(result, pow(lhs->f, rhs->f)),
+        return false
+    )
+        return false;
+}
+
+inline bool shl_value_mod(shl_value* result, shl_value* lhs, shl_value* rhs)
+{
+    SHL_DEFINE_BINOP(result, lhs, rhs,
+        return shl_value_set_float(result, lhs->i % rhs->i),
+        return shl_value_set_float(result, fmod(lhs->i, rhs->f)),
+        return shl_value_set_float(result, fmod(lhs->f, rhs->i)),
+        return shl_value_set_float(result, fmod(lhs->f, rhs->f)),
+        return false
+    )
+        return false;
 }
 
 inline bool shl_value_lt(shl_value* result, shl_value* lhs, shl_value* rhs)

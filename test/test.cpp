@@ -18,7 +18,7 @@ namespace
 		shl_lexer_open_file(env, lexer, filename);
 		while (shl_lexer_move(env, lexer) && lexer.curr.id != SHL_TOKEN_END)
 		{
-			printf("\tPREV: %s (%s)%d:%d\n", lexer.prev.detail->label, lexer.prev.data.c_str(), lexer.prev.line, lexer.prev.col);
+			//printf("\tPREV: %s (%s)%d:%d\n", lexer.prev.detail->label, lexer.prev.data.c_str(), lexer.prev.line, lexer.prev.col);
 			printf("\tCURR: %s (%s) %d:%d\n", lexer.curr.detail->label, lexer.curr.data.c_str(), lexer.curr.line, lexer.curr.col);
 			//printf("\tNEXT: %s (%s)%d:%d\n", lexer.next.detail->label, lexer.next.data.c_str(), lexer.next.line, lexer.next.col);
 			printf("\n");
@@ -148,7 +148,7 @@ namespace
 	{
 		printf("----------%s------------\n", filename );
 
-		//test_lexer(filename);
+		test_lexer(filename);
 
 		shl_ast* root = shl_parse_file(env, filename);
 		if(root == nullptr)
@@ -297,6 +297,6 @@ int shl_test(int argc, char** argv)
 		}
 	}
 
-	printf("[TEST  ]\tEnded. Passed %d / %d\n", test_total, test_passed_count);
+	printf("[TEST  ]\tEnded. Passed %d / %d\n", test_passed_count, test_total);
 	return 0;
 }
