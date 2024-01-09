@@ -148,7 +148,7 @@ namespace
 	{
 		printf("----------%s------------\n", filename );
 
-		test_lexer(filename);
+		//test_lexer(filename);
 
 		shl_ast* root = shl_parse_file(env, filename);
 		if(root == nullptr)
@@ -168,29 +168,65 @@ namespace
 	}
 }
 
-void print(const shl_list<shl_value*>& args)
+
+void print(const shl_value* arg)
+{
+	if (arg == nullptr)
+		return;
+
+	switch (arg->type)
+	{
+	case SHL_BOOL:
+		printf("%s", arg->b ? "true" : "false");
+		break;
+	case SHL_INT:
+		printf("%d", arg->i);
+		break;
+	case SHL_FLOAT:
+		printf("%0.3f", arg->f);
+		break;
+	case SHL_STRING:
+		printf("%s", arg->str);
+		break;
+	case SHL_OBJECT:
+		printf("object");
+		break;
+	}
+}
+
+void print(const shl_array<shl_value*>& args)
 {
 	for (shl_value* arg : args)
 	{
-		switch (arg->type)
-		{
-		case SHL_BOOL:
-			printf("%s", arg->b ? "true" : "false");
-			break;
-		case SHL_INT:
-			printf("%d", arg->i);
-			break;
-		case SHL_FLOAT:
-			printf("%0.3f", arg->f);
-			break;
-		case SHL_STRING:
-			printf("%s", arg->str);
-			break;
-		case SHL_OBJECT:
-			printf("object");
-			break;
-		}
+		print(arg);
 	}
+
+	printf("\n");
+}
+
+static int test_passed_count = 0;
+static int test_total = 0;
+
+// condition, messages ...
+void expect(const shl_array<shl_value*>& args)
+{
+	if (args.size() == 0)
+		return;
+
+	++test_total;
+
+	if (shl_value_to_bool(args[0]))
+	{
+		printf("[PASSED]\t");
+		++test_passed_count;
+	}
+	else
+	{
+		printf("[FAILED]\t");
+	}
+
+	for( size_t i = 1; i < args.size(); ++i)
+		print(args[i]);
 
 	printf("\n");
 }
@@ -233,6 +269,9 @@ int shl_test(int argc, char** argv)
 
 	shl_environment env;
 	shl_register(env, "print", print);
+	shl_register(env, "expect", expect);
+
+	printf("[TEST  ]\tStarted\n");
 
 	for(int i = 1; i < argc; ++i)
 	{
@@ -257,5 +296,7 @@ int shl_test(int argc, char** argv)
 			shl_execute(env, argv[i]);
 		}
 	}
+
+	printf("[TEST  ]\tEnded. Passed %d / %d\n", test_total, test_passed_count);
 	return 0;
 }

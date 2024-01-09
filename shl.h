@@ -68,16 +68,13 @@ struct shl_object;
 using shl_string = std::string;
 
 template <class type>
-using shl_list = std::list<type>;
-
-template <class type>
 using shl_array = std::vector<type>;
 
 template <class key, class type>
 using shl_map = std::unordered_map<key, type>;
 
 typedef void(shl_error_callback)(const char* /*msg*/);
-typedef void(shl_function_callback)(const shl_list<shl_value*>& /*args*/);
+typedef void(shl_function_callback)(const shl_array<shl_value*>& /*args*/);
 
 enum shl_type
 {
@@ -146,6 +143,7 @@ inline bool shl_value_gt(shl_value* result, shl_value* lhs, shl_value* rhs);
 inline bool shl_value_gte(shl_value* result, shl_value* lhs, shl_value* rhs);
 inline bool shl_value_eq(shl_value* result, shl_value* lhs, shl_value* rhs);
 inline bool shl_value_neq(shl_value* result, shl_value* lhs, shl_value* rhs);
+inline bool shl_value_approxeq(shl_value* result, shl_value* lhs, shl_value* rhs);
 
 #endif //__SHL_HEADER__
 
@@ -164,6 +162,9 @@ inline bool shl_value_neq(shl_value* result, shl_value* lhs, shl_value* rhs);
 #define SHL_DEBUG 1
 #define SHL_VM_DEBUG_TOP 0
 
+#ifndef SHL_VM_APPROX_THRESHOLD
+    #define SHL_VM_APPROX_THRESHOLD 0.0000001
+#endif//SHL_VM_APPROX_THRESHOLD 
 
 #ifndef SHL_VM_OPERAND_LEN
     #define SHL_VM_OPERAND_LEN 8
@@ -252,14 +253,17 @@ struct shl_token_detail
     SHL_TOKEN(DIV_EQ,         1, 2, 0, nullptr)       \
     SHL_TOKEN(POW,            3, 2, 0, nullptr)       \
     SHL_TOKEN(POW_EQ,         1, 2, 0, nullptr)       \
+    SHL_TOKEN(MOD,            3, 2, 0, nullptr)       \
+    SHL_TOKEN(MOD_EQ,         1, 2, 0, nullptr)       \
     /* Operators - Boolean */                         \
-    SHL_TOKEN(EQ,             2, 2, 0, nullptr)       \
+    SHL_TOKEN(EQ,             1, 2, 0, nullptr)       \
     SHL_TOKEN(LT,             2, 2, 0, nullptr)       \
     SHL_TOKEN(GT,             2, 2, 0, nullptr)       \
-    SHL_TOKEN(LT_EQ,          1, 2, 0, nullptr)       \
-    SHL_TOKEN(GT_EQ,          1, 2, 0, nullptr)       \
+    SHL_TOKEN(LT_EQ,          2, 2, 0, nullptr)       \
+    SHL_TOKEN(GT_EQ,          2, 2, 0, nullptr)       \
     SHL_TOKEN(NOT,            3, 1, 0, nullptr)       \
-    SHL_TOKEN(NOT_EQ,         3, 2, 0, nullptr)       \
+    SHL_TOKEN(NOT_EQ,         2, 2, 0, nullptr)       \
+    SHL_TOKEN(APPROX_EQ,      1, 2, 0, nullptr)       \
     /* Literals */                                    \
     SHL_TOKEN(DECIMAL,        0, 0, 1, nullptr)       \
     SHL_TOKEN(HEXIDECIMAL,    0, 0, 1, nullptr)       \
@@ -491,6 +495,18 @@ bool shl_lexer_tokenize_symbol(shl_environment& env, shl_lexer& lexer, shl_token
     case '}': id = SHL_TOKEN_RBRACE;    break;
     case '&': id = SHL_TOKEN_AND;       break;
     case '|': id = SHL_TOKEN_OR;        break;
+    case '+':
+        if (shl_lexer_peek(lexer) == '=' && shl_lexer_get(lexer))
+            id = SHL_TOKEN_ADD_EQ;
+        else
+            id = SHL_TOKEN_ADD;
+        break;
+    case '-':
+        if (shl_lexer_peek(lexer) == '=' && shl_lexer_get(lexer))
+            id = SHL_TOKEN_SUB_EQ;
+        else
+            id = SHL_TOKEN_SUB;
+        break;
     case '*':
         if (shl_lexer_peek(lexer) == '=' && shl_lexer_get(lexer))
             id = SHL_TOKEN_MUL_EQ;
@@ -508,6 +524,12 @@ bool shl_lexer_tokenize_symbol(shl_environment& env, shl_lexer& lexer, shl_token
             id = SHL_TOKEN_POW_EQ;
         else
             id = SHL_TOKEN_POW;
+        break;
+    case '%':
+        if (shl_lexer_peek(lexer) == '=' && shl_lexer_get(lexer))
+            id = SHL_TOKEN_MOD_EQ;
+        else
+            id = SHL_TOKEN_MOD;
         break;
     case '<':
         if (shl_lexer_peek(lexer) == '=' && shl_lexer_get(lexer))
@@ -533,17 +555,9 @@ bool shl_lexer_tokenize_symbol(shl_environment& env, shl_lexer& lexer, shl_token
         else
             id = SHL_TOKEN_NOT;
         break;
-    case '+':
+    case '~':
         if (shl_lexer_peek(lexer) == '=' && shl_lexer_get(lexer))
-            id = SHL_TOKEN_ADD_EQ;
-        else
-            id = SHL_TOKEN_ADD;
-        break;
-    case '-':
-        if (shl_lexer_peek(lexer) == '=' && shl_lexer_get(lexer))
-            id = SHL_TOKEN_SUB_EQ;
-        else
-            id = SHL_TOKEN_SUB;
+            id = SHL_TOKEN_APPROX_EQ;
         break;
     }
 
@@ -913,7 +927,7 @@ void shl_ast_delete(shl_ast* node)
     delete node;
 }
 
-bool shl_parse_expr_pop(shl_environment& env, shl_lexer& lexer, shl_list<shl_token>& op_stack, shl_list<shl_ast*>& expr_stack)
+bool shl_parse_expr_pop(shl_environment& env, shl_lexer& lexer, shl_array<shl_token>& op_stack, shl_array<shl_ast*>& expr_stack)
 {
     shl_token next_op = op_stack.back();
     op_stack.pop_back();
@@ -951,8 +965,8 @@ bool shl_parse_expr_pop(shl_environment& env, shl_lexer& lexer, shl_list<shl_tok
 shl_ast* shl_parse_expr(shl_environment& env, shl_lexer& lexer)
 {
     // Shunting yard algorithm
-    shl_list<shl_token> op_stack;
-    shl_list<shl_ast*> expr_stack;
+    shl_array<shl_token> op_stack;
+    shl_array<shl_ast*> expr_stack;
     
     while(lexer.curr.id != SHL_TOKEN_SEMICOLON)
     {
@@ -1342,7 +1356,7 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 
 // -------------------------------------- OPCODE -----------------------------------------// 
 
-#define SHL_OPCODE_LIST\
+#define SHL_OPCODE_LIST        \
 	SHL_OPCODE(EXIT)           \
 	SHL_OPCODE(NO_OP)          \
 	SHL_OPCODE(NEXT_CHUNK)     \
@@ -1381,6 +1395,7 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 	SHL_OPCODE(LTE)            \
 	SHL_OPCODE(EQ)             \
 	SHL_OPCODE(NEQ)            \
+	SHL_OPCODE(APPROXEQ)       \
 	SHL_OPCODE(GT)             \
 	SHL_OPCODE(GTE)            \
 	SHL_OPCODE(JUMP)           \
@@ -1391,6 +1406,10 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 	SHL_OPCODE(ASSERT)         \
 	SHL_OPCODE(ASSERT_POSITIVE)\
 	SHL_OPCODE(ASSERT_BOUND)
+
+
+// Special condition in bytecode
+#define SHL_OPCODE_INVALID_ADDR -1
 
 enum shl_opcode : uint8_t
 { 
@@ -1411,8 +1430,6 @@ static const char* shl_opcode_labels[] =
 #undef SHL_OPCODE_LIST
 
 // -------------------------------------- IR --------------------------------------------// 
-
-#define SHL_IR_INVALID_ADDR -1
 
 enum shl_ir_operand_type
 {
@@ -1609,7 +1626,7 @@ inline int shl_ir_get_var_addr(shl_ir& ir, const shl_string& name)
         if (block.symtable.var_addr_map.count(name))
             return block.symtable.var_addr_map[name];
     }
-    return SHL_IR_INVALID_ADDR;
+    return SHL_OPCODE_INVALID_ADDR;
 }
 
 // -------------------------------------- Virtual Machine / Bytecode ----------------------------------------------// 
@@ -1641,12 +1658,19 @@ union shl_vm_bytecode_value
     vm.instruction = nullptr;          \
 }
 
-#define SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, op)                \
-{                                                                \
-    if (lhs != nullptr && rhs != nullptr)                        \
-        SHL_VM_ERROR(env, vm, "%s "##op##" %s not defined",      \
-            shl_type_labels[(int)lhs->type],                     \
-            shl_type_labels[(int)rhs->type]);                    \
+#define SHL_VM_UNOP_ERROR(env, vm, arg, op)             \
+{                                                       \
+    if (arg != nullptr)                                 \
+        SHL_VM_ERROR(env, vm, ##op##" %s not defined",  \
+            shl_type_labels[(int)arg->type]);           \
+}
+
+#define SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, op)            \
+{                                                            \
+    if (lhs != nullptr && rhs != nullptr)                    \
+        SHL_VM_ERROR(env, vm, "%s "##op##" %s not defined",  \
+            shl_type_labels[(int)lhs->type],                 \
+            shl_type_labels[(int)rhs->type]);                \
 }
 
 inline shl_value* shl_vm_top(shl_environment& env, shl_vm& vm)
@@ -1832,7 +1856,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
 
                 // If local address was not supplied, i.e. not defined, push new instance onto stack
                 shl_value* local;
-                if(address == SHL_IR_INVALID_ADDR)
+                if(address == SHL_OPCODE_INVALID_ADDR)
                     local = shl_vm_push(env, vm);
                 else
                     local = shl_vm_get(env, vm, address);
@@ -1844,15 +1868,16 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
             }
             case SHL_OPCODE_CALL_EXT:
             {
-                size_t arg_count = shl_vm_read_int(vm);
+                const int arg_count = shl_vm_read_int(vm);
                 const char* func_name = shl_vm_read_bytes(vm);;
 
-                shl_list<shl_value*> args;
-                for(size_t i = 0; i < arg_count; ++i)
+                shl_array<shl_value*> args;
+                args.resize(arg_count);
+                for(int i = arg_count - 1; i >= 0; --i)
                 {
-                    shl_value* value = shl_vm_pop(env, vm);
-                    if(value)
-                        args.push_front(value);
+                    args[i] = shl_vm_pop(env, vm);
+                    if (args[i] == nullptr)
+                        SHL_VM_ERROR(env, vm, "Function Call %s Recieved %d arguments, expected %d", func_name, arg_count - i, arg_count);
                 }
 
                 if(args.size() == arg_count && env.functions.count(func_name))
@@ -1895,6 +1920,14 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_value* target = shl_vm_push(env, vm);    
                 if(!shl_value_div(target, lhs, rhs))
                     SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "/");
+                break;
+            }
+            case SHL_OPCODE_NOT:
+            {
+                shl_value* arg = shl_vm_pop(env, vm);
+                shl_value* target = shl_vm_push(env, vm);
+                if (!shl_value_set_bool(target, !shl_value_to_bool(arg)))
+                    SHL_VM_UNOP_ERROR(env, vm, arg, "!");
                 break;
             }
             case SHL_OPCODE_LT:
@@ -1948,6 +1981,15 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_value* rhs = shl_vm_pop(env, vm);
                 shl_value* target = shl_vm_push(env, vm);
                 if (!shl_value_neq(target, lhs, rhs))
+                    SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "==");
+                break;
+            }
+            case SHL_OPCODE_APPROXEQ:
+            {
+                shl_value* lhs = shl_vm_pop(env, vm);
+                shl_value* rhs = shl_vm_pop(env, vm);
+                shl_value* target = shl_vm_push(env, vm);
+                if (!shl_value_approxeq(target, lhs, rhs))
                     SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "==");
                 break;
             }
@@ -2133,6 +2175,7 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
                 case SHL_TOKEN_GT_EQ:  shl_ir_add_operation(ir, SHL_OPCODE_GTE); break;
                 case SHL_TOKEN_EQ:     shl_ir_add_operation(ir, SHL_OPCODE_EQ); break;
                 case SHL_TOKEN_NOT_EQ: shl_ir_add_operation(ir, SHL_OPCODE_NEQ); break;
+                case SHL_TOKEN_APPROX_EQ: shl_ir_add_operation(ir, SHL_OPCODE_APPROXEQ); break;
                 default: break;
             }
             break;
@@ -2160,7 +2203,7 @@ void shl_ast_to_ir(shl_environment& env, const shl_ast* node, shl_ir& ir)
                 shl_ast_to_ir(env, children[0], ir);
 
             int offset = shl_ir_get_var_addr(ir, token.data);
-            if (offset == SHL_IR_INVALID_ADDR)
+            if (offset == SHL_OPCODE_INVALID_ADDR)
                 shl_ir_set_var_addr(ir, token.data);
 
             const shl_ir_operand& address_operand = shl_ir_operand_from_int(offset);
@@ -2447,7 +2490,7 @@ bool shl_value_to_bool(const shl_value* value)
     return false;
 }
 
-#define SHL_DEFINE_BINOP(result, lhs, rhs,           \
+#define SHL_DEFINE_BINOP(result, lhs, rhs,                      \
     int_int_case,                                               \
     int_float_case,                                             \
     float_int_case,                                             \
@@ -2590,7 +2633,7 @@ inline bool shl_value_eq(shl_value* result, shl_value* lhs, shl_value* rhs)
         return shl_value_set_bool(result, lhs->i == rhs->f),
         return shl_value_set_bool(result, lhs->f == rhs->i),
         return shl_value_set_bool(result, lhs->f == rhs->f),
-        return shl_value_set_bool(result, lhs->b == rhs->b),
+        return shl_value_set_bool(result, lhs->b == rhs->b)
         )
     return false;
 }
@@ -2603,9 +2646,23 @@ inline bool shl_value_neq(shl_value* result, shl_value* lhs, shl_value* rhs)
         return shl_value_set_bool(result, lhs->i != rhs->f),
         return shl_value_set_bool(result, lhs->f != rhs->i),
         return shl_value_set_bool(result, lhs->f != rhs->f),
-        return shl_value_set_bool(result, lhs->b != rhs->b),
+        return shl_value_set_bool(result, lhs->b != rhs->b)
         )
     return false;
 }
+
+inline bool shl_value_approxeq(shl_value* result, shl_value* lhs, shl_value* rhs)
+{
+    SHL_DEFINE_BINOP(result, lhs, rhs,
+        return shl_value_set_bool(result, abs(lhs->i - rhs->i) < SHL_VM_APPROX_THRESHOLD),
+        return shl_value_set_bool(result, abs(lhs->i - rhs->f) < SHL_VM_APPROX_THRESHOLD),
+        return shl_value_set_bool(result, abs(lhs->f - rhs->i) < SHL_VM_APPROX_THRESHOLD),
+        return shl_value_set_bool(result, abs(lhs->f - rhs->f) < SHL_VM_APPROX_THRESHOLD),
+        return shl_value_set_bool(result, lhs->b == rhs->b)
+        )
+        return false;
+}
+
+#undef SHL_DEFINE_BINOP
 
 #endif
