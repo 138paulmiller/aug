@@ -174,11 +174,14 @@ void print(const shl_list<shl_value*>& args)
 	{
 		switch (arg->type)
 		{
+		case SHL_BOOL:
+			printf("%s", arg->b ? "true" : "false");
+			break;
 		case SHL_INT:
 			printf("%d", arg->i);
 			break;
 		case SHL_FLOAT:
-			printf("%f", arg->f);
+			printf("%0.3f", arg->f);
 			break;
 		case SHL_STRING:
 			printf("%s", arg->str);

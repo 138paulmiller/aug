@@ -90,7 +90,7 @@ enum shl_type
 
 const char* shl_type_labels[] = 
 {
-    "int", "float", "string", "object"
+    "bool", "int", "float", "string", "object"
 };
 
 struct shl_value
@@ -132,16 +132,20 @@ void shl_evaluate(shl_environment& env, const char* code);
 shl_string shl_value_to_string(const shl_value* value);
 bool shl_value_to_bool(const shl_value* value);
 
-bool shl_value_add(shl_value* result, shl_value* lhs, shl_value* rhs);
-bool shl_value_sub(shl_value* result, shl_value* lhs, shl_value* rhs);
-bool shl_value_mul(shl_value* result, shl_value* lhs, shl_value* rhs);
-bool shl_value_div(shl_value* result, shl_value* lhs, shl_value* rhs);
-bool shl_value_lt(shl_value* result, shl_value* lhs, shl_value* rhs);
-bool shl_value_lte(shl_value* result, shl_value* lhs, shl_value* rhs);
-bool shl_value_gt(shl_value* result, shl_value* lhs, shl_value* rhs);
-bool shl_value_gte(shl_value* result, shl_value* lhs, shl_value* rhs);
-bool shl_value_eq(shl_value* result, shl_value* lhs, shl_value* rhs);
-bool shl_value_neq(shl_value* result, shl_value* lhs, shl_value* rhs);
+inline bool shl_value_set_bool(shl_value* value,  bool data);
+inline bool shl_value_set_int(shl_value* value,   int data);
+inline bool shl_value_set_float(shl_value* value, float data);
+
+inline bool shl_value_add(shl_value* result, shl_value* lhs, shl_value* rhs);
+inline bool shl_value_sub(shl_value* result, shl_value* lhs, shl_value* rhs);
+inline bool shl_value_mul(shl_value* result, shl_value* lhs, shl_value* rhs);
+inline bool shl_value_div(shl_value* result, shl_value* lhs, shl_value* rhs);
+inline bool shl_value_lt(shl_value* result, shl_value* lhs, shl_value* rhs);
+inline bool shl_value_lte(shl_value* result, shl_value* lhs, shl_value* rhs);
+inline bool shl_value_gt(shl_value* result, shl_value* lhs, shl_value* rhs);
+inline bool shl_value_gte(shl_value* result, shl_value* lhs, shl_value* rhs);
+inline bool shl_value_eq(shl_value* result, shl_value* lhs, shl_value* rhs);
+inline bool shl_value_neq(shl_value* result, shl_value* lhs, shl_value* rhs);
 
 #endif //__SHL_HEADER__
 
@@ -1492,14 +1496,16 @@ inline size_t shl_ir_operand_size(const shl_ir_operand& operand)
 {
     switch (operand.type)
     {
+    case SHL_IR_OPERAND_NONE:
+        return 0;
+    case SHL_IR_OPERAND_BOOL:
+        return sizeof(operand.data.b);
     case SHL_IR_OPERAND_INT:
         return sizeof(operand.data.i);
     case SHL_IR_OPERAND_FLOAT:
         return sizeof(operand.data.f);
     case SHL_IR_OPERAND_BYTES:
         return strlen(operand.data.str) + 1; // +1 for null term
-    default:
-        break;
     }
     return 0;
 }
@@ -1713,7 +1719,7 @@ inline int shl_vm_read_bool(shl_vm& vm)
     shl_vm_bytecode_value bytecode_value;
     for (size_t i = 0; i < sizeof(bytecode_value.b); ++i)
         bytecode_value.bytes[i] = *(vm.instruction++);
-    return bytecode_value.i;
+    return bytecode_value.b;
 }
 
 inline int shl_vm_read_int(shl_vm& vm)
@@ -1777,7 +1783,6 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_value* value = shl_vm_push(env, vm);
                 if (value == nullptr)
                     break;
-
                 value->type = SHL_BOOL;
                 value->b = shl_vm_read_bool(vm);
                 break;
@@ -1796,7 +1801,6 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_value* value = shl_vm_push(env, vm);
                 if(value == nullptr) 
                     break;
-                
                 value->type = SHL_FLOAT;
                 value->f = shl_vm_read_float(vm);
                 break;
@@ -1806,7 +1810,6 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_value* value = shl_vm_push(env, vm);
                 if(value == nullptr) 
                     break;
-
                 value->type = SHL_STRING;
                 // TODO: Duplicate string ? When popping string from stack, clean up allocated string ?  
                 value->str = shl_vm_read_bytes(vm);
@@ -2280,6 +2283,7 @@ void shl_ir_to_bytecode(shl_ir& ir, shl_array<char>& bytecode)
             {
             case SHL_IR_OPERAND_NONE:
                 break;
+            case SHL_IR_OPERAND_BOOL:
             case SHL_IR_OPERAND_INT:
             case SHL_IR_OPERAND_FLOAT:
                 for (size_t i = 0; i < shl_ir_operand_size(operand); ++i)
@@ -2365,6 +2369,35 @@ void shl_evaluate(shl_environment& env, const char* code)
     // TODO: should this return top of stack to user?
 }
 
+// --------------------------------------------- Values ---------------------------------------------------------// 
+
+inline bool shl_value_set_bool(shl_value* value, bool data)
+{
+    if (value == nullptr)
+        return false;
+    value->type = SHL_BOOL;
+    value->b = data;
+    return true;
+}
+
+inline bool  shl_value_set_int(shl_value* value, int data)
+{
+    if (value == nullptr)
+        return false;
+    value->type = SHL_INT;
+    value->i = data;
+    return true;
+}
+
+inline bool shl_value_set_float(shl_value* value, float data)
+{
+    if (value == nullptr)
+        return false;
+    value->type = SHL_FLOAT;
+    value->f = data;
+    return true;
+}
+
 shl_string shl_value_to_string(const shl_value* value)
 {
     if(value == nullptr)
@@ -2414,140 +2447,165 @@ bool shl_value_to_bool(const shl_value* value)
     return false;
 }
 
-#define SHL_DEFINE_BINOP(result, lhs, rhs,                                      \
-    int_int,     int_int_type,                                                  \
-    int_float,   int_float_type,                                                \
-    float_int,   float_int_type,                                                \
-    float_float, float_float_type                                               \
-)                                                                               \
-{                                                                               \
-    if(result == nullptr || lhs == nullptr || rhs == nullptr )                  \
-        return false;                                                           \
-    switch(lhs->type)                                                           \
-    {                                                                           \
-        case SHL_INT:                                                           \
-            switch(rhs->type)                                                   \
-            {                                                                   \
-                case SHL_INT:  int_int; result->type = int_int_type;            \
-                    return true;                                                \
-                case SHL_FLOAT: int_float; result->type = int_float_type;       \
-                    return true;                                                \
-                default: return false;                                          \
-            }                                                                   \
-        case SHL_FLOAT:                                                         \
-           switch(rhs->type)                                                    \
-            {                                                                   \
-                case SHL_INT:  float_int; result->type = float_int_type;        \
-                    return true;                                                \
-                case SHL_FLOAT: float_float; result->type = float_float_type;   \
-                    return true;                                                \
-                default: return false;                                          \
-            }                                                                   \
-        default: break;                                                         \
-    }                                                                           \
-    return false;                                                               \
+#define SHL_DEFINE_BINOP(result, lhs, rhs,           \
+    int_int_case,                                               \
+    int_float_case,                                             \
+    float_int_case,                                             \
+    float_float_case,                                           \
+    bool_bool_case                                              \
+)                                                               \
+{                                                               \
+    if(result == nullptr || lhs == nullptr || rhs == nullptr )  \
+        return false;                                           \
+    switch(lhs->type)                                           \
+    {                                                           \
+        case SHL_INT:                                           \
+            switch(rhs->type)                                   \
+            {                                                   \
+                case SHL_INT:   int_int_case;                   \
+                case SHL_FLOAT: int_float_case;                 \
+                default: break;                                 \
+            }                                                   \
+            break;                                              \
+        case SHL_FLOAT:                                         \
+           switch(rhs->type)                                    \
+            {                                                   \
+                case SHL_INT:   float_int_case;                 \
+                case SHL_FLOAT: float_float_case;               \
+                default: break;                                 \
+            }                                                   \
+            break;                                              \
+        case SHL_BOOL:                                          \
+            switch (rhs->type)                                  \
+            {                                                   \
+                case SHL_BOOL: bool_bool_case;                  \
+                default: break;                                 \
+            }                                                   \
+            break;                                              \
+        default: break;                                         \
+    }                                                           \
 }
 
 inline bool shl_value_add(shl_value* result, shl_value* lhs, shl_value* rhs)
 {
     SHL_DEFINE_BINOP(result, lhs, rhs,
-        result->i = lhs->i + rhs->i, SHL_INT,
-        result->f = lhs->i + rhs->f, SHL_FLOAT,
-        result->f = lhs->f + rhs->i, SHL_FLOAT,
-        result->f = lhs->f + rhs->f, SHL_FLOAT
+        return shl_value_set_int  (result, lhs->i + rhs->i),
+        return shl_value_set_float(result, lhs->i + rhs->f),
+        return shl_value_set_float(result, lhs->f + rhs->i),
+        return shl_value_set_float(result, lhs->f + rhs->f),
+        return false
     )
+   return false;
 }
 
 inline bool shl_value_sub(shl_value* result, shl_value* lhs, shl_value* rhs)
 {
     SHL_DEFINE_BINOP(result, lhs, rhs,
-        result->i = lhs->i - rhs->i, SHL_INT,
-        result->f = lhs->i - rhs->f, SHL_FLOAT,
-        result->f = lhs->f - rhs->i, SHL_FLOAT,
-        result->f = lhs->f - rhs->f, SHL_FLOAT
+        return shl_value_set_int  (result, lhs->i - rhs->i),
+        return shl_value_set_float(result, lhs->i - rhs->f),
+        return shl_value_set_float(result, lhs->f - rhs->i),
+        return shl_value_set_float(result, lhs->f - rhs->f),
+        return false
     )
+    return false;
 }
 
 inline bool shl_value_mul(shl_value* result, shl_value* lhs, shl_value* rhs)
 {
     SHL_DEFINE_BINOP(result, lhs, rhs,
-        result->i = lhs->i * rhs->i, SHL_INT,
-        result->f = lhs->i * rhs->f, SHL_FLOAT,
-        result->f = lhs->f * rhs->i, SHL_FLOAT,
-        result->f = lhs->f * rhs->f, SHL_FLOAT
+        return shl_value_set_int  (result, lhs->i * rhs->i),
+        return shl_value_set_float(result, lhs->i * rhs->f),
+        return shl_value_set_float(result, lhs->f * rhs->i),
+        return shl_value_set_float(result, lhs->f * rhs->f),
+        return false
     )
+    return false;
 }
 
 inline bool shl_value_div(shl_value* result, shl_value* lhs, shl_value* rhs)
 {
     SHL_DEFINE_BINOP(result, lhs, rhs,
-        result->i = (float)lhs->i / rhs->i, SHL_FLOAT,
-        result->f =        lhs->i / rhs->f, SHL_FLOAT,
-        result->f =        lhs->f / rhs->i, SHL_FLOAT,
-        result->f =        lhs->f / rhs->f, SHL_FLOAT
+        return shl_value_set_float(result, (float)lhs->i / rhs->i),
+        return shl_value_set_float(result,        lhs->i / rhs->f),
+        return shl_value_set_float(result,        lhs->f / rhs->i),
+        return shl_value_set_float(result,        lhs->f / rhs->f),
+        return false
     )
+     return false;
 }
 
 inline bool shl_value_lt(shl_value* result, shl_value* lhs, shl_value* rhs)
 {
     SHL_DEFINE_BINOP(result, lhs, rhs,
-        result->b = lhs->i < rhs->i, SHL_BOOL,
-        result->b = lhs->i < rhs->f, SHL_BOOL,
-        result->b = lhs->f < rhs->i, SHL_BOOL,
-        result->b = lhs->f < rhs->f, SHL_BOOL
+        return shl_value_set_bool(result, lhs->i < rhs->i),
+        return shl_value_set_bool(result, lhs->i < rhs->f),
+        return shl_value_set_bool(result, lhs->f < rhs->i),
+        return shl_value_set_bool(result, lhs->f < rhs->f),
+        return false
     )
+    return false;
 }
 
 inline bool shl_value_lte(shl_value* result, shl_value* lhs, shl_value* rhs)
 {
     SHL_DEFINE_BINOP(result, lhs, rhs,
-        result->b = lhs->i <= rhs->i, SHL_BOOL,
-        result->b = lhs->i <= rhs->f, SHL_BOOL,
-        result->b = lhs->f <= rhs->i, SHL_BOOL,
-        result->b = lhs->f <= rhs->f, SHL_BOOL
+        return shl_value_set_bool(result, lhs->i <= rhs->i),
+        return shl_value_set_bool(result, lhs->i <= rhs->f),
+        return shl_value_set_bool(result, lhs->f <= rhs->i),
+        return shl_value_set_bool(result, lhs->f <= rhs->f),
+        return false
     )
+    return false;
 }
 
 inline bool shl_value_gt(shl_value* result, shl_value* lhs, shl_value* rhs)
 {
     SHL_DEFINE_BINOP(result, lhs, rhs,
-        result->b = lhs->i > rhs->i, SHL_BOOL,
-        result->b = lhs->i > rhs->f, SHL_BOOL,
-        result->b = lhs->f > rhs->i, SHL_BOOL,
-        result->b = lhs->f > rhs->f, SHL_BOOL
+        return shl_value_set_bool(result, lhs->i > rhs->i),
+        return shl_value_set_bool(result, lhs->i > rhs->f),
+        return shl_value_set_bool(result, lhs->f > rhs->i),
+        return shl_value_set_bool(result, lhs->f > rhs->f),
+        return false
     )
+    return false;
 }
 
 inline bool shl_value_gte(shl_value* result, shl_value* lhs, shl_value* rhs)
 {
     SHL_DEFINE_BINOP(result, lhs, rhs,
-        result->b = lhs->i >= rhs->i, SHL_BOOL,
-        result->b = lhs->i >= rhs->f, SHL_BOOL,
-        result->b = lhs->f >= rhs->i, SHL_BOOL,
-        result->b = lhs->f >= rhs->f, SHL_BOOL
+        return shl_value_set_bool(result, lhs->i >= rhs->i),
+        return shl_value_set_bool(result, lhs->i >= rhs->f),
+        return shl_value_set_bool(result, lhs->f >= rhs->i),
+        return shl_value_set_bool(result, lhs->f >= rhs->f),
+        return false
     )
+    return false;
 }
 
 inline bool shl_value_eq(shl_value* result, shl_value* lhs, shl_value* rhs)
 {
     // TODO: add a special case for object equivalence (per field)
     SHL_DEFINE_BINOP(result, lhs, rhs,
-        result->b = lhs->i == rhs->i, SHL_BOOL,
-        result->b = lhs->i == rhs->f, SHL_BOOL,
-        result->b = lhs->f == rhs->i, SHL_BOOL,
-        result->b = lhs->f == rhs->f, SHL_BOOL
-    )
+        return shl_value_set_bool(result, lhs->i == rhs->i),
+        return shl_value_set_bool(result, lhs->i == rhs->f),
+        return shl_value_set_bool(result, lhs->f == rhs->i),
+        return shl_value_set_bool(result, lhs->f == rhs->f),
+        return shl_value_set_bool(result, lhs->b == rhs->b),
+        )
+    return false;
 }
 
 inline bool shl_value_neq(shl_value* result, shl_value* lhs, shl_value* rhs)
 {
     // TODO: add a special case for object equivalence (per field)
     SHL_DEFINE_BINOP(result, lhs, rhs,
-        result->b = lhs->i != rhs->i, SHL_BOOL,
-        result->b = lhs->i != rhs->f, SHL_BOOL,
-        result->b = lhs->f != rhs->i, SHL_BOOL,
-        result->b = lhs->f != rhs->f, SHL_BOOL
-    )
+        return shl_value_set_bool(result, lhs->i != rhs->i),
+        return shl_value_set_bool(result, lhs->i != rhs->f),
+        return shl_value_set_bool(result, lhs->f != rhs->i),
+        return shl_value_set_bool(result, lhs->f != rhs->f),
+        return shl_value_set_bool(result, lhs->b != rhs->b),
+        )
+    return false;
 }
 
 #endif
