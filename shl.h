@@ -161,9 +161,11 @@ inline bool shl_value_approxeq(shl_value* result, shl_value* lhs, shl_value* rhs
 
 #if defined(SHL_IMPLEMENTATION)
 
-#include <cassert>
-#include <cstdarg>
-#include <cstring>
+#include <assert.h>
+#include <math.h>
+#include <stdarg.h>
+#include <string.h>
+
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -1783,19 +1785,21 @@ union shl_vm_bytecode_value
     vm.instruction = nullptr;          \
 }
 
-#define SHL_VM_UNOP_ERROR(env, vm, arg, op)             \
-{                                                       \
-    if (arg != nullptr)                                 \
-        SHL_VM_ERROR(env, vm, ##op##" %s not defined",  \
-            shl_type_labels[(int)arg->type]);           \
+#define SHL_VM_UNOP_ERROR(env, vm, arg, op)          \
+{                                                    \
+    if (arg != nullptr)                              \
+        SHL_VM_ERROR(env, vm, "%s %s not defined",   \
+            op,                                      \
+            shl_type_labels[(int)arg->type]);        \
 }
 
-#define SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, op)            \
-{                                                            \
-    if (lhs != nullptr && rhs != nullptr)                    \
-        SHL_VM_ERROR(env, vm, "%s "##op##" %s not defined",  \
-            shl_type_labels[(int)lhs->type],                 \
-            shl_type_labels[(int)rhs->type]);                \
+#define SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, op)     \
+{                                                     \
+    if (lhs != nullptr && rhs != nullptr)             \
+        SHL_VM_ERROR(env, vm, "%s %s %s not defined", \
+            shl_type_labels[(int)lhs->type],          \
+            op,                                       \
+            shl_type_labels[(int)rhs->type]);         \
 }
 
 inline shl_value* shl_vm_top(shl_environment& env, shl_vm& vm)
@@ -2215,7 +2219,7 @@ struct shl_ast_to_ir_context
 
 void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& ir)
 {
-    if(node == nullptr)
+    if(node == nullptr|| !context.valid)
         return;
 
     const shl_token& token = node->token;
@@ -2344,7 +2348,7 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
                 case SHL_TOKEN_LT_EQ:  shl_ir_add_operation(ir, SHL_OPCODE_LTE); break;
                 case SHL_TOKEN_GT:     shl_ir_add_operation(ir, SHL_OPCODE_GT);  break;
                 case SHL_TOKEN_GT_EQ:  shl_ir_add_operation(ir, SHL_OPCODE_GTE); break;
-                case SHL_TOKEN_EQ:     shl_ir_add_operation(ir, SHL_OPCODE_EQ); break;
+                case SHL_TOKEN_EQ:     shl_ir_add_operation(ir, SHL_OPCODE_EQ);  break;
                 case SHL_TOKEN_NOT_EQ: shl_ir_add_operation(ir, SHL_OPCODE_NEQ); break;
                 case SHL_TOKEN_APPROX_EQ: shl_ir_add_operation(ir, SHL_OPCODE_APPROXEQ); break;
                 default: break;
@@ -2379,7 +2383,7 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
                 enter_operation.operands[0] = shl_ir_operand_from_int(arg_count);
                 enter_operation.operands[1] = shl_ir_operand_from_int(return_addr);
             }
-            else
+            else if(context.env.functions.count(func_name))
             {
                 for (const shl_ast* arg : children)
                     shl_ast_to_ir(context, arg, ir);
@@ -2392,7 +2396,11 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
                 operands.push_back(func_name_operand);
                 shl_ir_add_operation(ir, SHL_OPCODE_CALL_EXT, operands);
             }
-            
+            else
+            {
+                context.valid = false;
+                SHL_LOG_ERROR(context.env, "Function %s not defined", func_name);
+            }
             break;
         }
         case SHL_AST_STMT_ASSIGN:
@@ -2528,88 +2536,48 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
         }
         case SHL_AST_FUNC_DEF:
         {
-            // Handled in prepass
+            assert(children.size() == 2); //func token [0] {[1]};
+
+            // Jump over the func def
+            const shl_ir_operand stub_operand = shl_ir_operand_from_int(0);
+            const size_t end_block_jmp = shl_ir_add_operation(ir, SHL_OPCODE_JUMP, stub_operand);
+
+            const char* func_name = token.data.c_str();
+
+            const size_t func_addr = ir.bytecode_count;
+            if (context.function_addr.count(func_name) != 0)
+            {
+                context.valid = false;
+                SHL_LOG_ERROR(context.env, "Function %s already defined", func_name);
+                break;
+            }
+            context.function_addr[func_name] = func_addr;
+
+            shl_ir_push_block(ir, func_name);
+
+            shl_ast_to_ir(context, children[0], ir);
+            shl_ast_to_ir(context, children[1], ir);
+            
+            // Ensure there is a return
+            if (ir.module.operations.at(ir.module.operations.size() - 1).opcode != SHL_OPCODE_RETURN)
+            {
+                shl_ir_add_operation(ir, SHL_OPCODE_PUSH_NONE);
+                shl_ir_add_operation(ir, SHL_OPCODE_RETURN);
+            }
+    
+            shl_ir_pop_block(ir);
+
+            const size_t end_block_addr = ir.bytecode_count;
+
+            // fixup jump operand
+            shl_ir_operation& end_block_jmp_operation = shl_ir_get_operation(ir, end_block_jmp);
+            end_block_jmp_operation.operands[0] = shl_ir_operand_from_int(end_block_addr);
+
             break;
         }
         default:
             assert(0);
             break;
-    }
-}
-
-void shl_ast_to_ir_prepass(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& ir)
-{
-    // compile all funcdefs, get the address
-    if (node == nullptr)
-        return;
-
-    const shl_token& token = node->token;
-    const shl_array<shl_ast*>& children = node->children;
-
-    switch (node->id)
-    {
-    case SHL_AST_ROOT:
-    {
-        // Begin block, default jmp to end of
-        const shl_ir_operand stub_operand = shl_ir_operand_from_int(0);
-
-        shl_ir_push_block(ir, "");
-        const size_t end_block_jmp = shl_ir_add_operation(ir, SHL_OPCODE_JUMP, stub_operand);
-
-        assert(children.size() == 1);  // START [0] EXIT
-        shl_ast_to_ir_prepass(context, children[0], ir);
-
-        const size_t end_block_addr = ir.bytecode_count;
-
-        // Fixup the jump address
-        shl_ir_operation& end_block_jmp_operation = shl_ir_get_operation(ir, end_block_jmp);
-        end_block_jmp_operation.operands[0] = shl_ir_operand_from_int(end_block_addr);
-
-        shl_ir_pop_block(ir);
-
-        break;
-    }
-    case SHL_AST_BLOCK:
-    {
-        shl_ir_push_block(ir, "");
-        for (shl_ast* stmt : children)
-            shl_ast_to_ir_prepass(context, stmt, ir);
-        shl_ir_pop_block(ir);
-        break;
-    }
-    case SHL_AST_FUNC_DEF:
-    {
-        assert(children.size() == 2); //func token [0] {[1]};
-
-        const char* func_name = token.data.c_str();
-
-        const size_t func_addr = ir.bytecode_count;
-        if (context.function_addr.count(func_name) != 0)
-        {
-            context.valid = false;
-            SHL_LOG_ERROR(context.env, "Function %s already defined", func_name);
-            break;
-        }
-        context.function_addr[func_name] = func_addr;
-
-        shl_ir_push_block(ir, func_name);
-
-        shl_ast_to_ir(context, children[0], ir);
-        shl_ast_to_ir(context, children[1], ir);
-        
-        // Ensure there is a return
-        if (ir.module.operations.at(ir.module.operations.size() - 1).opcode != SHL_OPCODE_RETURN)
-        {
-            shl_ir_add_operation(ir, SHL_OPCODE_PUSH_NONE);
-            shl_ir_add_operation(ir, SHL_OPCODE_RETURN);
-        }
- 
-        shl_ir_pop_block(ir);
-
-        break;
-    }
-    default:
-        break;
     }
 }
 
@@ -2661,7 +2629,6 @@ bool shl_compile_ast(shl_environment& env, shl_ast* root, shl_array<char>& bytec
     context.env = env;
 
     shl_ir ir;
-    shl_ast_to_ir_prepass(context, root, ir);
     shl_ast_to_ir(context, root, ir);
 
     // Load bytecode into VM

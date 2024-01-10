@@ -177,7 +177,6 @@ namespace
 		context.env = env;
 
 		shl_ir ir;
-		shl_ast_to_ir_prepass(context, root, ir);
 		shl_ast_to_ir(context, root, ir);
 
 		test_ir(ir.module);
