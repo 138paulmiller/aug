@@ -63,52 +63,67 @@ namespace
 				printf("BLOCK");
 				for (size_t i = 0; i < children.size(); ++i)
 					test_ast_print_tree(children[i], prefix, i == children.size()-1);
-			break;
+				break;
 			case SHL_AST_STMT_ASSIGN:
 				assert(children.size()==1);
 				printf("ASSIGN:%s", token.data.c_str());
 				test_ast_print_tree(children[0], prefix, true);
-			break;
+				break;
 			case SHL_AST_STMT_IF:
 				printf("IF:%s", token.data.c_str());
 				test_ast_print_tree(children[0], prefix, true);
-			break;
+				break;
 			case SHL_AST_STMT_IF_ELSE:
 				printf("IF:%s", token.data.c_str());
 				test_ast_print_tree(children[0], prefix, false);
 				printf("ELSE:%s", token.data.c_str());
 				test_ast_print_tree(children[1], prefix, true);
-			break;
+				break;
 			case SHL_AST_STMT_WHILE:
 				printf("WHILE");
 				for (size_t i = 0; i < children.size(); ++i)
 					test_ast_print_tree(children[i], prefix, i == children.size()-1);
-			break;
+				break;
 			case SHL_AST_UNARY_OP:
 				assert(children.size() == 1);
 				printf("%s", token.detail->label);
 				test_ast_print_tree(children[0], prefix, true);
-			break;
+				break;
 			case SHL_AST_BINARY_OP:
 				assert(children.size() == 2);
 				printf("%s", token.detail->label);
 				test_ast_print_tree(children[0], prefix, false);
 				test_ast_print_tree(children[1], prefix, true);
-			break;
+				break;
 
 			case SHL_AST_FUNC_CALL:
 				printf("FUNCCALL:%s", token.data.c_str());
 				for (size_t i = 0; i < children.size(); ++i)
 					test_ast_print_tree(children[i], prefix, i == children.size()-1);
-			break;
+				break;
 			case SHL_AST_VARIABLE:
 			case SHL_AST_LITERAL:
 				printf("%s", token.data.c_str());
-			break;
+				break;
 			case SHL_AST_FUNC_DEF:
-			break;
+				assert(children.size() == 2);
+				printf("FUNCDEF:%s", token.data.c_str());
+				for (size_t i = 0; i < children.size(); ++i)
+					test_ast_print_tree(children[i], prefix, i == children.size() - 1);
+				break;
+			case SHL_AST_PARAM_LIST:
+				printf("PARAMS:%s", token.data.c_str());
+				for (size_t i = 0; i < children.size(); ++i)
+					test_ast_print_tree(children[i], prefix, i == children.size() - 1);
+				break;
 			case SHL_AST_PARAM:
-			break;
+				printf("%s", token.data.c_str());
+				break;
+			case SHL_AST_RETURN:
+				printf("RETURN");
+				if(children.size() == 1)
+				test_ast_print_tree(children[0], prefix, true);
+				break;
 		}
 	}
 
@@ -148,7 +163,7 @@ namespace
 	{
 		printf("----------%s------------\n", filename );
 
-		test_lexer(filename);
+		//test_lexer(filename);
 
 		shl_ast* root = shl_parse_file(env, filename);
 		if(root == nullptr)
@@ -156,8 +171,14 @@ namespace
 
 		test_ast_print_tree(root);
 
+		// Generate IR
+		shl_ast_to_ir_context context;
+		context.valid = true;
+		context.env = env;
+
 		shl_ir ir;
-		shl_ast_to_ir(env, root, ir);
+		shl_ast_to_ir_prepass(context, root, ir);
+		shl_ast_to_ir(context, root, ir);
 
 		test_ir(ir.module);
 
