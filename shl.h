@@ -83,7 +83,7 @@ template <class key, class type>
 using shl_map = std::unordered_map<key, type>;
 
 typedef void(shl_error_callback)(const char* /*msg*/);
-typedef void(shl_function_callback)(const shl_array<shl_value*>& /*args*/);
+typedef void(shl_function_callback)(shl_value* /*return_value*/, const shl_array<shl_value*>& /*args*/);
 
 enum shl_type
 {
@@ -902,6 +902,7 @@ enum shl_ast_id : uint8_t
 {
     SHL_AST_ROOT,
     SHL_AST_BLOCK, 
+    SHL_AST_STMT_EXPR,
     SHL_AST_STMT_ASSIGN, 
     SHL_AST_STMT_IF,
     SHL_AST_STMT_IF_ELSE,
@@ -1124,19 +1125,21 @@ shl_ast* shl_parse_value(shl_environment& env, shl_lexer& lexer)
 
 shl_ast* shl_parse_stmt_expr(shl_environment& env, shl_lexer& lexer)
 {
-    shl_ast* stmt_expr = shl_parse_expr(env, lexer);
-    if (stmt_expr == nullptr)
+    shl_ast* expr = shl_parse_expr(env, lexer);
+    if (expr == nullptr)
         return nullptr;
     
     if (lexer.curr.id != SHL_TOKEN_SEMICOLON)
     {
-        shl_ast_delete(stmt_expr);
+        shl_ast_delete(expr);
         SHL_PARSE_ERROR(env, lexer, "Missing semicolon at end of expression");
         return nullptr;
     }
 
     shl_lexer_move(env, lexer); // eat SEMICOLON
     
+    shl_ast* stmt_expr = shl_ast_new(SHL_AST_STMT_EXPR);
+    stmt_expr->children.push_back(expr);
     return stmt_expr;
 }
 
@@ -1483,7 +1486,7 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 #define SHL_OPCODE_LIST        \
 	SHL_OPCODE(EXIT)           \
 	SHL_OPCODE(NO_OP)          \
-	SHL_OPCODE(NEXT_CHUNK)     \
+	SHL_OPCODE(POP)            \
 	SHL_OPCODE(PUSH_BOOL)      \
 	SHL_OPCODE(PUSH_INT)       \
 	SHL_OPCODE(PUSH_FLOAT)     \
@@ -1491,7 +1494,6 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 	SHL_OPCODE(PUSH_NONE)      \
 	SHL_OPCODE(PUSH_LOCAL)     \
 	SHL_OPCODE(LOAD_LOCAL)     \
-	SHL_OPCODE(POP)            \
 	SHL_OPCODE(ADD)            \
 	SHL_OPCODE(SUB)            \
 	SHL_OPCODE(MUL)            \
@@ -1530,8 +1532,8 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 	SHL_OPCODE(ASSERT_BOUND)
 
 
-// Special condition in bytecode
-#define SHL_OPCODE_INVALID_ADDR -1
+// Special value used in bytecode to denote an invalid vm offset
+#define SHL_OPCODE_INVALID -1
 
 enum shl_opcode : uint8_t
 { 
@@ -1587,15 +1589,25 @@ struct shl_ir_operation
 #endif //SHL_DEBUG
 };
 
-struct shl_ir_symtable
+enum shl_ir_symbol_type
 {
-    shl_map<shl_string, int> name_addr_map;
+    SHL_IR_SYM_NONE,
+    SHL_IR_SYM_VAR,
+    SHL_IR_SYM_FUNC,
+};
+
+struct shl_ir_symbol
+{
+    shl_ir_symbol_type type;
+    // Functions - this is the bytecode address.
+    // Variables - this is the local frames stack offset.
+    int offset; 
 };
 
 struct shl_ir_block
 {
-    shl_ir_symtable symtable;
-    size_t local_offset; // used to track local variable memory on stack
+    shl_map<shl_string, shl_ir_symbol> symtable;
+    size_t stack_offset; // used to track local variable memory on stack
 };
 
 // All the blocks within a compilation/translation unit (i.e. file, code literal)
@@ -1609,13 +1621,13 @@ struct shl_ir
     shl_ir_module module;
     shl_array<shl_ir_block> block_stack;
     int label_count = 0;
-    size_t bytecode_count = 0;
+    size_t bytecode_offset = 0;
 };
 
 inline void shl_ir_push_block(shl_ir& ir, shl_string label)
 {
     shl_ir_block block;
-    block.local_offset = 0;
+    block.stack_offset = 0;
     ir.block_stack.push_back(block);
 }
 
@@ -1665,9 +1677,9 @@ inline size_t shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_arra
     operation.opcode = opcode;
     operation.operands = operands;
 #if SHL_DEBUG
-    operation.bytecode_offset = ir.bytecode_count;
+    operation.bytecode_offset = ir.bytecode_offset;
 #endif //SHL_DEBUG
-    ir.bytecode_count += shl_ir_operation_size(operation);
+    ir.bytecode_offset += shl_ir_operation_size(operation);
 
     ir.module.operations.push_back(std::move(operation));
     return ir.module.operations.size()-1;
@@ -1679,9 +1691,9 @@ inline size_t shl_ir_add_operation(shl_ir& ir, shl_opcode opcode, const shl_ir_o
     operation.opcode = opcode;
     operation.operands.push_back(operand);
 #if SHL_DEBUG
-    operation.bytecode_offset = ir.bytecode_count;
+    operation.bytecode_offset = ir.bytecode_offset;
 #endif //SHL_DEBUG
-    ir.bytecode_count += shl_ir_operation_size(operation);
+    ir.bytecode_offset += shl_ir_operation_size(operation);
 
     ir.module.operations.push_back(std::move(operation));
     return ir.module.operations.size()-1;
@@ -1732,23 +1744,50 @@ inline shl_ir_operand shl_ir_operand_from_str(const char* data)
     return operand;
 }
 
-inline int shl_ir_set_name_addr(shl_ir& ir, const shl_string& name)
+inline bool shl_ir_set_var(shl_ir& ir, const shl_string& name)
 {
     shl_ir_block& block = shl_ir_top_block(ir);
-    int offset = block.local_offset++;
-    block.symtable.name_addr_map[name] = offset;
-    return offset;
+    const int offset = block.stack_offset++;
+
+    if (block.symtable.count(name) != 0)
+        return false;
+
+    shl_ir_symbol sym;
+    sym.type = SHL_IR_SYM_VAR;
+    sym.offset = offset;
+
+    block.symtable[name] = sym;
+    return true;
 }
 
-inline int shl_ir_get_name_addr(shl_ir& ir, const shl_string& name)
+inline bool shl_ir_set_func(shl_ir& ir, const shl_string& name)
 {
-    for (int i = ir.block_stack.size()-1; i >=0; --i)
+    shl_ir_block& block = shl_ir_top_block(ir);
+    int offset = ir.bytecode_offset;
+
+    if (block.symtable.count(name) != 0)
+        return false;
+
+    shl_ir_symbol sym;
+    sym.type = SHL_IR_SYM_FUNC;
+    sym.offset = offset;
+
+    block.symtable[name] = sym;
+}
+
+inline shl_ir_symbol shl_ir_get_symbol(shl_ir& ir, const shl_string& name)
+{
+    for (int i = ir.block_stack.size() - 1; i >= 0; --i)
     {
         shl_ir_block& block = ir.block_stack.at(i);
-        if (block.symtable.name_addr_map.count(name))
-            return block.symtable.name_addr_map[name];
+        if (block.symtable.count(name))
+            return block.symtable[name];
     }
-    return SHL_OPCODE_INVALID_ADDR;
+
+    shl_ir_symbol sym;
+    sym.offset = SHL_OPCODE_INVALID;
+    sym.type = SHL_IR_SYM_NONE;
+    return sym;
 }
 
 // -------------------------------------- Virtual Machine / Bytecode ----------------------------------------------// 
@@ -1756,8 +1795,8 @@ struct shl_vm_frame
 {
     int arg_count; // number of arguments pushed onto frame. will be popped.
     // VM resume state
-    int stack_offset = -1;
-    const char* instruction = nullptr;
+    int stack_offset;
+    const char* instruction;
 };
 
 struct shl_vm
@@ -1913,12 +1952,16 @@ inline const char* shl_vm_read_bytes(shl_vm& vm)
 
 void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& bytecode)
 {
+    const int initial_stack_index = -1;
+
     vm.bytecode = &bytecode[0];
     vm.instruction = vm.bytecode;
-    vm.stack_offset = -1;
+    vm.stack_offset = initial_stack_index;
 
     if (vm.bytecode == nullptr)
         return;
+
+    shl_vm_push_frame(env, vm, 0, 0);
 
     while(vm.instruction)
     {
@@ -1931,11 +1974,18 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
 
         switch(opcode)
         {
-            case SHL_OPCODE_EXIT:
-                vm.instruction = nullptr;
-                break;
             case SHL_OPCODE_NO_OP:
                 break;
+            case SHL_OPCODE_EXIT:
+            {
+                vm.instruction = nullptr;
+                break;
+            }
+            case SHL_OPCODE_POP:
+            {
+                shl_vm_pop(env, vm);
+                break;
+            }
             case SHL_OPCODE_PUSH_NONE:
             {
                 shl_value* value = shl_vm_push(env, vm);
@@ -1993,55 +2043,16 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
             }
             case SHL_OPCODE_LOAD_LOCAL:
             {
-                const int address = shl_vm_read_int(vm);                
-                shl_value* top = shl_vm_pop(env, vm);
-
-                // If local address was not supplied, i.e. not defined, push new instance onto stack
-                shl_value* local;
-                if(address == SHL_OPCODE_INVALID_ADDR)
-                    local = shl_vm_push(env, vm);
-                else
-                    local = shl_vm_get(env, vm, address);
-                    
-                if (top != nullptr && local != nullptr)
-                    *local = *top;
-
-                break;
-            }
-            case SHL_OPCODE_ENTER:
-            {
-                const int arg_count = shl_vm_read_int(vm);
-                const int ret_addr = shl_vm_read_int(vm);
-                shl_vm_push_frame(env, vm, arg_count, ret_addr);
-                break;
-            }
-            case SHL_OPCODE_RETURN:
-            {
-                shl_value* ret_value = shl_vm_top(env, vm);
-                shl_vm_pop_frame(env, vm);
-
-                shl_value* top = shl_vm_push(env, vm);
-                if (ret_value != nullptr && top != nullptr)
-                    *top = *ret_value;
-                break;
-            }
-            case SHL_OPCODE_CALL_EXT:
-            {
-                const int arg_count = shl_vm_read_int(vm);
-                const char* func_name = shl_vm_read_bytes(vm);;
-
-                shl_array<shl_value*> args;
-                args.resize(arg_count);
-                for(int i = arg_count - 1; i >= 0; --i)
+                // If the stack offset supplied is valid, load the top into the local's lot
+                // otherwise, the top of the stack will be continued to be referenced by its address local
+                const int stack_offset = shl_vm_read_int(vm);
+                if (stack_offset != SHL_OPCODE_INVALID)
                 {
-                    args[i] = shl_vm_pop(env, vm);
-                    if (args[i] == nullptr)
-                        SHL_VM_ERROR(env, vm, "Function Call %s Recieved %d arguments, expected %d", func_name, arg_count - i, arg_count);
+                    shl_value* top = shl_vm_pop(env, vm);
+                    shl_value* local = shl_vm_get(env, vm, stack_offset);
+                    if (top != nullptr && local != nullptr)
+                        *local = *top;
                 }
-
-                if((int)args.size() == arg_count && env.functions.count(func_name))
-                    env.functions.at(func_name)(args);
-
                 break;
             }
             case SHL_OPCODE_ADD:
@@ -2051,7 +2062,6 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                 shl_value* target = shl_vm_push(env, vm);    
                 if (!shl_value_add(target, lhs, rhs))
                     SHL_VM_BINOP_ERROR(env, vm, lhs, rhs, "+");
-
                 break;
             }
             case SHL_OPCODE_SUB:
@@ -2179,8 +2189,6 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
             case SHL_OPCODE_JUMP_NZERO:
             {
                 const int instruction_offset = shl_vm_read_int(vm);
-
-                // need to check if the chunk can be jumped to
                 shl_value* value = shl_vm_pop(env, vm);
                 if (shl_value_to_bool(value) != 0)
                     vm.instruction = vm.bytecode + instruction_offset;
@@ -2189,11 +2197,57 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
             case SHL_OPCODE_JUMP_ZERO:
             {
                 const int instruction_offset = shl_vm_read_int(vm);
-
-                // need to check if the chunk can be jumped to
                 shl_value* value = shl_vm_pop(env, vm);
                 if (shl_value_to_bool(value) == 0)
                     vm.instruction = vm.bytecode + instruction_offset;
+                break;
+            }
+            case SHL_OPCODE_ENTER:
+            {
+                const int arg_count = shl_vm_read_int(vm);
+                const int ret_addr = shl_vm_read_int(vm);
+                shl_vm_push_frame(env, vm, arg_count, ret_addr);
+                break;
+            }
+            case SHL_OPCODE_RETURN:
+            {
+                shl_value* ret_value = shl_vm_top(env, vm);
+                shl_vm_pop_frame(env, vm);
+
+                shl_value* top = shl_vm_push(env, vm);
+                if (ret_value != nullptr && top != nullptr)
+                    *top = *ret_value;
+                break;
+            }
+            case SHL_OPCODE_CALL_EXT:
+            {
+                const int arg_count = shl_vm_read_int(vm);
+                const char* func_name = shl_vm_read_bytes(vm);;
+
+                shl_array<shl_value*> args;
+                args.resize(arg_count);
+                for (int i = arg_count - 1; i >= 0; --i)
+                {
+                    shl_value* arg = shl_vm_pop(env, vm);
+                    if (arg != nullptr)
+                        args[i] = arg;
+                }
+
+                if ((int)args.size() != arg_count)
+                {
+                    SHL_VM_ERROR(env, vm, "Function Call %s Recieved %d arguments, expected %d", func_name, args.size(), arg_count);
+                    break;
+                }
+
+                if (env.functions.count(func_name) == 0)
+                {
+                    SHL_VM_ERROR(env, vm, "External Function Call %s not registered", func_name);
+                    break;
+                }
+
+                shl_value* ret_value = shl_vm_push(env, vm);
+                ret_value->type = SHL_NONE;
+                env.functions.at(func_name)(ret_value, args);
                 break;
             }
             default:
@@ -2201,6 +2255,12 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
             break;
         }
     }
+
+
+    shl_vm_pop_frame(env, vm);
+
+    // Ensure that stack has returned to beginning state
+    assert(vm.stack_offset == initial_stack_index);
 }
 
 // -------------------------------------- Passes ------------------------------------------------// 
@@ -2216,7 +2276,6 @@ struct shl_ast_to_ir_context
 {
     bool valid;
     shl_environment env;
-    shl_map<shl_string, int> function_addr;
 };
 
 void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& ir)
@@ -2305,16 +2364,23 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
         }
         case SHL_AST_VARIABLE:
         {
-            const int offset = shl_ir_get_name_addr(ir, token.data);
-            if (offset == -1)
+            const shl_ir_symbol symbol = shl_ir_get_symbol(ir, token.data);
+            if (symbol.type == SHL_IR_SYM_NONE)
             {
                 context.valid = false;
                 SHL_LOG_ERROR(context.env, "Variable %s not defined in current block", token.data.c_str());
                 break;
             }
 
+            if (symbol.type == SHL_IR_SYM_FUNC)
+            {
+                context.valid = false;
+                SHL_LOG_ERROR(context.env, "Function %s can not be used as a variable", token.data.c_str());
+                break;
+            }
+
             // TODO: determine if variable is local or global
-            const shl_ir_operand& address_operand = shl_ir_operand_from_int(offset);
+            const shl_ir_operand& address_operand = shl_ir_operand_from_int(symbol.offset);
             shl_ir_add_operation(ir, SHL_OPCODE_PUSH_LOCAL, address_operand);
             break;
         }
@@ -2361,8 +2427,8 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
         {
             const char* func_name = token.data.c_str();
             const int arg_count = children.size();
-
-            if (context.function_addr.count(func_name))
+            const shl_ir_symbol& symbol = shl_ir_get_symbol(ir, func_name);
+            if (symbol.type == SHL_IR_SYM_FUNC)
             {
                 for (const shl_ast* arg : children)
                     shl_ast_to_ir(context, arg, ir);
@@ -2372,18 +2438,22 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
                 stub_operands.push_back(shl_ir_operand_from_int(0));
                 const size_t enter = shl_ir_add_operation(ir, SHL_OPCODE_ENTER, stub_operands);
 
-                int function_offset = context.function_addr[func_name];
-                const shl_ir_operand& func_jmp_operand = shl_ir_operand_from_int(function_offset);
+                const shl_ir_operand& func_jmp_operand = shl_ir_operand_from_int(symbol.offset);
 
                 shl_array<shl_ir_operand> operands;
                 operands.push_back(func_jmp_operand);
                 shl_ir_add_operation(ir, SHL_OPCODE_JUMP, operands);
 
-                const int return_addr = ir.bytecode_count;
+                const int return_addr = ir.bytecode_offset;
 
                 shl_ir_operation& enter_operation = shl_ir_get_operation(ir, enter);
                 enter_operation.operands[0] = shl_ir_operand_from_int(arg_count);
                 enter_operation.operands[1] = shl_ir_operand_from_int(return_addr);
+            }
+            else if (symbol.type == SHL_IR_SYM_VAR)
+            {
+                context.valid = false;
+                SHL_LOG_ERROR(context.env, "Can not call variable %s as a function", func_name);
             }
             else if(context.env.functions.count(func_name))
             {
@@ -2405,6 +2475,16 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
             }
             break;
         }
+        case SHL_AST_STMT_EXPR:
+        {
+            if (children.size() == 1)
+            {
+                shl_ast_to_ir(context, children[0], ir);
+                // discard the top
+                shl_ir_add_operation(ir, SHL_OPCODE_POP);
+            }
+            break;
+        }
         case SHL_AST_STMT_ASSIGN:
         {
             assert(children.size() == 1); // token = [0]
@@ -2412,11 +2492,11 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
             if (children.size() == 1)
                 shl_ast_to_ir(context, children[0], ir);
 
-            int offset = shl_ir_get_name_addr(ir, token.data);
-            if (offset == SHL_OPCODE_INVALID_ADDR)
-                shl_ir_set_name_addr(ir, token.data);
+            const shl_ir_symbol symbol = shl_ir_get_symbol(ir, token.data);
+            if (symbol.offset == SHL_OPCODE_INVALID)
+                shl_ir_set_var(ir, token.data);
 
-            const shl_ir_operand& address_operand = shl_ir_operand_from_int(offset);
+            const shl_ir_operand& address_operand = shl_ir_operand_from_int(symbol.offset);
             shl_ir_add_operation(ir, SHL_OPCODE_LOAD_LOCAL, address_operand);
 
             break;
@@ -2435,7 +2515,7 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
 
             // True block
             shl_ast_to_ir(context, children[1], ir);
-            const size_t end_block_addr = ir.bytecode_count;
+            const size_t end_block_addr = ir.bytecode_offset;
 
             // Fixup stubbed block offsets
             shl_ir_operation& end_block_jmp_operation = shl_ir_get_operation(ir, end_block_jmp);
@@ -2460,13 +2540,13 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
                 
             //Jump to end after true
             const size_t end_block_jmp = shl_ir_add_operation(ir, SHL_OPCODE_JUMP, stub_operand);
-            const size_t else_block_addr = ir.bytecode_count;
+            const size_t else_block_addr = ir.bytecode_offset;
 
             // Else block
             shl_ast_to_ir(context, children[2], ir);
 
             // Tag end address
-            const size_t end_block_addr = ir.bytecode_count;
+            const size_t end_block_addr = ir.bytecode_offset;
 
             // Fixup stubbed block offsets
             shl_ir_operation& else_block_jmp_operation = shl_ir_get_operation(ir, else_block_jmp);
@@ -2483,7 +2563,7 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
 
             const shl_ir_operand stub_operand = shl_ir_operand_from_int(0);
 
-            const shl_ir_operand& begin_block_operand = shl_ir_operand_from_int(ir.bytecode_count);
+            const shl_ir_operand& begin_block_operand = shl_ir_operand_from_int(ir.bytecode_offset);
 
             // Evaluate expression. 
             shl_ast_to_ir(context, children[0], ir);
@@ -2498,7 +2578,7 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
             shl_ir_add_operation(ir, SHL_OPCODE_JUMP, begin_block_operand);
 
             // Tag end address
-            const size_t end_block_addr = ir.bytecode_count;
+            const size_t end_block_addr = ir.bytecode_offset;
 
             // Fixup stubbed block offsets
             shl_ir_operation& end_block_jmp_operation = shl_ir_get_operation(ir, end_block_jmp);
@@ -2509,9 +2589,9 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
         case SHL_AST_PARAM:
         {
             // Force new position for the parameter. load stack into new address
-            shl_ir_set_name_addr(ir, token.data);
+            shl_ir_set_var(ir, token.data);
 
-            const shl_ir_operand& address_operand = shl_ir_operand_from_int(SHL_OPCODE_INVALID_ADDR);
+            const shl_ir_operand& address_operand = shl_ir_operand_from_int(SHL_OPCODE_INVALID);
             shl_ir_add_operation(ir, SHL_OPCODE_LOAD_LOCAL, address_operand);
             break;
         }
@@ -2545,14 +2625,12 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
 
             const char* func_name = token.data.c_str();
 
-            const size_t func_addr = ir.bytecode_count;
-            if (context.function_addr.count(func_name) != 0)
+            if (!shl_ir_set_func(ir, func_name))
             {
                 context.valid = false;
                 SHL_LOG_ERROR(context.env, "Function %s already defined", func_name);
                 break;
             }
-            context.function_addr[func_name] = func_addr;
 
             shl_ir_push_block(ir, func_name);
 
@@ -2568,7 +2646,7 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
     
             shl_ir_pop_block(ir);
 
-            const size_t end_block_addr = ir.bytecode_count;
+            const size_t end_block_addr = ir.bytecode_offset;
 
             // fixup jump operand
             shl_ir_operation& end_block_jmp_operation = shl_ir_get_operation(ir, end_block_jmp);
@@ -2584,7 +2662,7 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
 
 void shl_ir_to_bytecode(shl_ir& ir, shl_array<char>& bytecode)
 {  
-    bytecode.resize(ir.bytecode_count, SHL_OPCODE_NO_OP) ;
+    bytecode.resize(ir.bytecode_offset, SHL_OPCODE_NO_OP) ;
 
     char* instruction = &bytecode[0];
 

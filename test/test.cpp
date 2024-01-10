@@ -69,6 +69,9 @@ namespace
 				printf("ASSIGN:%s", token.data.c_str());
 				test_ast_print_tree(children[0], prefix, true);
 				break;
+			case SHL_AST_STMT_EXPR:
+				test_ast_print_tree(children[0], prefix, true);
+				break;
 			case SHL_AST_STMT_IF:
 				printf("IF:%s", token.data.c_str());
 				test_ast_print_tree(children[0], prefix, true);
@@ -95,15 +98,10 @@ namespace
 				test_ast_print_tree(children[0], prefix, false);
 				test_ast_print_tree(children[1], prefix, true);
 				break;
-
 			case SHL_AST_FUNC_CALL:
 				printf("FUNCCALL:%s", token.data.c_str());
 				for (size_t i = 0; i < children.size(); ++i)
 					test_ast_print_tree(children[i], prefix, i == children.size()-1);
-				break;
-			case SHL_AST_VARIABLE:
-			case SHL_AST_LITERAL:
-				printf("%s", token.data.c_str());
 				break;
 			case SHL_AST_FUNC_DEF:
 				assert(children.size() == 2);
@@ -116,13 +114,15 @@ namespace
 				for (size_t i = 0; i < children.size(); ++i)
 					test_ast_print_tree(children[i], prefix, i == children.size() - 1);
 				break;
-			case SHL_AST_PARAM:
-				printf("%s", token.data.c_str());
-				break;
 			case SHL_AST_RETURN:
 				printf("RETURN");
 				if(children.size() == 1)
 				test_ast_print_tree(children[0], prefix, true);
+				break;
+			case SHL_AST_PARAM:
+			case SHL_AST_VARIABLE:
+			case SHL_AST_LITERAL:
+				printf("%s", token.data.c_str());
 				break;
 		}
 	}
@@ -218,7 +218,7 @@ void print(const shl_value* arg)
 	}
 }
 
-void print(const shl_array<shl_value*>& args)
+void print(shl_value* return_value, const shl_array<shl_value*>& args)
 {
 	for (shl_value* arg : args)
 	{
@@ -232,7 +232,7 @@ static int test_passed_count = 0;
 static int test_total = 0;
 
 // condition, messages ...
-void expect(const shl_array<shl_value*>& args)
+void expect(shl_value* return_value, const shl_array<shl_value*>& args)
 {
 	if (args.size() == 0)
 		return;
