@@ -792,6 +792,7 @@ shl_token shl_lexer_tokenize(shl_environment& env, shl_lexer& lexer)
         bool allow_sign = true;
         switch(lexer.curr.id)
         {
+            case SHL_TOKEN_NAME:
             case SHL_TOKEN_BINARY:
             case SHL_TOKEN_HEXIDECIMAL:
             case SHL_TOKEN_FLOAT:
@@ -1524,7 +1525,7 @@ shl_ast* shl_parse_file(shl_environment& env, const char* filename)
 	SHL_OPCODE(JUMP)           \
 	SHL_OPCODE(JUMP_ZERO)      \
 	SHL_OPCODE(JUMP_NZERO)     \
-	SHL_OPCODE(ENTER)          \
+	SHL_OPCODE(CALL)           \
 	SHL_OPCODE(RETURN)         \
 	SHL_OPCODE(CALL_EXT)       \
 	SHL_OPCODE(ASSERT)         \
@@ -1863,24 +1864,24 @@ inline shl_value* shl_vm_push(shl_environment& env, shl_vm& vm)
 
 inline shl_value* shl_vm_pop(shl_environment& env, shl_vm& vm)
 {        
-    if(vm.stack_offset < 0)   
-    {   
-        if(vm.instruction)
-            SHL_VM_ERROR(env, vm, "Stack underflow");      
-        return nullptr;                           
-    }
+    //if(vm.stack_offset < 0)   
+    //{   
+    //    if(vm.instruction)
+    //        SHL_VM_ERROR(env, vm, "Stack underflow");      
+    //    return nullptr;                           
+    //}
 
     shl_value* top = shl_vm_top(env, vm);
     --vm.stack_offset;
     return top;
 }
 
-inline void shl_vm_push_frame(shl_environment& env, shl_vm& vm, int arg_count, int ret_addr)
+inline void shl_vm_push_frame(shl_environment& env, shl_vm& vm, int arg_count, const char* return_instruction)
 {
     shl_vm_frame frame;
     frame.arg_count = arg_count;
     frame.stack_offset = vm.stack_offset;
-    frame.instruction = vm.bytecode + ret_addr;
+    frame.instruction = return_instruction;
     vm.frame_stack.push_back(frame);
 }
 
@@ -2202,11 +2203,14 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                     vm.instruction = vm.bytecode + instruction_offset;
                 break;
             }
-            case SHL_OPCODE_ENTER:
+            case SHL_OPCODE_CALL:
             {
                 const int arg_count = shl_vm_read_int(vm);
-                const int ret_addr = shl_vm_read_int(vm);
-                shl_vm_push_frame(env, vm, arg_count, ret_addr);
+                const int func_addr = shl_vm_read_int(vm);
+                const char* return_instruction = vm.instruction;
+                shl_vm_push_frame(env, vm, arg_count, return_instruction);
+
+                vm.instruction = vm.bytecode + func_addr;
                 break;
             }
             case SHL_OPCODE_RETURN:
@@ -2245,9 +2249,13 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                     break;
                 }
 
-                shl_value* ret_value = shl_vm_push(env, vm);
-                ret_value->type = SHL_NONE;
-                env.functions.at(func_name)(ret_value, args);
+                shl_value ret_value;
+                ret_value.type = SHL_NONE;
+                env.functions.at(func_name)(&ret_value, args);
+                
+                shl_value* top = shl_vm_push(env, vm);
+                if (top)
+                    *top = ret_value;
                 break;
             }
             default:
@@ -2433,22 +2441,13 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
                 for (const shl_ast* arg : children)
                     shl_ast_to_ir(context, arg, ir);
 
-                shl_array<shl_ir_operand> stub_operands;
-                stub_operands.push_back(shl_ir_operand_from_int(0));
-                stub_operands.push_back(shl_ir_operand_from_int(0));
-                const size_t enter = shl_ir_add_operation(ir, SHL_OPCODE_ENTER, stub_operands);
-
+                const shl_ir_operand& arg_count_operand = shl_ir_operand_from_int(arg_count);
                 const shl_ir_operand& func_jmp_operand = shl_ir_operand_from_int(symbol.offset);
 
                 shl_array<shl_ir_operand> operands;
+                operands.push_back(arg_count_operand);
                 operands.push_back(func_jmp_operand);
-                shl_ir_add_operation(ir, SHL_OPCODE_JUMP, operands);
-
-                const int return_addr = ir.bytecode_offset;
-
-                shl_ir_operation& enter_operation = shl_ir_get_operation(ir, enter);
-                enter_operation.operands[0] = shl_ir_operand_from_int(arg_count);
-                enter_operation.operands[1] = shl_ir_operand_from_int(return_addr);
+                shl_ir_add_operation(ir, SHL_OPCODE_CALL, operands);
             }
             else if (symbol.type == SHL_IR_SYM_VAR)
             {
@@ -2588,15 +2587,11 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
         }
         case SHL_AST_PARAM:
         {
-            // Force new position for the parameter. load stack into new address
             shl_ir_set_var(ir, token.data);
-
-            const shl_ir_operand& address_operand = shl_ir_operand_from_int(SHL_OPCODE_INVALID);
-            shl_ir_add_operation(ir, SHL_OPCODE_LOAD_LOCAL, address_operand);
             break;
         }
         case SHL_AST_PARAM_LIST:
-        {            
+        {
             for (const shl_ast* param : children)
                 shl_ast_to_ir(context, param, ir);
             break;
