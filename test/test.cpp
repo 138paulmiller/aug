@@ -293,7 +293,7 @@ int shl_test(int argc, char** argv)
 
 	for(int i = 1; i < argc; ++i)
 	{
-		if(argv[i] && strcmp(argv[i], "--generate") == 0)
+		if(argv[i] && strcmp(argv[i], "--dump") == 0)
 		{
 			if (++i >= argc)
 			{

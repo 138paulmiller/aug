@@ -1750,6 +1750,7 @@ inline int shl_ir_get_name_addr(shl_ir& ir, const shl_string& name)
 // -------------------------------------- Virtual Machine / Bytecode ----------------------------------------------// 
 struct shl_vm_frame
 {
+    int arg_count; // number of arguments pushed onto frame. will be popped.
     // VM resume state
     int stack_offset = -1;
     const char* instruction = nullptr;
@@ -1829,9 +1830,10 @@ inline shl_value* shl_vm_pop(shl_environment& env, shl_vm& vm)
     return top;
 }
 
-inline void shl_vm_push_frame(shl_environment& env, shl_vm& vm, int ret_addr)
+inline void shl_vm_push_frame(shl_environment& env, shl_vm& vm, int arg_count, int ret_addr)
 {
     shl_vm_frame frame;
+    frame.arg_count = arg_count;
     frame.stack_offset = vm.stack_offset;
     frame.instruction = vm.bytecode + ret_addr;
     vm.frame_stack.push_back(frame);
@@ -1842,7 +1844,7 @@ inline void shl_vm_pop_frame(shl_environment& env, shl_vm& vm)
     shl_vm_frame frame = vm.frame_stack.back();
     vm.frame_stack.pop_back();
 
-    vm.stack_offset = frame.stack_offset;
+    vm.stack_offset = frame.stack_offset - frame.arg_count;
     vm.instruction = frame.instruction;
     // TODO: other than the assignment above. pop until stack offset == frame stack offset
     //while (vm.stack_offset > vm.frame_stack.back())
@@ -1852,16 +1854,22 @@ inline void shl_vm_pop_frame(shl_environment& env, shl_vm& vm)
     //}
 }
 
-inline shl_value* shl_vm_get(shl_environment& env, shl_vm& vm, size_t stack_offset)
+inline shl_value* shl_vm_get(shl_environment& env, shl_vm& vm, int stack_offset)
 {
-    const size_t offset = stack_offset;
+    int offset = stack_offset;
+    if (vm.frame_stack.size() > 0)
+    {
+        const shl_vm_frame& frame = vm.frame_stack.back();
+        if (frame.stack_offset > 0)
+            offset = frame.stack_offset - stack_offset;
+    }
+
     if (offset < 0)
     {
         if (vm.instruction)
-            SHL_VM_ERROR(env, vm, "Stack overerflow");
+            SHL_VM_ERROR(env, vm, "Stack undeflow");
         return nullptr;
     }
-
     return &vm.stack[offset];
 }
 
@@ -1996,8 +2004,9 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
             }
             case SHL_OPCODE_ENTER:
             {
+                const int arg_count = shl_vm_read_int(vm);
                 const int ret_addr = shl_vm_read_int(vm);
-                shl_vm_push_frame(env, vm, ret_addr);
+                shl_vm_push_frame(env, vm, arg_count, ret_addr);
                 break;
             }
             case SHL_OPCODE_RETURN:
@@ -2345,13 +2354,17 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
         case SHL_AST_FUNC_CALL:
         {
             const char* func_name = token.data.c_str();
+            const int arg_count = children.size();
+
             if (context.function_addr.count(func_name))
             {
-                const shl_ir_operand stub_operand = shl_ir_operand_from_int(0);
-                const size_t enter = shl_ir_add_operation(ir, SHL_OPCODE_ENTER, stub_operand);
-
                 for (const shl_ast* arg : children)
                     shl_ast_to_ir(context, arg, ir);
+
+                shl_array<shl_ir_operand> stub_operands;
+                stub_operands.push_back(shl_ir_operand_from_int(0));
+                stub_operands.push_back(shl_ir_operand_from_int(0));
+                const size_t enter = shl_ir_add_operation(ir, SHL_OPCODE_ENTER, stub_operands);
 
                 int function_offset = context.function_addr[func_name];
                 const shl_ir_operand& func_jmp_operand = shl_ir_operand_from_int(function_offset);
@@ -2360,16 +2373,18 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
                 operands.push_back(func_jmp_operand);
                 shl_ir_add_operation(ir, SHL_OPCODE_JUMP, operands);
 
-                const size_t return_addr = ir.bytecode_count;
+                const int return_addr = ir.bytecode_count;
+
                 shl_ir_operation& enter_operation = shl_ir_get_operation(ir, enter);
-                enter_operation.operands[0] = shl_ir_operand_from_int(return_addr);
+                enter_operation.operands[0] = shl_ir_operand_from_int(arg_count);
+                enter_operation.operands[1] = shl_ir_operand_from_int(return_addr);
             }
             else
             {
                 for (const shl_ast* arg : children)
                     shl_ast_to_ir(context, arg, ir);
 
-                const shl_ir_operand& arg_count_operand = shl_ir_operand_from_int(children.size());
+                const shl_ir_operand& arg_count_operand = shl_ir_operand_from_int(arg_count);
                 const shl_ir_operand& func_name_operand = shl_ir_operand_from_str(func_name);
 
                 shl_array<shl_ir_operand> operands;

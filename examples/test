@@ -1,8 +1,8 @@
-a = add3(1,2,3);
-print("Return from function:", a);
+a = add3(10, -5, 0);
 
 func add3(a, b, c) {
 	return a + b + c;
 }
 
-expect(add3(1,2,3) == 6, "add3(1,2,3) = ", add3(1,2,3));
+expect(add3(1, 10, 100) == 111, "add3(1, 10, 100) = ", add3(1, 10, 100) );
+expect(add3(10, -5, 0) ==  5,    "add3(10, -5, 0)  = ", add3(10, -5, 0)  );
