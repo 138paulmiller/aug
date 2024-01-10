@@ -142,6 +142,9 @@ namespace
 			{
 				switch (operand.type)
 				{
+				case SHL_IR_OPERAND_BOOL:
+					printf(" %s", operand.data.b ? "true" : "false");
+					break;
 				case SHL_IR_OPERAND_INT:
 					printf(" %d", operand.data.i);
 					break;
@@ -194,6 +197,9 @@ void print(const shl_value* arg)
 
 	switch (arg->type)
 	{
+	case SHL_NONE:
+		printf("none");
+		break;
 	case SHL_BOOL:
 		printf("%s", arg->b ? "true" : "false");
 		break;

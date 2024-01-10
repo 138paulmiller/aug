@@ -28,8 +28,9 @@
     
         func_call := NAME ( args )
 
-        args := expr 
-              | expr , args
+
+        args := expr args
+              | , expr args
               | NULL
 
         value := NAME 
@@ -48,17 +49,18 @@
     
         stmt_while := WHILE expr { stmts }
 
-        stmt_func_def := FUNC NAME (  block 
+        params := NAME  params
+              | , NAME params
+              | NULL
+        stmt_func_def := FUNC NAME ( params ) block 
 
     Todo: 
-    - Semantic Pass - check variable, function, field names, check binary/unary ops
     - VM - Serialize Bytecode to external file. Execute compiled bytecode from file
     - VM - Serialize debug map to file. Link from bytecode to source file. 
     - VM - Print Stack trace on error. Link back to source file if running uncompiled bytecode
-    - Type - Support boolean types
     - Native - Support return value in function callbacks
+    - Semantic Pass - resolve IR pass any potential naming, field,  or return issues     
     - Convert to C
-    
     Bugs:
     - VM - Semantic pass to determine if a function call needs to discard the return value (i.e. return not push value on stack)
 */
@@ -2037,7 +2039,7 @@ void shl_vm_execute(shl_environment& env, shl_vm& vm, const shl_array<char>& byt
                         SHL_VM_ERROR(env, vm, "Function Call %s Recieved %d arguments, expected %d", func_name, arg_count - i, arg_count);
                 }
 
-                if(args.size() == arg_count && env.functions.count(func_name))
+                if((int)args.size() == arg_count && env.functions.count(func_name))
                     env.functions.at(func_name)(args);
 
                 break;
@@ -2507,7 +2509,6 @@ void shl_ast_to_ir(shl_ast_to_ir_context& context, const shl_ast* node, shl_ir& 
         case SHL_AST_PARAM:
         {
             // Force new position for the parameter. load stack into new address
-            int offset = SHL_OPCODE_INVALID_ADDR;
             shl_ir_set_name_addr(ir, token.data);
 
             const shl_ir_operand& address_operand = shl_ir_operand_from_int(SHL_OPCODE_INVALID_ADDR);
@@ -2698,7 +2699,7 @@ inline bool shl_value_set_bool(shl_value* value, bool data)
     return true;
 }
 
-inline bool  shl_value_set_int(shl_value* value, int data)
+inline bool shl_value_set_int(shl_value* value, int data)
 {
     if (value == nullptr)
         return false;
@@ -2754,6 +2755,8 @@ bool shl_value_to_bool(const shl_value* value)
 
     switch(value->type)
     {
+        case SHL_NONE:
+            return false;
         case SHL_BOOL:
             return value->b;
         case SHL_INT:
