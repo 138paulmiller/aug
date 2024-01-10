@@ -184,8 +184,6 @@ namespace
 
 		// Cleanup
 		shl_ast_delete(root);
-
-		shl_execute(env, filename);
 	}
 }
 
@@ -292,15 +290,14 @@ int shl_test(int argc, char** argv)
 	shl_register(env, "print", print);
 	shl_register(env, "expect", expect);
 
-	printf("[TEST  ]\tStarted\n");
 
 	for(int i = 1; i < argc; ++i)
 	{
-		if(argv[i] && strcmp(argv[i], "--test") == 0)
+		if(argv[i] && strcmp(argv[i], "--generate") == 0)
 		{
 			if (++i >= argc)
 			{
-				printf("shl_test: --test parameter expected filename!");
+				printf("shl_test: --generate parameter expected filename!");
 				return -1;
 			}
 
@@ -314,10 +311,11 @@ int shl_test(int argc, char** argv)
 				return -1;
 			}
 
+			printf("[TEST  ]\t%s\n", argv[i]);
 			shl_execute(env, argv[i]);
+			printf("[TEST  ]\tEnded. Passed %d / %d\n", test_passed_count, test_total);
 		}
 	}
 
-	printf("[TEST  ]\tEnded. Passed %d / %d\n", test_passed_count, test_total);
 	return 0;
 }

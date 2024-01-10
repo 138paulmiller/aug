@@ -4,3 +4,5 @@ print("Return from function:", a);
 func add3(a, b, c) {
 	return a + b + c;
 }
+
+expect(add3(1,2,3) == 6, "add3(1,2,3) = ", add3(1,2,3));
