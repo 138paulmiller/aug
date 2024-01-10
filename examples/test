@@ -1,7 +1,8 @@
 a = add3(10, -5, 0);
 
 func add3(a, b, c) {
-	return a + b + c;
+    b = a + b + c;
+	return b + 1 - 1;
 }
 
 expect(add3(1, 10, 100) == 111, "add3(1, 10, 100) = ", add3(1, 10, 100) );
