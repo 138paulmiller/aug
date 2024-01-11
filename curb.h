@@ -1547,53 +1547,52 @@ curb_ast* curb_parse_file(curb_environment& env, const char* filename)
 
 // -------------------------------------- OPCODE -----------------------------------------// 
 
-#define CURB_OPCODE_LIST        \
-	CURB_OPCODE(EXIT)           \
-	CURB_OPCODE(NO_OP)          \
-	CURB_OPCODE(POP)            \
-	CURB_OPCODE(PUSH_BOOL)      \
-	CURB_OPCODE(PUSH_INT)       \
-	CURB_OPCODE(PUSH_FLOAT)     \
-	CURB_OPCODE(PUSH_STRING)    \
-	CURB_OPCODE(PUSH_NONE)      \
-	CURB_OPCODE(PUSH_LOCAL)     \
-	CURB_OPCODE(LOAD_LOCAL)     \
-	CURB_OPCODE(ADD)            \
-	CURB_OPCODE(SUB)            \
-	CURB_OPCODE(MUL)            \
-	CURB_OPCODE(DIV)            \
-	CURB_OPCODE(POW)            \
-	CURB_OPCODE(MOD)            \
-	CURB_OPCODE(AND)            \
-	CURB_OPCODE(OR)             \
-	CURB_OPCODE(XOR)            \
-	CURB_OPCODE(NOT)            \
-	CURB_OPCODE(NEG)            \
-	CURB_OPCODE(CMP)            \
-	CURB_OPCODE(ABS)            \
-	CURB_OPCODE(SIN)            \
-	CURB_OPCODE(COS)            \
-	CURB_OPCODE(ATAN)           \
-	CURB_OPCODE(LN)             \
-	CURB_OPCODE(SQRT)           \
-	CURB_OPCODE(INC)            \
-	CURB_OPCODE(DEC)            \
-    CURB_OPCODE(LT)             \
-	CURB_OPCODE(LTE)            \
-	CURB_OPCODE(EQ)             \
-	CURB_OPCODE(NEQ)            \
-	CURB_OPCODE(APPROXEQ)       \
-	CURB_OPCODE(GT)             \
-	CURB_OPCODE(GTE)            \
-	CURB_OPCODE(JUMP)           \
-	CURB_OPCODE(JUMP_ZERO)      \
-	CURB_OPCODE(JUMP_NZERO)     \
-	CURB_OPCODE(CALL)           \
-	CURB_OPCODE(RETURN)         \
-	CURB_OPCODE(CALL_EXT)       \
-	CURB_OPCODE(ASSERT)         \
-	CURB_OPCODE(ASSERT_POSITIVE)\
-	CURB_OPCODE(ASSERT_BOUND)
+#define CURB_OPCODE_LIST           \
+	CURB_OPCODE(EXIT)              \
+	CURB_OPCODE(NO_OP)             \
+	CURB_OPCODE(POP)               \
+	CURB_OPCODE(PUSH_NONE)         \
+	CURB_OPCODE(PUSH_BOOL)         \
+	CURB_OPCODE(PUSH_INT)          \
+	CURB_OPCODE(PUSH_FLOAT)        \
+	CURB_OPCODE(PUSH_STRING)       \
+	CURB_OPCODE(PUSH_LOCAL)        \
+	CURB_OPCODE(LOAD_LOCAL)        \
+	CURB_OPCODE(PUSH_STACK_OFFSET) \
+	CURB_OPCODE(POP_STACK_OFFSET)  \
+	CURB_OPCODE(ADD)               \
+	CURB_OPCODE(SUB)               \
+	CURB_OPCODE(MUL)               \
+	CURB_OPCODE(DIV)               \
+	CURB_OPCODE(POW)               \
+	CURB_OPCODE(MOD)               \
+	CURB_OPCODE(AND)               \
+	CURB_OPCODE(OR)                \
+	CURB_OPCODE(XOR)               \
+	CURB_OPCODE(NOT)               \
+	CURB_OPCODE(NEG)               \
+	CURB_OPCODE(CMP)               \
+	CURB_OPCODE(ABS)               \
+	CURB_OPCODE(SIN)               \
+	CURB_OPCODE(COS)               \
+	CURB_OPCODE(ATAN)              \
+	CURB_OPCODE(LN)                \
+	CURB_OPCODE(SQRT)              \
+	CURB_OPCODE(INC)               \
+	CURB_OPCODE(DEC)               \
+    CURB_OPCODE(LT)                \
+	CURB_OPCODE(LTE)               \
+	CURB_OPCODE(EQ)                \
+	CURB_OPCODE(NEQ)               \
+	CURB_OPCODE(APPROXEQ)          \
+	CURB_OPCODE(GT)                \
+	CURB_OPCODE(GTE)               \
+	CURB_OPCODE(JUMP)              \
+	CURB_OPCODE(JUMP_ZERO)         \
+	CURB_OPCODE(JUMP_NZERO)        \
+	CURB_OPCODE(RETURN)            \
+	CURB_OPCODE(CALL)              \
+	CURB_OPCODE(CALL_EXT)         
 
 
 // Special value used in bytecode to denote an invalid vm offset
@@ -1669,19 +1668,6 @@ struct curb_ir
 
     int label_count = 0;
 };
-
-inline void curb_ir_push_block(curb_ir& ir)
-{
-    curb_ir_block block;
-    block.stack_offset = 0;
-    ir.block_stack.push_back(block);
-}
-
-inline void curb_ir_pop_block(curb_ir& ir)
-{
-    assert(ir.block_stack.size() > 0);
-    ir.block_stack.pop_back();
-}
 
 inline curb_ir_block& curb_ir_top_block(curb_ir& ir)
 {
@@ -1848,6 +1834,24 @@ inline curb_symbol curb_ir_get_symbol_local(curb_ir& ir, const curb_string& name
     sym.type = CURB_IR_SYM_NONE;
     return sym;
 }
+
+inline void curb_ir_push_block(curb_ir& ir)
+{
+    curb_ir_block block;
+    block.stack_offset = 0;
+    ir.block_stack.push_back(block);
+
+    curb_ir_add_operation(ir, CURB_OPCODE_PUSH_STACK_OFFSET);
+}
+
+inline void curb_ir_pop_block(curb_ir& ir)
+{
+    curb_ir_add_operation(ir, CURB_OPCODE_POP_STACK_OFFSET);
+
+    assert(ir.block_stack.size() > 0);
+    ir.block_stack.pop_back();
+}
+
 // --------------------------------------- Value Operations -------------------------------------------------------//
 const char* curb_type_labels[] =
 {
@@ -2086,9 +2090,8 @@ inline bool curb_approxeq(curb_value* result, curb_value* lhs, curb_value* rhs)
 struct curb_vm_frame
 {
     int arg_count; // number of arguments pushed onto frame. will be popped.
-    // VM resume state
-    int stack_offset;
-    const char* instruction;
+    int stack_offset; // current stack offset of frame
+    const char* return_instruction;
 };
 
 struct curb_vm
@@ -2173,8 +2176,9 @@ inline void curb_vm_push_frame(curb_environment& env, curb_vm& vm, int arg_count
 {
     curb_vm_frame frame;
     frame.arg_count = arg_count;
-    frame.stack_offset = vm.stack_offset - arg_count + 1;
-    frame.instruction = return_instruction;
+    frame.stack_offset = vm.stack_offset + arg_count;
+    frame.return_instruction = return_instruction;
+
     vm.frame_stack.push_back(frame);
 }
 
@@ -2183,8 +2187,9 @@ inline void curb_vm_pop_frame(curb_environment& env, curb_vm& vm)
     curb_vm_frame frame = vm.frame_stack.back();
     vm.frame_stack.pop_back();
 
-    vm.stack_offset = frame.stack_offset - 1;
-    vm.instruction = frame.instruction;
+    vm.stack_offset = frame.stack_offset - frame.arg_count;
+    vm.instruction = frame.return_instruction;
+
 }
 
 inline curb_value* curb_vm_get(curb_environment& env, curb_vm& vm, int stack_offset)
@@ -2268,7 +2273,7 @@ void curb_vm_execute(curb_environment& env, curb_vm& vm)
 {
     while(vm.instruction)
     {
-#if  0
+#if  1
         printf("[%d] %s\n", vm.instruction - vm.bytecode, curb_opcode_labels[(*vm.instruction)]);
 #endif
         curb_opcode opcode = (curb_opcode) (*vm.instruction);
@@ -2343,16 +2348,11 @@ void curb_vm_execute(curb_environment& env, curb_vm& vm)
             }
             case CURB_OPCODE_LOAD_LOCAL:
             {
-                // If the stack offset supplied is valid, load the top into the local's lot
-                // otherwise, the top of the stack will be continued to be referenced by its address local
                 const int stack_offset = curb_vm_read_int(vm);
-                if (stack_offset != CURB_OPCODE_INVALID)
-                {
-                    curb_value* top = curb_vm_pop(env, vm);
-                    curb_value* local = curb_vm_get(env, vm, stack_offset);
-                    if (top != nullptr && local != nullptr)
-                        *local = *top;
-                }
+                curb_value* top = curb_vm_pop(env, vm);
+                curb_value* local = curb_vm_get(env, vm, stack_offset);
+                if (top != nullptr && local != nullptr)
+                    *local = *top;
                 break;
             }
             case CURB_OPCODE_ADD:
@@ -2502,13 +2502,30 @@ void curb_vm_execute(curb_environment& env, curb_vm& vm)
                     vm.instruction = vm.bytecode + instruction_offset;
                 break;
             }
+            case CURB_OPCODE_PUSH_STACK_OFFSET:
+            {
+                const int stack_offset = vm.stack_offset;
+                curb_value* top = curb_vm_push(env, vm);
+                if (top != nullptr)
+                {
+                    top->type = CURB_INT;
+                    top->i = stack_offset;
+                }
+                break;
+            }
+            case CURB_OPCODE_POP_STACK_OFFSET:
+            {
+                curb_value* top = curb_vm_pop(env, vm);
+                if (top != nullptr && top->type == CURB_INT)
+                    vm.stack_offset = top->i;
+                break;
+            }
             case CURB_OPCODE_CALL:
             {
                 const int arg_count = curb_vm_read_int(vm);
-                const int func_addr = curb_vm_read_int(vm);
-                const char* return_instruction = vm.instruction;
-                curb_vm_push_frame(env, vm, arg_count, return_instruction);
+                curb_vm_push_frame(env, vm, arg_count, vm.instruction);
 
+                const int func_addr = curb_vm_read_int(vm);
                 vm.instruction = vm.bytecode + func_addr;
                 break;
             }
@@ -2847,9 +2864,6 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             
             curb_ir_set_var(ir, token.data);
 
-            const curb_ir_operand& address_operand = curb_ir_operand_from_int(symbol.offset);
-            curb_ir_add_operation(ir, CURB_OPCODE_LOAD_LOCAL, address_operand);
-
             break;
         }
         case CURB_AST_STMT_IF:
@@ -2953,9 +2967,16 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             break;
         }
         case CURB_AST_PARAM_LIST:
-        {
-            for (const curb_ast* param : children)
-                curb_ast_to_ir(context, param, ir);
+        {    
+            if (children.size())
+            {
+                // start stack offset at beginning of parameter (this will be nagative relative to the current frame)
+                curb_ir_block& block = curb_ir_top_block(ir);
+                block.stack_offset = block.stack_offset - children.size();
+            
+                for (const curb_ast* param : children)
+                    curb_ast_to_ir(context, param, ir);
+            }
             break;
         }
         case CURB_AST_RETURN:
@@ -2988,8 +3009,6 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
                 break;
             }
 
-            curb_ir_push_block(ir);
-
             curb_ast_to_ir(context, children[0], ir);
             curb_ast_to_ir(context, children[1], ir);
             
@@ -2999,8 +3018,6 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
                 curb_ir_add_operation(ir, CURB_OPCODE_PUSH_NONE);
                 curb_ir_add_operation(ir, CURB_OPCODE_RETURN);
             }
-    
-            curb_ir_pop_block(ir);
 
             const size_t end_block_addr = ir.bytecode_offset;
 

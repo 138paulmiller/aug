@@ -1,18 +1,27 @@
 #define CURB_LOG_VERBOSE
 #include <curb.h>
 
+void curb_dump_file(curb_environment env, const char* filename);
+
 struct curb_tester
 {
 	int passed = 0;
 	int total = 0;
 	int verbose = 0;
+	bool dump;
 	curb_string filename;
 
-	void begin(const char* file)
+	curb_environment env;
+	
+	void begin(curb_environment test_env, const char* file)
 	{
+		env = test_env;
 		filename = file;
 		passed = 0;
 		total = 0;
+
+		if (dump)
+			curb_dump_file(env, file);
 
 		if (verbose)
 			printf("[TEST]\t%s\n", filename.c_str());
@@ -97,28 +106,27 @@ void expect(curb_value* return_value, const curb_array<curb_value*>& args)
 	tester.verify(success, message);
 }
 
-curb_environment curb_default_env()
+void curb_test_native(const char* filename)
+{
+	curb_script script;
+	curb_compile(tester.env, script, filename);
+
+	curb_array<curb_value> args;
+	args.push_back(curb_int(30));
+	
+	curb_value value = curb_call(tester.env, script, "fibonacci", args);
+	
+	bool success = value.i == 832040;
+	const curb_string message = "fibonacci(30) = " + curb_to_string(&value);
+	tester.verify(success, message);
+}
+
+curb_environment curb_test_env()
 {
 	curb_environment env;
 	curb_register(env, "print", print);
 	curb_register(env, "expect", expect);
 	return env;
-}
-
-void curb_test_native(const char* filename)
-{
-	curb_environment env = curb_default_env();
-	curb_script script;
-	curb_compile(env, script, filename);
-
-	curb_array<curb_value> args;
-	args.push_back(curb_int(30));
-	
-	curb_value value = curb_call(env, script, "fibonacci", args);
-	
-	bool success = value.i == 832040;
-	const curb_string message = "fibonacci(30) = " + curb_to_string(&value);
-	tester.verify(success, message);
 }
 
 #ifdef  _WIN32
@@ -154,7 +162,6 @@ struct win32_memorycheck_scope
 
 #endif //_WIN32
 
-void curb_dump_file(curb_environment env, const char* filename);
 
 int curb_test(int argc, char** argv)
 {
@@ -162,7 +169,6 @@ int curb_test(int argc, char** argv)
 	win32_memorycheck_scope memcheck;
 #endif //_WIN32
 
-	bool dump = false;
 	for(int i = 1; i < argc; ++i)
 	{
 		if (argv[i] && strcmp(argv[i], "--verbose") == 0)
@@ -171,7 +177,7 @@ int curb_test(int argc, char** argv)
 		}
 		else if(argv[i] && strcmp(argv[i], "--dump") == 0)
 		{
-			dump = true;
+			tester.dump = true;
 		}
 		else if (argv[i] && strcmp(argv[i], "--test") == 0)
 		{
@@ -181,14 +187,9 @@ int curb_test(int argc, char** argv)
 				return -1;
 			}
 			
-			curb_environment env = curb_default_env();
+			tester.begin(curb_test_env(), argv[i]);
 
-			if(dump)
-				curb_dump_file(env, argv[i]);
-
-			tester.begin( argv[i]);
-
-			curb_execute(env, argv[i]);
+			curb_execute(tester.env, argv[i]);
 
 			tester.end();
 		}
@@ -200,7 +201,7 @@ int curb_test(int argc, char** argv)
 				return -1;
 			}
 
-			tester.begin(argv[i]);
+			tester.begin(curb_test_env(), argv[i]);
 
 			curb_test_native(argv[i]);
 
