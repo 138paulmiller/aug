@@ -41,7 +41,7 @@
  
         stmt_expr := expr ;
     
-        stmt_assign := NAME = expr ;
+        stmt_assign := VAR NAME = expr ;
     
         stmt_if := IF block 
                 |  IF block ELSE block 
@@ -96,11 +96,6 @@ enum curb_type
     CURB_NONE
 };
 
-const char* curb_type_labels[] = 
-{
-    "bool", "int", "float", "string", "object", "none"
-};
-
 struct curb_value
 {
     curb_type type;
@@ -125,38 +120,53 @@ struct curb_object
     curb_array<curb_attribute> attribs;
 };
 
+enum curb_symbol_type
+{
+    CURB_IR_SYM_NONE,
+    CURB_IR_SYM_VAR,
+    CURB_IR_SYM_FUNC,
+};
+
+struct curb_symbol
+{
+    curb_symbol_type type;
+    // Functions - this is the bytecode address.
+    // Variables - this is the local frames stack offset.
+    int offset;
+};
+
+struct curb_symtable
+{
+    curb_map<curb_string, curb_symbol> symbols;
+};
+
+struct curb_script
+{
+    curb_symtable global_symtable;
+    curb_array<char> bytecode;
+};
+
 struct curb_environment
 {
-    curb_map<curb_string, curb_function_callback*> functions;
+    curb_map<curb_string, curb_function_callback*> external_functions;
     curb_error_callback* error_callback = nullptr;
 };
 
-void curb_register(curb_environment& env, const char* function_id, curb_function_callback* callback); //TODO parse the func types ? 
-void curb_unregister(curb_environment& env, const char* function_id);
+void curb_register(curb_environment& env, const char* func_name, curb_function_callback* callback);
+void curb_unregister(curb_environment& env, const char* func_name);
 
 void curb_execute(curb_environment& env, const char* filename);
 void curb_evaluate(curb_environment& env, const char* code);
 
+bool curb_compile(curb_environment& env, curb_script& script, const char* filename);
+curb_value curb_call(curb_environment& env, curb_script& script, const char* func_name, const curb_array<curb_value>& args);
+
 curb_string curb_to_string(const curb_value* value);
 bool curb_to_bool(const curb_value* value);
 
-inline bool curb_set_bool(curb_value* value,  bool data);
-inline bool curb_set_int(curb_value* value,   int data);
-inline bool curb_set_float(curb_value* value, float data);
-
-inline bool curb_add(curb_value* result, curb_value* lhs, curb_value* rhs);
-inline bool curb_sub(curb_value* result, curb_value* lhs, curb_value* rhs);
-inline bool curb_mul(curb_value* result, curb_value* lhs, curb_value* rhs);
-inline bool curb_div(curb_value* result, curb_value* lhs, curb_value* rhs);
-inline bool curb_pow(curb_value* result, curb_value* lhs, curb_value* rhs);
-inline bool curb_mod(curb_value* result, curb_value* lhs, curb_value* rhs);
-inline bool curb_lt(curb_value* result, curb_value* lhs, curb_value* rhs);
-inline bool curb_lte(curb_value* result, curb_value* lhs, curb_value* rhs);
-inline bool curb_gt(curb_value* result, curb_value* lhs, curb_value* rhs);
-inline bool curb_gte(curb_value* result, curb_value* lhs, curb_value* rhs);
-inline bool curb_eq(curb_value* result, curb_value* lhs, curb_value* rhs);
-inline bool curb_neq(curb_value* result, curb_value* lhs, curb_value* rhs);
-inline bool curb_approxeq(curb_value* result, curb_value* lhs, curb_value* rhs);
+curb_value curb_bool(bool data);
+curb_value curb_int(int data);
+curb_value curb_float(float data);
 
 #endif //__CURB_HEADER__
 
@@ -175,7 +185,6 @@ inline bool curb_approxeq(curb_value* result, curb_value* lhs, curb_value* rhs);
 #include <memory>
 
 #define CURB_DEBUG 1
-#define CURB_VM_DEBUG_TOP 0
 
 #ifndef CURB_VM_APPROX_THRESHOLD
     #define CURB_VM_APPROX_THRESHOLD 0.0000001
@@ -240,11 +249,11 @@ struct curb_token_detail
 };
 
 #define CURB_TOKEN_LIST                                \
-    /* State */                                       \
+    /* State */                                        \
     CURB_TOKEN(NONE,           0, 0, 0, nullptr)       \
-    CURB_TOKEN(ERR,	          0, 0, 0, nullptr)       \
+    CURB_TOKEN(ERR,	          0, 0, 0, nullptr)        \
     CURB_TOKEN(END,            0, 0, 0, nullptr)       \
-    /* Symbols */			                          \
+    /* Symbols */			                           \
     CURB_TOKEN(DOT,            0, 0, 0, nullptr)       \
     CURB_TOKEN(COMMA,          0, 0, 0, nullptr)       \
     CURB_TOKEN(COLON,          0, 0, 0, nullptr)       \
@@ -255,7 +264,7 @@ struct curb_token_detail
     CURB_TOKEN(RBRACKET,       0, 0, 0, nullptr)       \
     CURB_TOKEN(LBRACE,         0, 0, 0, nullptr)       \
     CURB_TOKEN(RBRACE,         0, 0, 0, nullptr)       \
-    /* Operators - Arithmetic */                      \
+    /* Operators - Arithmetic */                       \
     CURB_TOKEN(AND,            1, 2, 0, nullptr)       \
     CURB_TOKEN(OR,             1, 2, 0, nullptr)       \
     CURB_TOKEN(ADD,            2, 2, 0, nullptr)       \
@@ -270,7 +279,7 @@ struct curb_token_detail
     CURB_TOKEN(POW_EQ,         1, 2, 0, nullptr)       \
     CURB_TOKEN(MOD,            3, 2, 0, nullptr)       \
     CURB_TOKEN(MOD_EQ,         1, 2, 0, nullptr)       \
-    /* Operators - Boolean */                         \
+    /* Operators - Boolean */                          \
     CURB_TOKEN(EQ,             1, 2, 0, nullptr)       \
     CURB_TOKEN(LT,             2, 2, 0, nullptr)       \
     CURB_TOKEN(GT,             2, 2, 0, nullptr)       \
@@ -279,21 +288,22 @@ struct curb_token_detail
     CURB_TOKEN(NOT,            3, 1, 0, nullptr)       \
     CURB_TOKEN(NOT_EQ,         2, 2, 0, nullptr)       \
     CURB_TOKEN(APPROX_EQ,      1, 2, 0, nullptr)       \
-    /* Literals */                                    \
+    /* Literals */                                     \
     CURB_TOKEN(DECIMAL,        0, 0, 1, nullptr)       \
     CURB_TOKEN(HEXIDECIMAL,    0, 0, 1, nullptr)       \
     CURB_TOKEN(BINARY,         0, 0, 1, nullptr)       \
     CURB_TOKEN(FLOAT,          0, 0, 1, nullptr)       \
     CURB_TOKEN(STRING,         0, 0, 1, nullptr)       \
-    /* Misc */                                        \
+    /* Misc */                                         \
     CURB_TOKEN(NAME,           0, 0, 1, nullptr)       \
     CURB_TOKEN(ASSIGN,         0, 0, 0, nullptr)       \
-    /* Keywords */                                    \
+    /* Keywords */                                     \
     CURB_TOKEN(IF,             0, 0, 0, "if")          \
     CURB_TOKEN(ELSE,           0, 0, 0, "else")        \
     CURB_TOKEN(IN,             0, 0, 0, "in")          \
     CURB_TOKEN(FOR,            0, 0, 0, "for")         \
     CURB_TOKEN(WHILE,          0, 0, 0, "while")       \
+    CURB_TOKEN(VAR,            0, 0, 0, "var")         \
     CURB_TOKEN(FUNC,           0, 0, 0, "func")        \
     CURB_TOKEN(RETURN,         0, 0, 0, "return")      \
     CURB_TOKEN(TRUE,           0, 0, 0, "true")        \
@@ -905,7 +915,8 @@ enum curb_ast_id : uint8_t
     CURB_AST_ROOT,
     CURB_AST_BLOCK, 
     CURB_AST_STMT_EXPR,
-    CURB_AST_STMT_ASSIGN, 
+    CURB_AST_STMT_VAR,
+    CURB_AST_STMT_ASSIGN,
     CURB_AST_STMT_IF,
     CURB_AST_STMT_IF_ELSE,
     CURB_AST_STMT_WHILE,
@@ -1143,6 +1154,58 @@ curb_ast* curb_parse_stmt_expr(curb_environment& env, curb_lexer& lexer)
     curb_ast* stmt_expr = curb_ast_new(CURB_AST_STMT_EXPR);
     stmt_expr->children.push_back(expr);
     return stmt_expr;
+}
+
+curb_ast* curb_parse_stmt_var(curb_environment& env, curb_lexer& lexer)
+{
+    if (lexer.curr.id != CURB_TOKEN_VAR)
+        return nullptr;
+
+    curb_lexer_move(env, lexer); // eat VAR
+
+    curb_token name_token = lexer.curr;
+    if (name_token.id != CURB_TOKEN_NAME)
+    {
+        CURB_PARSE_ERROR(env, lexer, "Variable assignment expected name");
+        return nullptr;
+    }
+    curb_lexer_move(env, lexer); // eat NAME
+
+    if (lexer.curr.id == CURB_TOKEN_SEMICOLON)
+    {
+        curb_lexer_move(env, lexer); // eat SEMICOLON
+
+        curb_ast* stmt_assign = curb_ast_new(CURB_AST_STMT_VAR, name_token);
+        return stmt_assign;
+    }
+
+    if (lexer.curr.id != CURB_TOKEN_ASSIGN)
+    {
+        CURB_PARSE_ERROR(env, lexer, "Variable assignment expected \"=\" or ;");
+        return nullptr;
+    }
+
+    curb_lexer_move(env, lexer); // eat ASSIGN
+
+    curb_ast* expr = curb_parse_expr(env, lexer);
+    if (expr == nullptr)
+    {
+        CURB_PARSE_ERROR(env, lexer, "Variable assignment expected expression after \"=\"");
+        return nullptr;
+    }
+
+    if (lexer.curr.id != CURB_TOKEN_SEMICOLON)
+    {
+        curb_ast_delete(expr);
+        CURB_PARSE_ERROR(env, lexer, "Variable assignment missing semicolon at end of expression");
+        return nullptr;
+    }
+
+    curb_lexer_move(env, lexer); // eat SEMICOLON
+
+    curb_ast* stmt_assign = curb_ast_new(CURB_AST_STMT_VAR, name_token);
+    stmt_assign->children.push_back(expr);
+    return stmt_assign;
 }
 
 curb_ast* curb_parse_stmt_assign(curb_environment& env, curb_lexer& lexer)
@@ -1396,6 +1459,9 @@ curb_ast* curb_parse_stmt(curb_environment& env, curb_lexer& lexer)
     case CURB_TOKEN_WHILE:
         stmt = curb_parse_stmt_while(env, lexer);
         break;
+    case CURB_TOKEN_VAR:
+        stmt = curb_parse_stmt_var(env, lexer);
+        break;
     case CURB_TOKEN_FUNC:
         stmt = curb_parse_stmt_func(env, lexer);
         break;
@@ -1443,19 +1509,15 @@ curb_ast* curb_parse_block(curb_environment& env, curb_lexer& lexer)
 
 curb_ast* curb_parse_root(curb_environment& env, curb_lexer& lexer)
 {
-    curb_ast* block = curb_ast_new(CURB_AST_BLOCK);
+    curb_ast* root = curb_ast_new(CURB_AST_ROOT);
     while (curb_ast* stmt = curb_parse_stmt(env, lexer))
-        block->children.push_back(stmt);
+        root->children.push_back(stmt);
 
-    if (block->children.size() == 0)
+    if (root->children.size() == 0)
     {
-        curb_ast_delete(block);
+        curb_ast_delete(root);
         return nullptr;
     }
-
-    curb_ast* root = new curb_ast();
-    root->id = CURB_AST_ROOT;
-    root->children.push_back(block);
     return root;
 }
 
@@ -1591,42 +1653,24 @@ struct curb_ir_operation
 #endif //CURB_DEBUG
 };
 
-enum curb_ir_symbol_type
-{
-    CURB_IR_SYM_NONE,
-    CURB_IR_SYM_VAR,
-    CURB_IR_SYM_FUNC,
-};
-
-struct curb_ir_symbol
-{
-    curb_ir_symbol_type type;
-    // Functions - this is the bytecode address.
-    // Variables - this is the local frames stack offset.
-    int offset; 
-};
-
 struct curb_ir_block
 {
-    curb_map<curb_string, curb_ir_symbol> symtable;
+    curb_symtable symtable;
     size_t stack_offset; // used to track local variable memory on stack
 };
 
 // All the blocks within a compilation/translation unit (i.e. file, code literal)
-struct curb_ir_module
-{
-    curb_array<curb_ir_operation> operations;
-};
-
 struct curb_ir
 {		
-    curb_ir_module module;
-    curb_array<curb_ir_block> block_stack;
-    int label_count = 0;
+    curb_array<curb_ir_operation> operations;
     size_t bytecode_offset = 0;
+    
+    curb_array<curb_ir_block> block_stack;
+
+    int label_count = 0;
 };
 
-inline void curb_ir_push_block(curb_ir& ir, curb_string label)
+inline void curb_ir_push_block(curb_ir& ir)
 {
     curb_ir_block block;
     block.stack_offset = 0;
@@ -1642,7 +1686,7 @@ inline void curb_ir_pop_block(curb_ir& ir)
 inline curb_ir_block& curb_ir_top_block(curb_ir& ir)
 {
     assert(ir.block_stack.size() > 0);
-    return ir.block_stack.back();
+    return ir.block_stack.at(ir.block_stack.size() - 1);
 }
 
 inline size_t curb_ir_operand_size(const curb_ir_operand& operand)
@@ -1683,8 +1727,8 @@ inline size_t curb_ir_add_operation(curb_ir& ir, curb_opcode opcode, const curb_
 #endif //CURB_DEBUG
     ir.bytecode_offset += curb_ir_operation_size(operation);
 
-    ir.module.operations.push_back(std::move(operation));
-    return ir.module.operations.size()-1;
+    ir.operations.push_back(std::move(operation));
+    return ir.operations.size()-1;
 }
 
 inline size_t curb_ir_add_operation(curb_ir& ir, curb_opcode opcode, const curb_ir_operand& operand)
@@ -1695,10 +1739,10 @@ inline size_t curb_ir_add_operation(curb_ir& ir, curb_opcode opcode, const curb_
 #if CURB_DEBUG
     operation.bytecode_offset = ir.bytecode_offset;
 #endif //CURB_DEBUG
-    ir.bytecode_offset += curb_ir_operation_size(operation);
 
-    ir.module.operations.push_back(std::move(operation));
-    return ir.module.operations.size()-1;
+    ir.bytecode_offset += curb_ir_operation_size(operation);
+    ir.operations.push_back(std::move(operation));
+    return ir.operations.size()-1;
 }
 
 inline size_t curb_ir_add_operation(curb_ir& ir, curb_opcode opcode)
@@ -1709,9 +1753,8 @@ inline size_t curb_ir_add_operation(curb_ir& ir, curb_opcode opcode)
 
 inline curb_ir_operation& curb_ir_get_operation(curb_ir& ir, size_t operation_index)
 {
-    assert(ir.block_stack.size());
-    assert(operation_index < ir.module.operations.size());
-    return ir.module.operations.at(operation_index);
+    assert(operation_index < ir.operations.size());
+    return ir.operations.at(operation_index);
 }
 
 inline curb_ir_operand curb_ir_operand_from_bool(bool data)
@@ -1751,14 +1794,14 @@ inline bool curb_ir_set_var(curb_ir& ir, const curb_string& name)
     curb_ir_block& block = curb_ir_top_block(ir);
     const int offset = block.stack_offset++;
 
-    if (block.symtable.count(name) != 0)
+    if (block.symtable.symbols.count(name) != 0)
         return false;
 
-    curb_ir_symbol sym;
+    curb_symbol sym;
     sym.type = CURB_IR_SYM_VAR;
     sym.offset = offset;
 
-    block.symtable[name] = sym;
+    block.symtable.symbols[name] = sym;
     return true;
 }
 
@@ -1767,30 +1810,277 @@ inline bool curb_ir_set_func(curb_ir& ir, const curb_string& name)
     curb_ir_block& block = curb_ir_top_block(ir);
     int offset = ir.bytecode_offset;
 
-    if (block.symtable.count(name) != 0)
+    if (block.symtable.symbols.count(name) != 0)
         return false;
 
-    curb_ir_symbol sym;
+    curb_symbol sym;
     sym.type = CURB_IR_SYM_FUNC;
     sym.offset = offset;
 
-    block.symtable[name] = sym;
+    block.symtable.symbols[name] = sym;
 }
 
-inline curb_ir_symbol curb_ir_get_symbol(curb_ir& ir, const curb_string& name)
+inline curb_symbol curb_ir_get_symbol(curb_ir& ir, const curb_string& name)
 {
     for (int i = ir.block_stack.size() - 1; i >= 0; --i)
     {
         curb_ir_block& block = ir.block_stack.at(i);
-        if (block.symtable.count(name))
-            return block.symtable[name];
+        if (block.symtable.symbols.count(name))
+            return block.symtable.symbols[name];
     }
 
-    curb_ir_symbol sym;
+    curb_symbol sym;
     sym.offset = CURB_OPCODE_INVALID;
     sym.type = CURB_IR_SYM_NONE;
     return sym;
 }
+
+inline curb_symbol curb_ir_get_symbol_local(curb_ir& ir, const curb_string& name)
+{
+    assert(ir.block_stack.size() > 0);
+
+    curb_ir_block& block = ir.block_stack.at(ir.block_stack.size() - 1);
+    if (block.symtable.symbols.count(name))
+        return block.symtable.symbols[name];
+
+    curb_symbol sym;
+    sym.offset = CURB_OPCODE_INVALID;
+    sym.type = CURB_IR_SYM_NONE;
+    return sym;
+}
+// --------------------------------------- Value Operations -------------------------------------------------------//
+const char* curb_type_labels[] =
+{
+    "bool", "int", "float", "string", "object", "none"
+};
+
+static_assert(sizeof(curb_type_labels) / sizeof(curb_type_labels[0]) == (int)CURB_NONE + 1, "Type labels must be up to date with enum");
+
+inline bool curb_set_bool(curb_value* value, bool data)
+{
+    if (value == nullptr)
+        return false;
+    value->type = CURB_BOOL;
+    value->b = data;
+    return true;
+}
+
+inline bool curb_set_int(curb_value* value, int data)
+{
+    if (value == nullptr)
+        return false;
+    value->type = CURB_INT;
+    value->i = data;
+    return true;
+}
+
+inline bool curb_set_float(curb_value* value, float data)
+{
+    if (value == nullptr)
+        return false;
+    value->type = CURB_FLOAT;
+    value->f = data;
+    return true;
+}
+
+#define CURB_DEFINE_BINOP(result, lhs, rhs,                      \
+    int_int_case,                                               \
+    int_float_case,                                             \
+    float_int_case,                                             \
+    float_float_case,                                           \
+    bool_bool_case                                              \
+)                                                               \
+{                                                               \
+    if(result == nullptr || lhs == nullptr || rhs == nullptr )  \
+        return false;                                           \
+    switch(lhs->type)                                           \
+    {                                                           \
+        case CURB_INT:                                           \
+            switch(rhs->type)                                   \
+            {                                                   \
+                case CURB_INT:   int_int_case;                   \
+                case CURB_FLOAT: int_float_case;                 \
+                default: break;                                 \
+            }                                                   \
+            break;                                              \
+        case CURB_FLOAT:                                         \
+           switch(rhs->type)                                    \
+            {                                                   \
+                case CURB_INT:   float_int_case;                 \
+                case CURB_FLOAT: float_float_case;               \
+                default: break;                                 \
+            }                                                   \
+            break;                                              \
+        case CURB_BOOL:                                          \
+            switch (rhs->type)                                  \
+            {                                                   \
+                case CURB_BOOL: bool_bool_case;                  \
+                default: break;                                 \
+            }                                                   \
+            break;                                              \
+        default: break;                                         \
+    }                                                           \
+}
+
+inline bool curb_add(curb_value* result, curb_value* lhs, curb_value* rhs)
+{
+    CURB_DEFINE_BINOP(result, lhs, rhs,
+        return curb_set_int(result, lhs->i + rhs->i),
+        return curb_set_float(result, lhs->i + rhs->f),
+        return curb_set_float(result, lhs->f + rhs->i),
+        return curb_set_float(result, lhs->f + rhs->f),
+        return false
+    )
+        return false;
+}
+
+inline bool curb_sub(curb_value* result, curb_value* lhs, curb_value* rhs)
+{
+    CURB_DEFINE_BINOP(result, lhs, rhs,
+        return curb_set_int(result, lhs->i - rhs->i),
+        return curb_set_float(result, lhs->i - rhs->f),
+        return curb_set_float(result, lhs->f - rhs->i),
+        return curb_set_float(result, lhs->f - rhs->f),
+        return false
+    )
+        return false;
+}
+
+inline bool curb_mul(curb_value* result, curb_value* lhs, curb_value* rhs)
+{
+    CURB_DEFINE_BINOP(result, lhs, rhs,
+        return curb_set_int(result, lhs->i * rhs->i),
+        return curb_set_float(result, lhs->i * rhs->f),
+        return curb_set_float(result, lhs->f * rhs->i),
+        return curb_set_float(result, lhs->f * rhs->f),
+        return false
+    )
+        return false;
+}
+
+inline bool curb_div(curb_value* result, curb_value* lhs, curb_value* rhs)
+{
+    CURB_DEFINE_BINOP(result, lhs, rhs,
+        return curb_set_float(result, (float)lhs->i / rhs->i),
+        return curb_set_float(result, lhs->i / rhs->f),
+        return curb_set_float(result, lhs->f / rhs->i),
+        return curb_set_float(result, lhs->f / rhs->f),
+        return false
+    )
+        return false;
+}
+
+inline bool curb_pow(curb_value* result, curb_value* lhs, curb_value* rhs)
+{
+    CURB_DEFINE_BINOP(result, lhs, rhs,
+        return curb_set_int(result, (int)powf((float)lhs->i, (float)rhs->i)),
+        return curb_set_float(result, powf((float)lhs->i, rhs->f)),
+        return curb_set_float(result, powf(lhs->f, (float)rhs->i)),
+        return curb_set_float(result, powf(lhs->f, rhs->f)),
+        return false
+    )
+        return false;
+}
+
+inline bool curb_mod(curb_value* result, curb_value* lhs, curb_value* rhs)
+{
+    CURB_DEFINE_BINOP(result, lhs, rhs,
+        return curb_set_int(result, lhs->i % rhs->i),
+        return curb_set_float(result, (float)fmod(lhs->i, rhs->f)),
+        return curb_set_float(result, (float)fmod(lhs->f, rhs->i)),
+        return curb_set_float(result, (float)fmod(lhs->f, rhs->f)),
+        return false
+    )
+        return false;
+}
+
+inline bool curb_lt(curb_value* result, curb_value* lhs, curb_value* rhs)
+{
+    CURB_DEFINE_BINOP(result, lhs, rhs,
+        return curb_set_bool(result, lhs->i < rhs->i),
+        return curb_set_bool(result, lhs->i < rhs->f),
+        return curb_set_bool(result, lhs->f < rhs->i),
+        return curb_set_bool(result, lhs->f < rhs->f),
+        return false
+    )
+        return false;
+}
+
+inline bool curb_lte(curb_value* result, curb_value* lhs, curb_value* rhs)
+{
+    CURB_DEFINE_BINOP(result, lhs, rhs,
+        return curb_set_bool(result, lhs->i <= rhs->i),
+        return curb_set_bool(result, lhs->i <= rhs->f),
+        return curb_set_bool(result, lhs->f <= rhs->i),
+        return curb_set_bool(result, lhs->f <= rhs->f),
+        return false
+    )
+        return false;
+}
+
+inline bool curb_gt(curb_value* result, curb_value* lhs, curb_value* rhs)
+{
+    CURB_DEFINE_BINOP(result, lhs, rhs,
+        return curb_set_bool(result, lhs->i > rhs->i),
+        return curb_set_bool(result, lhs->i > rhs->f),
+        return curb_set_bool(result, lhs->f > rhs->i),
+        return curb_set_bool(result, lhs->f > rhs->f),
+        return false
+    )
+        return false;
+}
+
+inline bool curb_gte(curb_value* result, curb_value* lhs, curb_value* rhs)
+{
+    CURB_DEFINE_BINOP(result, lhs, rhs,
+        return curb_set_bool(result, lhs->i >= rhs->i),
+        return curb_set_bool(result, lhs->i >= rhs->f),
+        return curb_set_bool(result, lhs->f >= rhs->i),
+        return curb_set_bool(result, lhs->f >= rhs->f),
+        return false
+    )
+        return false;
+}
+
+inline bool curb_eq(curb_value* result, curb_value* lhs, curb_value* rhs)
+{
+    // TODO: add a special case for object equivalence (per field)
+    CURB_DEFINE_BINOP(result, lhs, rhs,
+        return curb_set_bool(result, lhs->i == rhs->i),
+        return curb_set_bool(result, lhs->i == rhs->f),
+        return curb_set_bool(result, lhs->f == rhs->i),
+        return curb_set_bool(result, lhs->f == rhs->f),
+        return curb_set_bool(result, lhs->b == rhs->b)
+    )
+        return false;
+}
+
+inline bool curb_neq(curb_value* result, curb_value* lhs, curb_value* rhs)
+{
+    // TODO: add a special case for object equivalence (per field)
+    CURB_DEFINE_BINOP(result, lhs, rhs,
+        return curb_set_bool(result, lhs->i != rhs->i),
+        return curb_set_bool(result, lhs->i != rhs->f),
+        return curb_set_bool(result, lhs->f != rhs->i),
+        return curb_set_bool(result, lhs->f != rhs->f),
+        return curb_set_bool(result, lhs->b != rhs->b)
+    )
+        return false;
+}
+
+inline bool curb_approxeq(curb_value* result, curb_value* lhs, curb_value* rhs)
+{
+    CURB_DEFINE_BINOP(result, lhs, rhs,
+        return curb_set_bool(result, abs(lhs->i - rhs->i) < CURB_VM_APPROX_THRESHOLD),
+        return curb_set_bool(result, abs(lhs->i - rhs->f) < CURB_VM_APPROX_THRESHOLD),
+        return curb_set_bool(result, abs(lhs->f - rhs->i) < CURB_VM_APPROX_THRESHOLD),
+        return curb_set_bool(result, abs(lhs->f - rhs->f) < CURB_VM_APPROX_THRESHOLD),
+        return curb_set_bool(result, lhs->b == rhs->b)
+    )
+        return false;
+}
+
+#undef CURB_DEFINE_BINOP
 
 // -------------------------------------- Virtual Machine / Bytecode ----------------------------------------------// 
 struct curb_vm_frame
@@ -1811,6 +2101,8 @@ struct curb_vm
 
     // Address to return to when Ret is called. Pops all local from stack
     curb_array<curb_vm_frame> frame_stack;
+
+    // TODO: debug to map from addr to func name / variable
 };
 
 // Used to convert values to/from bytes for constant values
@@ -1881,7 +2173,7 @@ inline void curb_vm_push_frame(curb_environment& env, curb_vm& vm, int arg_count
 {
     curb_vm_frame frame;
     frame.arg_count = arg_count;
-    frame.stack_offset = vm.stack_offset;
+    frame.stack_offset = vm.stack_offset - arg_count + 1;
     frame.instruction = return_instruction;
     vm.frame_stack.push_back(frame);
 }
@@ -1891,14 +2183,8 @@ inline void curb_vm_pop_frame(curb_environment& env, curb_vm& vm)
     curb_vm_frame frame = vm.frame_stack.back();
     vm.frame_stack.pop_back();
 
-    vm.stack_offset = frame.stack_offset - frame.arg_count;
+    vm.stack_offset = frame.stack_offset - 1;
     vm.instruction = frame.instruction;
-    // TODO: other than the assignment above. pop until stack offset == frame stack offset
-    //while (vm.stack_offset > vm.frame_stack.back())
-    //{
-    //    // TODO: Free all objects in frame
-    // --vm.stack_offset;
-    //}
 }
 
 inline curb_value* curb_vm_get(curb_environment& env, curb_vm& vm, int stack_offset)
@@ -1906,17 +2192,23 @@ inline curb_value* curb_vm_get(curb_environment& env, curb_vm& vm, int stack_off
     int offset = stack_offset;
     if (vm.frame_stack.size() > 0)
     {
-        const curb_vm_frame& frame = vm.frame_stack.back();
-        if (frame.stack_offset > 0)
-            offset = frame.stack_offset - stack_offset;
+        const curb_vm_frame& frame = vm.frame_stack[vm.frame_stack.size() - 1];
+        offset = frame.stack_offset + stack_offset;
     }
 
     if (offset < 0)
     {
         if (vm.instruction)
-            CURB_VM_ERROR(env, vm, "Stack undeflow");
+            CURB_VM_ERROR(env, vm, "Stack underflow");
         return nullptr;
     }
+    else if (offset > vm.stack_offset)
+    {
+        if (vm.instruction)
+            CURB_VM_ERROR(env, vm, "Stack overflow");
+        return nullptr;
+    }
+
     return &vm.stack[offset];
 }
 
@@ -1952,25 +2244,33 @@ inline const char* curb_vm_read_bytes(curb_vm& vm)
     return vm.instruction - len;
 }
 
-void curb_vm_execute(curb_environment& env, curb_vm& vm, const curb_array<char>& bytecode)
+void curb_vm_startup(curb_environment& env, curb_vm& vm, const curb_script& script)
 {
-    const int initial_stack_index = -1;
-
-    vm.bytecode = &bytecode[0];
+    vm.bytecode = &script.bytecode[0];
     vm.instruction = vm.bytecode;
-    vm.stack_offset = initial_stack_index;
+    vm.stack_offset = -1;
 
     if (vm.bytecode == nullptr)
         return;
 
-    curb_vm_push_frame(env, vm, 0, 0);
+    curb_vm_push_frame(env, vm, 0, nullptr);
+}
 
+void curb_vm_shutdown(curb_environment& env, curb_vm& vm)
+{
+    curb_vm_pop_frame(env, vm);
+
+    // Ensure that stack has returned to beginning state
+    assert(vm.stack_offset == -1);
+}
+
+void curb_vm_execute(curb_environment& env, curb_vm& vm)
+{
     while(vm.instruction)
     {
-#if CURB_VM_DEBUG_TOP
+#if  0
         printf("[%d] %s\n", vm.instruction - vm.bytecode, curb_opcode_labels[(*vm.instruction)]);
 #endif
-
         curb_opcode opcode = (curb_opcode) (*vm.instruction);
         ++vm.instruction;
 
@@ -2029,8 +2329,7 @@ void curb_vm_execute(curb_environment& env, curb_vm& vm, const curb_array<char>&
                 if(value == nullptr) 
                     break;
                 value->type = CURB_STRING;
-                // TODO: Duplicate string ? When popping string from stack, clean up allocated string ?  
-                value->str = curb_vm_read_bytes(vm);
+                value->str = curb_vm_read_bytes(vm); // TODO: Duplicate string ? When popping string from stack, clean up allocated string ?  Otherwise, this string can not be modified
                 break;
             }
             case CURB_OPCODE_PUSH_LOCAL:
@@ -2040,7 +2339,6 @@ void curb_vm_execute(curb_environment& env, curb_vm& vm, const curb_array<char>&
                 curb_value* local = curb_vm_get(env, vm, address);
                 if (top !=  nullptr || local != nullptr)
                     *top = *local;
-
                 break;
             }
             case CURB_OPCODE_LOAD_LOCAL:
@@ -2244,7 +2542,7 @@ void curb_vm_execute(curb_environment& env, curb_vm& vm, const curb_array<char>&
                     break;
                 }
 
-                if (env.functions.count(func_name) == 0)
+                if (env.external_functions.count(func_name) == 0)
                 {
                     CURB_VM_ERROR(env, vm, "External Function Call %s not registered", func_name);
                     break;
@@ -2252,7 +2550,7 @@ void curb_vm_execute(curb_environment& env, curb_vm& vm, const curb_array<char>&
 
                 curb_value ret_value;
                 ret_value.type = CURB_NONE;
-                env.functions.at(func_name)(&ret_value, args);
+                env.external_functions.at(func_name)(&ret_value, args);
                 
                 curb_value* top = curb_vm_push(env, vm);
                 if (top)
@@ -2264,12 +2562,45 @@ void curb_vm_execute(curb_environment& env, curb_vm& vm, const curb_array<char>&
             break;
         }
     }
+}
 
+curb_value curb_vm_execute_function(curb_environment& env, curb_vm& vm, curb_script& script, const char* func_name, const curb_array<curb_value>& args)
+{
+    curb_value ret_value;
+    ret_value.type = CURB_NONE;
 
-    curb_vm_pop_frame(env, vm);
+    if (script.global_symtable.symbols.count(func_name) == 0)
+    {
+        CURB_LOG_ERROR(env, "Function name not defined %s", func_name);
+        return ret_value;
+    }
 
-    // Ensure that stack has returned to beginning state
-    assert(vm.stack_offset == initial_stack_index);
+    const curb_symbol& symbol = script.global_symtable.symbols[func_name];
+    if (symbol.type != CURB_IR_SYM_FUNC)
+    {
+        CURB_LOG_ERROR(env, "%s is not defined as a function", func_name);
+        return ret_value;
+    }
+
+    // Jump to function call
+    const size_t arg_count = args.size();
+    vm.instruction = vm.bytecode + symbol.offset;
+
+    for (size_t i = 0; i < arg_count; ++i)
+    {
+        curb_value* value = curb_vm_push(env, vm);
+        if (value)
+            *value = args[i];
+    }
+
+    curb_vm_push_frame(env, vm, arg_count, nullptr);
+    curb_vm_execute(env, vm);
+
+    curb_value* top = curb_vm_pop(env, vm);
+    if (top)
+        ret_value = *top;
+
+    return ret_value;
 }
 
 // -------------------------------------- Passes ------------------------------------------------// 
@@ -2299,21 +2630,19 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
     {
         case CURB_AST_ROOT:
         {
-            assert(children.size() == 1);  // START [0] EXIT
-            curb_ast_to_ir(context, children[0], ir);
+            curb_ir_push_block(ir); // push a global block. This will be returned
+
+            for (curb_ast* stmt : children)
+                curb_ast_to_ir(context, stmt, ir);
 
             // End block, default exit
-            curb_ir_push_block(ir, "");
             curb_ir_add_operation(ir, CURB_OPCODE_EXIT);
-            curb_ir_pop_block(ir);
             break;
         }
         case CURB_AST_BLOCK: 
         {
-            curb_ir_push_block(ir, "");
             for (curb_ast* stmt : children)
                 curb_ast_to_ir(context, stmt, ir);
-            curb_ir_pop_block(ir);
             break;
         }
         case CURB_AST_LITERAL:
@@ -2373,7 +2702,7 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
         }
         case CURB_AST_VARIABLE:
         {
-            const curb_ir_symbol symbol = curb_ir_get_symbol(ir, token.data);
+            const curb_symbol& symbol = curb_ir_get_symbol(ir, token.data);
             if (symbol.type == CURB_IR_SYM_NONE)
             {
                 context.valid = false;
@@ -2436,7 +2765,7 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
         {
             const char* func_name = token.data.c_str();
             const int arg_count = children.size();
-            const curb_ir_symbol& symbol = curb_ir_get_symbol(ir, func_name);
+            const curb_symbol& symbol = curb_ir_get_symbol(ir, func_name);
             if (symbol.type == CURB_IR_SYM_FUNC)
             {
                 for (const curb_ast* arg : children)
@@ -2455,7 +2784,7 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
                 context.valid = false;
                 CURB_LOG_ERROR(context.env, "Can not call variable %s as a function", func_name);
             }
-            else if(context.env.functions.count(func_name))
+            else if(context.env.external_functions.count(func_name))
             {
                 for (const curb_ast* arg : children)
                     curb_ast_to_ir(context, arg, ir);
@@ -2487,14 +2816,36 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
         }
         case CURB_AST_STMT_ASSIGN:
         {
-            assert(children.size() == 1); // token = [0]
-
-            if (children.size() == 1)
+            if (children.size() == 1) // token = [0]
                 curb_ast_to_ir(context, children[0], ir);
 
-            const curb_ir_symbol symbol = curb_ir_get_symbol(ir, token.data);
+            const curb_symbol symbol = curb_ir_get_symbol(ir, token.data);
             if (symbol.offset == CURB_OPCODE_INVALID)
-                curb_ir_set_var(ir, token.data);
+            {
+                context.valid = false;
+                CURB_LOG_ERROR(context.env, "Variable %s not defined", token.data.c_str());
+                break;
+            }
+
+            const curb_ir_operand& address_operand = curb_ir_operand_from_int(symbol.offset);
+            curb_ir_add_operation(ir, CURB_OPCODE_LOAD_LOCAL, address_operand);
+
+            break;
+        }
+        case CURB_AST_STMT_VAR:
+        {
+            if (children.size() == 1) // token = [0]
+                curb_ast_to_ir(context, children[0], ir);
+
+            const curb_symbol symbol = curb_ir_get_symbol_local(ir, token.data);
+            if (symbol.offset != CURB_OPCODE_INVALID)
+            {
+                context.valid = false;
+                CURB_LOG_ERROR(context.env, "Variable %s already defined", token.data.c_str());
+                break;
+            }
+            
+            curb_ir_set_var(ir, token.data);
 
             const curb_ir_operand& address_operand = curb_ir_operand_from_int(symbol.offset);
             curb_ir_add_operation(ir, CURB_OPCODE_LOAD_LOCAL, address_operand);
@@ -2514,7 +2865,10 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             const size_t end_block_jmp = curb_ir_add_operation(ir, CURB_OPCODE_JUMP_ZERO, stub_operand);
 
             // True block
+            curb_ir_push_block(ir);
             curb_ast_to_ir(context, children[1], ir);
+            curb_ir_pop_block(ir);
+
             const size_t end_block_addr = ir.bytecode_offset;
 
             // Fixup stubbed block offsets
@@ -2536,14 +2890,19 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             const size_t else_block_jmp = curb_ir_add_operation(ir, CURB_OPCODE_JUMP_ZERO, stub_operand);
 
             // True block
+            curb_ir_push_block(ir);
             curb_ast_to_ir(context, children[1], ir);
+            curb_ir_pop_block(ir);
+
                 
             //Jump to end after true
             const size_t end_block_jmp = curb_ir_add_operation(ir, CURB_OPCODE_JUMP, stub_operand);
             const size_t else_block_addr = ir.bytecode_offset;
 
             // Else block
+            curb_ir_push_block(ir);
             curb_ast_to_ir(context, children[2], ir);
+            curb_ir_pop_block(ir);
 
             // Tag end address
             const size_t end_block_addr = ir.bytecode_offset;
@@ -2572,7 +2931,9 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             const size_t end_block_jmp = curb_ir_add_operation(ir, CURB_OPCODE_JUMP_ZERO, stub_operand);
 
             // Loop block
+            curb_ir_push_block(ir);
             curb_ast_to_ir(context, children[1], ir);
+            curb_ir_pop_block(ir);
 
             // Jump back to beginning, expr evaluation 
             curb_ir_add_operation(ir, CURB_OPCODE_JUMP, begin_block_operand);
@@ -2620,7 +2981,6 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             const size_t end_block_jmp = curb_ir_add_operation(ir, CURB_OPCODE_JUMP, stub_operand);
 
             const char* func_name = token.data.c_str();
-
             if (!curb_ir_set_func(ir, func_name))
             {
                 context.valid = false;
@@ -2628,13 +2988,13 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
                 break;
             }
 
-            curb_ir_push_block(ir, func_name);
+            curb_ir_push_block(ir);
 
             curb_ast_to_ir(context, children[0], ir);
             curb_ast_to_ir(context, children[1], ir);
             
             // Ensure there is a return
-            if (ir.module.operations.at(ir.module.operations.size() - 1).opcode != CURB_OPCODE_RETURN)
+            if (ir.operations.at(ir.operations.size() - 1).opcode != CURB_OPCODE_RETURN)
             {
                 curb_ir_add_operation(ir, CURB_OPCODE_PUSH_NONE);
                 curb_ir_add_operation(ir, CURB_OPCODE_RETURN);
@@ -2662,7 +3022,7 @@ void curb_ir_to_bytecode(curb_ir& ir, curb_array<char>& bytecode)
 
     char* instruction = &bytecode[0];
 
-    for(const curb_ir_operation& operation : ir.module.operations)
+    for(const curb_ir_operation& operation : ir.operations)
     {
         *instruction = (char)operation.opcode;
         ++instruction;    
@@ -2692,8 +3052,11 @@ void curb_ir_to_bytecode(curb_ir& ir, curb_array<char>& bytecode)
 
 // -------------------------------------- API ------ ---------------------------------------// 
 
-bool curb_compile_ast(curb_environment& env, curb_ast* root, curb_array<char>& bytecode)
+bool curb_compile_script(curb_environment& env, curb_ast* root, curb_script& script)
 {
+    script.bytecode.clear();
+    script.global_symtable.symbols.clear();
+
     bool success = curb_pass_semantic_check(root);
     if (!success)
         return false;
@@ -2706,20 +3069,26 @@ bool curb_compile_ast(curb_environment& env, curb_ast* root, curb_array<char>& b
     curb_ir ir;
     curb_ast_to_ir(context, root, ir);
 
+    if (!context.valid)
+        return false;
+
+    assert(ir.block_stack.size() == 1);
+    script.global_symtable = ir.block_stack[0].symtable;
+
     // Load bytecode into VM
-    curb_ir_to_bytecode(ir, bytecode);
+    curb_ir_to_bytecode(ir, script.bytecode);
 
     return context.valid;
 }
 
-void curb_register(curb_environment& env, const char* function_id, curb_function_callback *callback)
+void curb_register(curb_environment& env, const char* func_name, curb_function_callback *callback)
 {
-    env.functions[function_id] = callback;
+    env.external_functions[func_name] = callback;
 }
 
-void curb_unregister(curb_environment& env, const char* function_id)
+void curb_unregister(curb_environment& env, const char* func_name)
 {
-    env.functions.erase(function_id);
+    env.external_functions.erase(func_name);
 }
 
 void curb_execute(curb_environment& env, const char* filename)
@@ -2729,17 +3098,17 @@ void curb_execute(curb_environment& env, const char* filename)
     if (root == nullptr)
         return;
 
-    // Load bytecode into VM
-    curb_array<char> bytecode;
-    curb_compile_ast(env, root, bytecode);
-
-    // Cleanup 
+    curb_script script;
+    const bool success = curb_compile_script(env, root, script);
     curb_ast_delete(root);
 
-    curb_vm vm;
-    curb_vm_execute(env, vm, bytecode);
+    if (!success)
+        return;
 
-    // TODO: should this return top of stack to user?
+    curb_vm vm;
+    curb_vm_startup(env, vm, script);
+    curb_vm_execute(env, vm);
+    curb_vm_shutdown(env, vm);
 }
 
 void curb_evaluate(curb_environment& env, const char* code)
@@ -2750,298 +3119,116 @@ void curb_evaluate(curb_environment& env, const char* code)
         return;
 
     // Load bytecode into VM
-    curb_array<char> bytecode;
-    curb_compile_ast(env, root, bytecode);
+    curb_script script;
+    const bool success = curb_compile_script(env, root, script);
 
     // Cleanup 
     curb_ast_delete(root);
 
+    if (!success)
+        return;
+
     curb_vm vm;
-    curb_vm_execute(env, vm, bytecode);
-
-    // TODO: should this return top of stack to user?
+    curb_vm_startup(env, vm, script);
+    curb_vm_execute(env, vm);
+    curb_vm_shutdown(env, vm);
 }
 
-// --------------------------------------------- Values ---------------------------------------------------------// 
-
-inline bool curb_set_bool(curb_value* value, bool data)
+bool curb_compile(curb_environment& env, curb_script& script, const char* filename)
 {
-    if (value == nullptr)
+    // Parse file
+    curb_ast* root = curb_parse_file(env, filename);
+    if (root == nullptr)
         return false;
-    value->type = CURB_BOOL;
-    value->b = data;
-    return true;
+
+    const bool success = curb_compile_script(env, root, script);
+    curb_ast_delete(root);
+
+    return success;
 }
 
-inline bool curb_set_int(curb_value* value, int data)
+curb_value curb_call(curb_environment& env, curb_script& script, const char* func_name, const curb_array<curb_value>& args)
 {
-    if (value == nullptr)
-        return false;
-    value->type = CURB_INT;
-    value->i = data;
-    return true;
+    curb_vm vm;
+    curb_vm_startup(env, vm, script);
+    const curb_value& ret_value = curb_vm_execute_function(env, vm, script, func_name, args);
+    curb_vm_shutdown(env, vm);
+    return ret_value;
 }
 
-inline bool curb_set_float(curb_value* value, float data)
+curb_value curb_bool(bool data)
 {
-    if (value == nullptr)
-        return false;
-    value->type = CURB_FLOAT;
-    value->f = data;
-    return true;
+    curb_value value;
+    curb_set_bool(&value, data);
+    return value;
+}
+
+curb_value curb_int(int data)
+{
+    curb_value value;
+    curb_set_int(&value, data);
+    return value;
+}
+
+curb_value curb_float(float data)
+{
+    curb_value value;
+    curb_set_float(&value, data);
+    return value;
 }
 
 curb_string curb_to_string(const curb_value* value)
 {
-    if(value == nullptr)
+    if (value == nullptr)
         return "null";
 
     char out[1024];
     int len = 0;
-    switch(value->type)
+    switch (value->type)
     {
-        case CURB_NONE:
-            len = snprintf(out, sizeof(out), "%s", curb_type_labels[value->type]);
-            break;
-        case CURB_BOOL:
-            len = snprintf(out, sizeof(out), "%s:%s", curb_type_labels[value->type], value->b ? "true" : "false");
-            break;
-        case CURB_INT:
-            len = snprintf(out, sizeof(out), "%s:%d", curb_type_labels[value->type], value->i);
-            break;
-        case CURB_FLOAT:
-            len = snprintf(out, sizeof(out), "%s:%f", curb_type_labels[value->type], value->f);
-            break;
-        case CURB_STRING:
-            len = snprintf(out, sizeof(out), "%s:%s", curb_type_labels[value->type], value->str);
-            break;
-        case CURB_OBJECT:
-            len = snprintf(out, sizeof(out), "%s", curb_type_labels[value->type]);
-            break;
+    case CURB_NONE:
+        len = snprintf(out, sizeof(out), "%s", curb_type_labels[value->type]);
+        break;
+    case CURB_BOOL:
+        len = snprintf(out, sizeof(out), "%s", value->b ? "true" : "false");
+        break;
+    case CURB_INT:
+        len = snprintf(out, sizeof(out), "%d", value->i);
+        break;
+    case CURB_FLOAT:
+        len = snprintf(out, sizeof(out), "%f", value->f);
+        break;
+    case CURB_STRING:
+        len = snprintf(out, sizeof(out), "\"%s\"", value->str);
+        break;
+    case CURB_OBJECT:
+        len = snprintf(out, sizeof(out), "%s", curb_type_labels[value->type]);
+        break;
     }
     return curb_string(out, len);
 }
 
 bool curb_to_bool(const curb_value* value)
 {
-    if(value == nullptr)
+    if (value == nullptr)
         return false;
 
-    switch(value->type)
+    switch (value->type)
     {
-        case CURB_NONE:
-            return false;
-        case CURB_BOOL:
-            return value->b;
-        case CURB_INT:
-            return value->i != 0;
-        case CURB_FLOAT:
-            return value->f != 0.0f;
-        case CURB_STRING:
-            return value->str != nullptr;
-        case CURB_OBJECT:
-            return value->obj != nullptr;
+    case CURB_NONE:
+        return false;
+    case CURB_BOOL:
+        return value->b;
+    case CURB_INT:
+        return value->i != 0;
+    case CURB_FLOAT:
+        return value->f != 0.0f;
+    case CURB_STRING:
+        return value->str != nullptr;
+    case CURB_OBJECT:
+        return value->obj != nullptr;
     }
     return false;
 }
-
-#define CURB_DEFINE_BINOP(result, lhs, rhs,                      \
-    int_int_case,                                               \
-    int_float_case,                                             \
-    float_int_case,                                             \
-    float_float_case,                                           \
-    bool_bool_case                                              \
-)                                                               \
-{                                                               \
-    if(result == nullptr || lhs == nullptr || rhs == nullptr )  \
-        return false;                                           \
-    switch(lhs->type)                                           \
-    {                                                           \
-        case CURB_INT:                                           \
-            switch(rhs->type)                                   \
-            {                                                   \
-                case CURB_INT:   int_int_case;                   \
-                case CURB_FLOAT: int_float_case;                 \
-                default: break;                                 \
-            }                                                   \
-            break;                                              \
-        case CURB_FLOAT:                                         \
-           switch(rhs->type)                                    \
-            {                                                   \
-                case CURB_INT:   float_int_case;                 \
-                case CURB_FLOAT: float_float_case;               \
-                default: break;                                 \
-            }                                                   \
-            break;                                              \
-        case CURB_BOOL:                                          \
-            switch (rhs->type)                                  \
-            {                                                   \
-                case CURB_BOOL: bool_bool_case;                  \
-                default: break;                                 \
-            }                                                   \
-            break;                                              \
-        default: break;                                         \
-    }                                                           \
-}
-
-inline bool curb_add(curb_value* result, curb_value* lhs, curb_value* rhs)
-{
-    CURB_DEFINE_BINOP(result, lhs, rhs,
-        return curb_set_int  (result, lhs->i + rhs->i),
-        return curb_set_float(result, lhs->i + rhs->f),
-        return curb_set_float(result, lhs->f + rhs->i),
-        return curb_set_float(result, lhs->f + rhs->f),
-        return false
-    )
-   return false;
-}
-
-inline bool curb_sub(curb_value* result, curb_value* lhs, curb_value* rhs)
-{
-    CURB_DEFINE_BINOP(result, lhs, rhs,
-        return curb_set_int  (result, lhs->i - rhs->i),
-        return curb_set_float(result, lhs->i - rhs->f),
-        return curb_set_float(result, lhs->f - rhs->i),
-        return curb_set_float(result, lhs->f - rhs->f),
-        return false
-    )
-    return false;
-}
-
-inline bool curb_mul(curb_value* result, curb_value* lhs, curb_value* rhs)
-{
-    CURB_DEFINE_BINOP(result, lhs, rhs,
-        return curb_set_int  (result, lhs->i * rhs->i),
-        return curb_set_float(result, lhs->i * rhs->f),
-        return curb_set_float(result, lhs->f * rhs->i),
-        return curb_set_float(result, lhs->f * rhs->f),
-        return false
-    )
-    return false;
-}
-
-inline bool curb_div(curb_value* result, curb_value* lhs, curb_value* rhs)
-{
-    CURB_DEFINE_BINOP(result, lhs, rhs,
-        return curb_set_float(result, (float)lhs->i / rhs->i),
-        return curb_set_float(result,        lhs->i / rhs->f),
-        return curb_set_float(result,        lhs->f / rhs->i),
-        return curb_set_float(result,        lhs->f / rhs->f),
-        return false
-    )
-     return false;
-}
-
-inline bool curb_pow(curb_value* result, curb_value* lhs, curb_value* rhs)
-{
-    CURB_DEFINE_BINOP(result, lhs, rhs,
-        return curb_set_int(result,  (int)powf((float)lhs->i, (float)rhs->i)),
-        return curb_set_float(result, powf((float) lhs->i, rhs->f)),
-        return curb_set_float(result, powf(lhs->f, (float) rhs->i)),
-        return curb_set_float(result, powf(lhs->f, rhs->f)),
-        return false
-    )
-        return false;
-}
-
-inline bool curb_mod(curb_value* result, curb_value* lhs, curb_value* rhs)
-{
-    CURB_DEFINE_BINOP(result, lhs, rhs,
-        return curb_set_int(result, lhs->i % rhs->i),
-        return curb_set_float(result, (float) fmod(lhs->i, rhs->f)),
-        return curb_set_float(result, (float) fmod(lhs->f, rhs->i)),
-        return curb_set_float(result, (float) fmod(lhs->f, rhs->f)),
-        return false
-    )
-        return false;
-}
-
-inline bool curb_lt(curb_value* result, curb_value* lhs, curb_value* rhs)
-{
-    CURB_DEFINE_BINOP(result, lhs, rhs,
-        return curb_set_bool(result, lhs->i < rhs->i),
-        return curb_set_bool(result, lhs->i < rhs->f),
-        return curb_set_bool(result, lhs->f < rhs->i),
-        return curb_set_bool(result, lhs->f < rhs->f),
-        return false
-    )
-    return false;
-}
-
-inline bool curb_lte(curb_value* result, curb_value* lhs, curb_value* rhs)
-{
-    CURB_DEFINE_BINOP(result, lhs, rhs,
-        return curb_set_bool(result, lhs->i <= rhs->i),
-        return curb_set_bool(result, lhs->i <= rhs->f),
-        return curb_set_bool(result, lhs->f <= rhs->i),
-        return curb_set_bool(result, lhs->f <= rhs->f),
-        return false
-    )
-    return false;
-}
-
-inline bool curb_gt(curb_value* result, curb_value* lhs, curb_value* rhs)
-{
-    CURB_DEFINE_BINOP(result, lhs, rhs,
-        return curb_set_bool(result, lhs->i > rhs->i),
-        return curb_set_bool(result, lhs->i > rhs->f),
-        return curb_set_bool(result, lhs->f > rhs->i),
-        return curb_set_bool(result, lhs->f > rhs->f),
-        return false
-    )
-    return false;
-}
-
-inline bool curb_gte(curb_value* result, curb_value* lhs, curb_value* rhs)
-{
-    CURB_DEFINE_BINOP(result, lhs, rhs,
-        return curb_set_bool(result, lhs->i >= rhs->i),
-        return curb_set_bool(result, lhs->i >= rhs->f),
-        return curb_set_bool(result, lhs->f >= rhs->i),
-        return curb_set_bool(result, lhs->f >= rhs->f),
-        return false
-    )
-    return false;
-}
-
-inline bool curb_eq(curb_value* result, curb_value* lhs, curb_value* rhs)
-{
-    // TODO: add a special case for object equivalence (per field)
-    CURB_DEFINE_BINOP(result, lhs, rhs,
-        return curb_set_bool(result, lhs->i == rhs->i),
-        return curb_set_bool(result, lhs->i == rhs->f),
-        return curb_set_bool(result, lhs->f == rhs->i),
-        return curb_set_bool(result, lhs->f == rhs->f),
-        return curb_set_bool(result, lhs->b == rhs->b)
-        )
-    return false;
-}
-
-inline bool curb_neq(curb_value* result, curb_value* lhs, curb_value* rhs)
-{
-    // TODO: add a special case for object equivalence (per field)
-    CURB_DEFINE_BINOP(result, lhs, rhs,
-        return curb_set_bool(result, lhs->i != rhs->i),
-        return curb_set_bool(result, lhs->i != rhs->f),
-        return curb_set_bool(result, lhs->f != rhs->i),
-        return curb_set_bool(result, lhs->f != rhs->f),
-        return curb_set_bool(result, lhs->b != rhs->b)
-        )
-    return false;
-}
-
-inline bool curb_approxeq(curb_value* result, curb_value* lhs, curb_value* rhs)
-{
-    CURB_DEFINE_BINOP(result, lhs, rhs,
-        return curb_set_bool(result, abs(lhs->i - rhs->i) < CURB_VM_APPROX_THRESHOLD),
-        return curb_set_bool(result, abs(lhs->i - rhs->f) < CURB_VM_APPROX_THRESHOLD),
-        return curb_set_bool(result, abs(lhs->f - rhs->i) < CURB_VM_APPROX_THRESHOLD),
-        return curb_set_bool(result, abs(lhs->f - rhs->f) < CURB_VM_APPROX_THRESHOLD),
-        return curb_set_bool(result, lhs->b == rhs->b)
-        )
-        return false;
-}
-
-#undef CURB_DEFINE_BINOP
 
 #endif

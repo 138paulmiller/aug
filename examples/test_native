@@ -1,0 +1,15 @@
+func fibonacci(n) {
+    var a = 0;
+    var b = 1;
+    var c = 0;
+    var sum = 0;
+    var count = 1;
+
+    while count <= n {
+        count = count + 1; 
+        a = b ;
+        b = sum; 
+        sum = a + b;
+    }
+    return sum;
+}

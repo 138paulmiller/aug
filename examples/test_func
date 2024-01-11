@@ -1,13 +1,46 @@
+var a = 1;
+
 func add3(a, b, c) {
     b = a + b + c;
 	return b + 1 - 1;
 }
 
-a = add3(10, -5, 0);
+func fibonacci(n) {
+    var a = 0;
+    var b = 1;
+    var c = 0;
+    var sum = 0;
+    var count = n;
 
-expect(add3(1, 10, 100) == 111, "add3(1, 10, 100) = ", add3(1, 10, 100) );
-expect(add3(10, -5, 0) ==  5,    "add3(10, -5, 0)  = ", add3(10, -5, 0)  );
+    while count > 0 {
+        count = count - 1; 
+        a = b ;
+        b = sum; 
+        sum = a + b;
+    }
+    return sum;
+}
 
-add3(10, -5, 0);
-add3(10, -5, 0);
-add3(10, -5, 0);
+expect(add3(1, 10, 100) == 111, "add3(1, 10, 100) == ", add3(1, 10, 100));
+
+a = fibonacci(30);
+expect(a == 832040, "fibonacci(30) = ", a);
+
+a = fibonacci(20);
+expect(a == 6765, "fibonacci(50) = ", a);
+
+func fibonacci_rec(a) {
+    if a == 0 { 
+        return 0; 
+    }
+    else if a == 1 { 
+        return 1; 
+    }
+    return fibonacci_rec(a-1) + fibonacci_rec(a-2);
+}
+
+a = fibonacci_rec(20);
+expect(a == 6765, "fibonacci_rec(50) = ", a);
+
+a = fibonacci_rec(30);
+expect(a == 832040, "fibonacci_rec(50) = ", a);
