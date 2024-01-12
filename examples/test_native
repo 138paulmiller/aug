@@ -1,14 +1,36 @@
+
+
+func fizzbuzz(i)
+{
+    var a = i % 3 == 0;
+    var b = i % 5 == 0;
+    if a & b
+    {
+        var msg = "Fizzbuzz";
+        print(msg);
+    }
+    else if a
+    {
+        var msg = "Fizz";
+        print(msg);
+    }
+    else if b
+    {        
+        var msg = "Buzz";
+        print(msg);
+    }
+}
+
 func fibonacci(n) {
     var a = 0;
     var b = 1;
     var c = 0;
     var sum = 0;
-    var count = 1;
-    while count <= n {
+    var count = 0;
+    while count < n {
         count = count + 1; 
-        var d = 9;
-        d = 90000;
-        print(d);
+        var d = count - 1;
+        fizzbuzz(d);
         a = b;
         b = sum; 
         sum = a + b;

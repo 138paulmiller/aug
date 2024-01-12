@@ -62,6 +62,7 @@ void dump_ast_tree(curb_ast* node, std::string prefix, bool is_leaf)
 			dump_ast_tree(children[0], prefix, true);
 			break;
 		case CURB_AST_STMT_EXPR:
+			printf("EXPR:%s\n", token.data.c_str());
 			dump_ast_tree(children[0], prefix, true);
 			break;
 		case CURB_AST_STMT_IF:

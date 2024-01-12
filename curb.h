@@ -142,6 +142,7 @@ struct curb_symtable
 
 struct curb_script
 {
+    bool valid;
     curb_symtable global_symtable;
     curb_array<char> bytecode;
 };
@@ -1558,8 +1559,6 @@ curb_ast* curb_parse_file(curb_environment& env, const char* filename)
 	CURB_OPCODE(PUSH_STRING)       \
 	CURB_OPCODE(PUSH_LOCAL)        \
 	CURB_OPCODE(LOAD_LOCAL)        \
-	CURB_OPCODE(PUSH_STACK_OFFSET) \
-	CURB_OPCODE(POP_STACK_OFFSET)  \
 	CURB_OPCODE(ADD)               \
 	CURB_OPCODE(SUB)               \
 	CURB_OPCODE(MUL)               \
@@ -1592,7 +1591,9 @@ curb_ast* curb_parse_file(curb_environment& env, const char* filename)
 	CURB_OPCODE(JUMP_NZERO)        \
 	CURB_OPCODE(RETURN)            \
 	CURB_OPCODE(CALL)              \
-	CURB_OPCODE(CALL_EXT)         
+	CURB_OPCODE(CALL_EXT)          \
+    CURB_OPCODE(PUSH_SCOPE)         \
+    CURB_OPCODE(POP_SCOPE)          \
 
 
 // Special value used in bytecode to denote an invalid vm offset
@@ -1652,28 +1653,17 @@ struct curb_ir_operation
 #endif //CURB_DEBUG
 };
 
-struct curb_ir_block
-{
-    curb_symtable symtable;
-    size_t stack_offset; // used to track local variable memory on stack
-};
-
 // All the blocks within a compilation/translation unit (i.e. file, code literal)
 struct curb_ir
 {		
     curb_array<curb_ir_operation> operations;
     size_t bytecode_offset = 0;
     
-    curb_array<curb_ir_block> block_stack;
+    curb_array<curb_symtable> symtable_stack;
+    curb_array<size_t> frame_stack;
 
     int label_count = 0;
 };
-
-inline curb_ir_block& curb_ir_top_block(curb_ir& ir)
-{
-    assert(ir.block_stack.size() > 0);
-    return ir.block_stack.at(ir.block_stack.size() - 1);
-}
 
 inline size_t curb_ir_operand_size(const curb_ir_operand& operand)
 {
@@ -1777,42 +1767,47 @@ inline curb_ir_operand curb_ir_operand_from_str(const char* data)
 
 inline bool curb_ir_set_var(curb_ir& ir, const curb_string& name)
 {
-    curb_ir_block& block = curb_ir_top_block(ir);
-    const int offset = block.stack_offset++;
+    assert(ir.symtable_stack.size() > 0); 
+    assert(ir.frame_stack.size() > 0);
 
-    if (block.symtable.symbols.count(name) != 0)
+    curb_symtable& symtable = ir.symtable_stack.back();
+    const int offset = ir.frame_stack.back()++;
+
+    if (symtable.symbols.count(name) != 0)
         return false;
 
     curb_symbol sym;
     sym.type = CURB_IR_SYM_VAR;
     sym.offset = offset;
 
-    block.symtable.symbols[name] = sym;
+    symtable.symbols[name] = sym;
     return true;
 }
 
 inline bool curb_ir_set_func(curb_ir& ir, const curb_string& name)
 {
-    curb_ir_block& block = curb_ir_top_block(ir);
+    assert(ir.symtable_stack.size() > 0);
+
+    curb_symtable& symtable = ir.symtable_stack.back();
     int offset = ir.bytecode_offset;
 
-    if (block.symtable.symbols.count(name) != 0)
+    if (symtable.symbols.count(name) != 0)
         return false;
 
     curb_symbol sym;
     sym.type = CURB_IR_SYM_FUNC;
     sym.offset = offset;
 
-    block.symtable.symbols[name] = sym;
+    symtable.symbols[name] = sym;
 }
 
 inline curb_symbol curb_ir_get_symbol(curb_ir& ir, const curb_string& name)
 {
-    for (int i = ir.block_stack.size() - 1; i >= 0; --i)
+    for (int i = ir.symtable_stack.size() - 1; i >= 0; --i)
     {
-        curb_ir_block& block = ir.block_stack.at(i);
-        if (block.symtable.symbols.count(name))
-            return block.symtable.symbols[name];
+        curb_symtable& symtable = ir.symtable_stack.at(i);
+        if (symtable.symbols.count(name))
+            return symtable.symbols[name];
     }
 
     curb_symbol sym;
@@ -1823,11 +1818,11 @@ inline curb_symbol curb_ir_get_symbol(curb_ir& ir, const curb_string& name)
 
 inline curb_symbol curb_ir_get_symbol_local(curb_ir& ir, const curb_string& name)
 {
-    assert(ir.block_stack.size() > 0);
+    assert(ir.symtable_stack.size() > 0);
 
-    curb_ir_block& block = ir.block_stack.at(ir.block_stack.size() - 1);
-    if (block.symtable.symbols.count(name))
-        return block.symtable.symbols[name];
+    curb_symtable& symtable = ir.symtable_stack.back();
+    if (symtable.symbols.count(name))
+        return symtable.symbols[name];
 
     curb_symbol sym;
     sym.offset = CURB_OPCODE_INVALID;
@@ -1837,19 +1832,49 @@ inline curb_symbol curb_ir_get_symbol_local(curb_ir& ir, const curb_string& name
 
 inline void curb_ir_push_block(curb_ir& ir)
 {
-    curb_ir_block block;
-    block.stack_offset = 0;
-    ir.block_stack.push_back(block);
+    curb_symtable symtable;
+    ir.symtable_stack.push_back(symtable);
+    
+    if(ir.frame_stack.size())
+        ir.frame_stack.push_back(ir.frame_stack.back());
 
-    curb_ir_add_operation(ir, CURB_OPCODE_PUSH_STACK_OFFSET);
+    curb_ir_add_operation(ir, CURB_OPCODE_PUSH_SCOPE);
 }
 
 inline void curb_ir_pop_block(curb_ir& ir)
 {
-    curb_ir_add_operation(ir, CURB_OPCODE_POP_STACK_OFFSET);
+    assert(ir.symtable_stack.size() > 0);
+    ir.symtable_stack.pop_back();
 
-    assert(ir.block_stack.size() > 0);
-    ir.block_stack.pop_back();
+    if (ir.frame_stack.size())
+        ir.frame_stack.pop_back();
+
+    curb_ir_add_operation(ir, CURB_OPCODE_POP_SCOPE);
+}
+
+inline int curb_ir_frame(curb_ir& ir)
+{
+    if (ir.frame_stack.size() > 0)
+        return ir.frame_stack.back();
+    return 0;
+}
+
+inline void curb_ir_push_frame(curb_ir& ir, int arg_count)
+{
+    curb_symtable symtable;
+    ir.symtable_stack.push_back(symtable);
+
+    const int stack_offset = curb_ir_frame(ir) - arg_count;
+    ir.frame_stack.push_back(stack_offset);
+}
+
+inline void curb_ir_pop_frame(curb_ir& ir)
+{
+    assert(ir.symtable_stack.size() > 0);
+    ir.symtable_stack.pop_back();
+
+    assert(ir.frame_stack.size() > 0);
+    ir.frame_stack.pop_back();
 }
 
 // --------------------------------------- Value Operations -------------------------------------------------------//
@@ -2087,10 +2112,13 @@ inline bool curb_approxeq(curb_value* result, curb_value* lhs, curb_value* rhs)
 #undef CURB_DEFINE_BINOP
 
 // -------------------------------------- Virtual Machine / Bytecode ----------------------------------------------// 
+
+// Calling frames are used to preserve and access parameters and local variables from the stack within a colling context
 struct curb_vm_frame
 {
-    int arg_count; // number of arguments pushed onto frame. will be popped.
-    int stack_offset; // current stack offset of frame
+    int arg_count;                 // number of arguments pushed onto frame. will be popped.
+    int base_index;                // current stack offset of frame
+    curb_array<int> scope_stack;
     const char* return_instruction;
 };
 
@@ -2102,9 +2130,7 @@ struct curb_vm
     curb_value stack[CURB_STACK_SIZE]; 
     int stack_offset;
 
-    // Address to return to when Ret is called. Pops all local from stack
     curb_array<curb_vm_frame> frame_stack;
-
     // TODO: debug to map from addr to func name / variable
 };
 
@@ -2142,42 +2168,39 @@ union curb_vm_bytecode_value
 
 inline curb_value* curb_vm_top(curb_environment& env, curb_vm& vm)
 {
-    return &vm.stack[vm.stack_offset];
+    return &vm.stack[vm.stack_offset -1];
 }
 
 inline curb_value* curb_vm_push(curb_environment& env, curb_vm& vm)
 {
-    ++vm.stack_offset;
-    if(vm.stack_offset >= CURB_STACK_SIZE)   
+    if(vm.stack_offset >= CURB_STACK_SIZE)
     {                                              
         if(vm.instruction)
             CURB_VM_ERROR(env, vm, "Stack overflow");      
         return nullptr;                           
     }
-
-    return curb_vm_top(env, vm);
+    return &vm.stack[vm.stack_offset++];
 }
 
 inline curb_value* curb_vm_pop(curb_environment& env, curb_vm& vm)
-{        
-    //if(vm.stack_offset < 0)   
-    //{   
-    //    if(vm.instruction)
-    //        CURB_VM_ERROR(env, vm, "Stack underflow");      
-    //    return nullptr;                           
-    //}
-
+{
     curb_value* top = curb_vm_top(env, vm);
     --vm.stack_offset;
     return top;
 }
 
-inline void curb_vm_push_frame(curb_environment& env, curb_vm& vm, int arg_count, const char* return_instruction)
+inline int curb_vm_frame_base(curb_environment& env, curb_vm& vm)
+{
+    const curb_vm_frame& frame = vm.frame_stack.back();
+    return frame.base_index;
+}
+
+inline void curb_vm_push_frame(curb_environment& env, curb_vm& vm, const char* return_instruction, int arg_count)
 {
     curb_vm_frame frame;
-    frame.arg_count = arg_count;
-    frame.stack_offset = vm.stack_offset + arg_count;
     frame.return_instruction = return_instruction;
+    frame.arg_count = arg_count;
+    frame.base_index = vm.stack_offset;
 
     vm.frame_stack.push_back(frame);
 }
@@ -2185,29 +2208,36 @@ inline void curb_vm_push_frame(curb_environment& env, curb_vm& vm, int arg_count
 inline void curb_vm_pop_frame(curb_environment& env, curb_vm& vm)
 {
     curb_vm_frame frame = vm.frame_stack.back();
-    vm.frame_stack.pop_back();
-
-    vm.stack_offset = frame.stack_offset - frame.arg_count;
     vm.instruction = frame.return_instruction;
+    vm.stack_offset = frame.base_index - frame.arg_count;
 
+    vm.frame_stack.pop_back();
+}
+
+// Pushing and popping the stack index for the current frame is used to enter and exit variable scopes. restores that stack index 
+inline void curb_vm_push_scope(curb_environment& env, curb_vm& vm)
+{
+    curb_vm_frame& frame = vm.frame_stack.back();
+    frame.scope_stack.push_back(vm.stack_offset);
+}
+
+inline void curb_vm_pop_scope(curb_environment& env, curb_vm& vm)
+{
+    curb_vm_frame& frame = vm.frame_stack.back();
+    vm.stack_offset = frame.scope_stack.back();
+    frame.scope_stack.pop_back();
 }
 
 inline curb_value* curb_vm_get(curb_environment& env, curb_vm& vm, int stack_offset)
 {
-    int offset = stack_offset;
-    if (vm.frame_stack.size() > 0)
-    {
-        const curb_vm_frame& frame = vm.frame_stack[vm.frame_stack.size() - 1];
-        offset = frame.stack_offset + stack_offset;
-    }
-
+    const int offset = curb_vm_frame_base(env, vm) + stack_offset;
     if (offset < 0)
     {
         if (vm.instruction)
             CURB_VM_ERROR(env, vm, "Stack underflow");
         return nullptr;
     }
-    else if (offset > vm.stack_offset)
+    else if (offset >= vm.stack_offset)
     {
         if (vm.instruction)
             CURB_VM_ERROR(env, vm, "Stack overflow");
@@ -2251,14 +2281,17 @@ inline const char* curb_vm_read_bytes(curb_vm& vm)
 
 void curb_vm_startup(curb_environment& env, curb_vm& vm, const curb_script& script)
 {
+    if (script.bytecode.size() == 0)
+        return;
+
     vm.bytecode = &script.bytecode[0];
     vm.instruction = vm.bytecode;
-    vm.stack_offset = -1;
+    vm.stack_offset = 0;
 
     if (vm.bytecode == nullptr)
         return;
 
-    curb_vm_push_frame(env, vm, 0, nullptr);
+    curb_vm_push_frame(env, vm, nullptr, 0);
 }
 
 void curb_vm_shutdown(curb_environment& env, curb_vm& vm)
@@ -2266,14 +2299,14 @@ void curb_vm_shutdown(curb_environment& env, curb_vm& vm)
     curb_vm_pop_frame(env, vm);
 
     // Ensure that stack has returned to beginning state
-    assert(vm.stack_offset == -1);
+    assert(vm.stack_offset == 0);
 }
 
 void curb_vm_execute(curb_environment& env, curb_vm& vm)
 {
     while(vm.instruction)
     {
-#if  1
+#if  0
         printf("[%d] %s\n", vm.instruction - vm.bytecode, curb_opcode_labels[(*vm.instruction)]);
 #endif
         curb_opcode opcode = (curb_opcode) (*vm.instruction);
@@ -2417,6 +2450,24 @@ void curb_vm_execute(curb_environment& env, curb_vm& vm)
                     CURB_VM_UNOP_ERROR(env, vm, arg, "!");
                 break;
             }
+            case CURB_OPCODE_AND:
+            {
+                curb_value* lhs = curb_vm_pop(env, vm);
+                curb_value* rhs = curb_vm_pop(env, vm);
+                curb_value* target = curb_vm_push(env, vm);
+                if (!curb_set_bool(target, curb_to_bool(lhs) && curb_to_bool(rhs)))
+                    CURB_VM_BINOP_ERROR(env, vm, lhs, rhs, "&");
+                break;
+            }
+            case CURB_OPCODE_OR:
+            {
+                curb_value* lhs = curb_vm_pop(env, vm);
+                curb_value* rhs = curb_vm_pop(env, vm);
+                curb_value* target = curb_vm_push(env, vm);
+                if (!curb_set_bool(target, curb_to_bool(lhs) || curb_to_bool(rhs)))
+                    CURB_VM_BINOP_ERROR(env, vm, lhs, rhs, "|");
+                break;
+            }
             case CURB_OPCODE_LT:
             {
                 curb_value* lhs = curb_vm_pop(env, vm);
@@ -2502,28 +2553,20 @@ void curb_vm_execute(curb_environment& env, curb_vm& vm)
                     vm.instruction = vm.bytecode + instruction_offset;
                 break;
             }
-            case CURB_OPCODE_PUSH_STACK_OFFSET:
+            case CURB_OPCODE_PUSH_SCOPE:
             {
-                const int stack_offset = vm.stack_offset;
-                curb_value* top = curb_vm_push(env, vm);
-                if (top != nullptr)
-                {
-                    top->type = CURB_INT;
-                    top->i = stack_offset;
-                }
+                curb_vm_push_scope(env, vm);
                 break;
             }
-            case CURB_OPCODE_POP_STACK_OFFSET:
+            case CURB_OPCODE_POP_SCOPE:
             {
-                curb_value* top = curb_vm_pop(env, vm);
-                if (top != nullptr && top->type == CURB_INT)
-                    vm.stack_offset = top->i;
+                curb_vm_pop_scope(env, vm);
                 break;
             }
             case CURB_OPCODE_CALL:
             {
                 const int arg_count = curb_vm_read_int(vm);
-                curb_vm_push_frame(env, vm, arg_count, vm.instruction);
+                curb_vm_push_frame(env, vm, vm.instruction, arg_count);
 
                 const int func_addr = curb_vm_read_int(vm);
                 vm.instruction = vm.bytecode + func_addr;
@@ -2600,6 +2643,7 @@ curb_value curb_vm_execute_function(curb_environment& env, curb_vm& vm, curb_scr
     }
 
     // Jump to function call
+
     const size_t arg_count = args.size();
     vm.instruction = vm.bytecode + symbol.offset;
 
@@ -2610,7 +2654,7 @@ curb_value curb_vm_execute_function(curb_environment& env, curb_vm& vm, curb_scr
             *value = args[i];
     }
 
-    curb_vm_push_frame(env, vm, arg_count, nullptr);
+    curb_vm_push_frame(env, vm, nullptr, arg_count);
     curb_vm_execute(env, vm);
 
     curb_value* top = curb_vm_pop(env, vm);
@@ -2767,6 +2811,8 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
                 case CURB_TOKEN_DIV:    curb_ir_add_operation(ir, CURB_OPCODE_DIV); break;
                 case CURB_TOKEN_MOD:    curb_ir_add_operation(ir, CURB_OPCODE_MOD); break;
                 case CURB_TOKEN_POW:    curb_ir_add_operation(ir, CURB_OPCODE_POW); break;
+                case CURB_TOKEN_AND:    curb_ir_add_operation(ir, CURB_OPCODE_AND); break;
+                case CURB_TOKEN_OR:     curb_ir_add_operation(ir, CURB_OPCODE_OR); break;
                 case CURB_TOKEN_LT:     curb_ir_add_operation(ir, CURB_OPCODE_LT);  break;
                 case CURB_TOKEN_LT_EQ:  curb_ir_add_operation(ir, CURB_OPCODE_LTE); break;
                 case CURB_TOKEN_GT:     curb_ir_add_operation(ir, CURB_OPCODE_GT);  break;
@@ -2967,16 +3013,10 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             break;
         }
         case CURB_AST_PARAM_LIST:
-        {    
-            if (children.size())
-            {
-                // start stack offset at beginning of parameter (this will be nagative relative to the current frame)
-                curb_ir_block& block = curb_ir_top_block(ir);
-                block.stack_offset = block.stack_offset - children.size();
-            
-                for (const curb_ast* param : children)
-                    curb_ast_to_ir(context, param, ir);
-            }
+        {                
+            // start stack offset at beginning of parameter (this will be nagative relative to the current frame)
+            for (const curb_ast* param : children)
+                curb_ast_to_ir(context, param, ir);
             break;
         }
         case CURB_AST_RETURN:
@@ -3009,9 +3049,14 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
                 break;
             }
 
+            curb_ast* params = children[0];
+            assert( params && params->id == CURB_AST_PARAM_LIST);
+
+            curb_ir_push_frame(ir, params->children.size());
             curb_ast_to_ir(context, children[0], ir);
             curb_ast_to_ir(context, children[1], ir);
-            
+            curb_ir_pop_frame(ir);
+
             // Ensure there is a return
             if (ir.operations.at(ir.operations.size() - 1).opcode != CURB_OPCODE_RETURN)
             {
@@ -3089,8 +3134,8 @@ bool curb_compile_script(curb_environment& env, curb_ast* root, curb_script& scr
     if (!context.valid)
         return false;
 
-    assert(ir.block_stack.size() == 1);
-    script.global_symtable = ir.block_stack[0].symtable;
+    assert(ir.symtable_stack.size() == 1);
+    script.global_symtable = ir.symtable_stack.back();
 
     // Load bytecode into VM
     curb_ir_to_bytecode(ir, script.bytecode);
@@ -3153,19 +3198,27 @@ void curb_evaluate(curb_environment& env, const char* code)
 
 bool curb_compile(curb_environment& env, curb_script& script, const char* filename)
 {
+    script.valid = false;
     // Parse file
     curb_ast* root = curb_parse_file(env, filename);
     if (root == nullptr)
         return false;
 
-    const bool success = curb_compile_script(env, root, script);
+    script.valid = curb_compile_script(env, root, script);
     curb_ast_delete(root);
 
-    return success;
+    return script.valid;
 }
 
 curb_value curb_call(curb_environment& env, curb_script& script, const char* func_name, const curb_array<curb_value>& args)
 {
+    if (!script.valid)
+    {
+        curb_value ret_value;
+        ret_value.type = CURB_NONE;
+        return ret_value;
+    }
+
     curb_vm vm;
     curb_vm_startup(env, vm, script);
     const curb_value& ret_value = curb_vm_execute_function(env, vm, script, func_name, args);

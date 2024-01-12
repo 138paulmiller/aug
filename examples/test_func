@@ -27,7 +27,7 @@ a = fibonacci(30);
 expect(a == 832040, "fibonacci(30) = ", a);
 
 a = fibonacci(20);
-expect(a == 6765, "fibonacci(50) = ", a);
+expect(a == 6765, "fibonacci(20) = ", a);
 
 func fibonacci_rec(a) {
     if a == 0 { 
@@ -40,7 +40,46 @@ func fibonacci_rec(a) {
 }
 
 a = fibonacci_rec(20);
-expect(a == 6765, "fibonacci_rec(50) = ", a);
+expect(a == 6765, "fibonacci_rec(20) = ", a);
 
 a = fibonacci_rec(30);
-expect(a == 832040, "fibonacci_rec(50) = ", a);
+expect(a == 832040, "fibonacci_rec(30) = ", a);
+
+
+func fizzbuzz(i)
+{
+    var a = i % 3 == 0;
+    var b = i % 5 == 0;
+    if a & b
+    {
+        print("Fizzbuzz");
+    }
+    else if a
+    {
+        print("Fizz");
+    }
+    else if b
+    {
+        print("buzz");
+    }
+}
+
+func fibonacci_fizzbuzz(n) {
+    var a = 0;
+    var b = 1;
+    var c = 0;
+    var sum = 0;
+    var count = 1;
+    while count <= n {
+        count = count + 1; 
+        var d = count;
+        fizzbuzz(d);
+        a = b;
+        b = sum; 
+        sum = a + b;
+    }
+    return sum;
+}
+
+a = fibonacci_fizzbuzz(30);
+expect(a == 832040, "fibonacci_rec(30) = ", a);
