@@ -1,39 +1,6 @@
-
-
-func fizzbuzz(i)
-{
-    var a = i % 3 == 0;
-    var b = i % 5 == 0;
-    if a and b
-    {
-        var msg = "Fizzbuzz";
-        print(msg);
+func fibonacci(a) {
+    if a < 2 { 
+        return a; 
     }
-    else if a
-    {
-        var msg = "Fizz";
-        print(msg);
-    }
-    else if b
-    {        
-        var msg = "Buzz";
-        print(msg);
-    }
-}
-
-func fibonacci(n) {
-    var a = 0;
-    var b = 1;
-    var c = 0;
-    var sum = 0;
-    var count = 0;
-    while count < n {
-        count = count + 1;
-        var d = count - 1;
-        fizzbuzz(d);
-        a = b;
-        b = sum; 
-        sum = a + b;
-    }
-    return sum;
+    return fibonacci(a-1) + fibonacci(a-2);
 }

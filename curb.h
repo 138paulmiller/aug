@@ -199,12 +199,8 @@ curb_value curb_float(float data);
     #define CURB_TOKEN_BUFFER_LEN 32
 #endif//CURB_TOKEN_BUFFER_LEN 
 
-#ifndef CURB_BYTECODE_CHUNK_SIZE
-    #define CURB_BYTECODE_CHUNK_SIZE (1024 * 2)
-#endif//CURB_BYTECODE_CHUNK_SIZE
-
 #ifndef CURB_STACK_SIZE
-    #define CURB_STACK_SIZE (4096 * 4)
+    #define CURB_STACK_SIZE (4096 * 2)
 #endif//CURB_STACK_SIZE
 
 #ifndef CURB_COMMENT_SYMBOL
@@ -2118,21 +2114,25 @@ inline bool curb_approxeq(curb_value* result, curb_value* lhs, curb_value* rhs)
 
 // -------------------------------------- Virtual Machine / Bytecode ----------------------------------------------// 
 
-// Calling frames are used to preserve and access parameters and local variables from the stack within a colling context
+// Calling frames are used to preserve and access parameters and local variables from the stack within a calling context
 struct curb_frame
 {
     int base_index;
     int stack_index;
+    // For function frames, there will be a return instruction and arg count. Otherwise, the frame is used for local scope 
+
+    bool func_call;
     int arg_count;
-    const char* instruction;
+    const char* instruction; 
 };
 
 struct curb_vm
 {
+    bool valid;
     const char* instruction;
     const char* bytecode;
  
-    curb_value stack[CURB_STACK_SIZE]; 
+    curb_value stack[CURB_STACK_SIZE];
     int stack_index;
     int base_index;
 
@@ -2152,9 +2152,10 @@ union curb_vm_bytecode_value
 };
 
 #define CURB_VM_ERROR(env, vm, ...)     \
-{                                      \
+{                                       \
     CURB_LOG_ERROR(env, __VA_ARGS__);   \
-    vm.instruction = nullptr;          \
+    vm.valid = false;                   \
+    vm.instruction = nullptr;           \
 }
 
 #define CURB_VM_UNOP_ERROR(env, vm, arg, op)          \
@@ -2183,7 +2184,7 @@ inline curb_value* curb_vm_push(curb_environment& env, curb_vm& vm)
 {
     if(vm.stack_index >= CURB_STACK_SIZE)
     {                                              
-        if(vm.instruction)
+        if(vm.valid)
             CURB_VM_ERROR(env, vm, "Stack overflow");      
         return nullptr;                           
     }
@@ -2220,14 +2221,24 @@ inline void curb_vm_push_frame(curb_environment& env, curb_vm& vm, const int arg
         top->base_index = vm.base_index;
         top->instruction = instruction;
         top->arg_count = arg_count;
+        top->func_call = top->instruction != nullptr || top->arg_count > 0;
     }
 
     vm.base_index = vm.stack_index;
 }
 
-inline void curb_vm_pop_frame(curb_environment& env, curb_vm& vm)
+inline void curb_vm_pop_frame(curb_environment& env, curb_vm& vm, bool return_from_function)
 {
     curb_frame* top = curb_vm_frame_top(env, vm);
+    if (return_from_function)
+    {
+        while (vm.frame_index > 1 && top && !top->func_call)
+        {
+            --vm.frame_index;
+            top = curb_vm_frame_top(env, vm);
+        }
+    }
+
     if (top)
     {
         --vm.frame_index;
@@ -2300,13 +2311,17 @@ void curb_vm_startup(curb_environment& env, curb_vm& vm, const curb_script& scri
     vm.stack_index = 0;
     vm.base_index = 0;
     vm.frame_index = 0;
+    vm.valid = true; 
 
     curb_vm_push_frame(env, vm, 0, nullptr);
 }
 
 void curb_vm_shutdown(curb_environment& env, curb_vm& vm)
 {
-    curb_vm_pop_frame(env, vm);
+    if (!vm.valid)
+        return;
+
+    curb_vm_pop_frame(env, vm, false);
 
     // Ensure that stack has returned to beginning state
     assert(vm.stack_index == 0);
@@ -2334,6 +2349,7 @@ void curb_vm_execute(curb_environment& env, curb_vm& vm)
             }
             case CURB_OPCODE_POP:
             {
+                curb_vm_pop(env, vm);
                 break;
             }
             case CURB_OPCODE_PUSH_NONE:
@@ -2386,7 +2402,7 @@ void curb_vm_execute(curb_environment& env, curb_vm& vm)
                 curb_value* local = curb_vm_get_local(env, vm, stack_offset);
 
                 curb_value* top = curb_vm_push(env, vm);
-                if (top !=  nullptr || local != nullptr)
+                if (top !=  nullptr && local != nullptr)
                     *top = *local;
                 break;
             }
@@ -2572,7 +2588,7 @@ void curb_vm_execute(curb_environment& env, curb_vm& vm)
             }
             case CURB_OPCODE_POP_FRAME:
             {
-                curb_vm_pop_frame(env, vm);
+                curb_vm_pop_frame(env, vm, false);
                 break;
             }
             case CURB_OPCODE_CALL:
@@ -2588,7 +2604,7 @@ void curb_vm_execute(curb_environment& env, curb_vm& vm)
             case CURB_OPCODE_RETURN:
             {
                 curb_value* ret_value = curb_vm_pop(env, vm);
-                curb_vm_pop_frame(env, vm);
+                curb_vm_pop_frame(env, vm, true);
 
                 curb_value* top = curb_vm_push(env, vm);
                 if (ret_value != nullptr && top != nullptr)
@@ -2668,7 +2684,12 @@ curb_value curb_vm_execute_function(curb_environment& env, curb_vm& vm, curb_scr
             *value = args[i];
     }
 
-    curb_vm_push_frame(env, vm, 0, nullptr); // Since the call operation is implicit. 
+    // Since the call operation is implicit, setup frame manually 
+    curb_vm_push_frame(env, vm, arg_count, nullptr); 
+    
+    curb_frame* frame = curb_vm_frame_top(env, vm);
+    frame->func_call = true; // ensure this is from a function
+
     curb_vm_execute(env, vm);
 
     curb_value* top = curb_vm_pop(env, vm);
