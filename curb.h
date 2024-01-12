@@ -266,8 +266,6 @@ struct curb_token_detail
     CURB_TOKEN(LBRACE,         0, 0, 0, nullptr)       \
     CURB_TOKEN(RBRACE,         0, 0, 0, nullptr)       \
     /* Operators - Arithmetic */                       \
-    CURB_TOKEN(AND,            1, 2, 0, nullptr)       \
-    CURB_TOKEN(OR,             1, 2, 0, nullptr)       \
     CURB_TOKEN(ADD,            2, 2, 0, nullptr)       \
     CURB_TOKEN(ADD_EQ,         1, 2, 0, nullptr)       \
     CURB_TOKEN(SUB,            2, 2, 0, nullptr)       \
@@ -280,6 +278,8 @@ struct curb_token_detail
     CURB_TOKEN(POW_EQ,         1, 2, 0, nullptr)       \
     CURB_TOKEN(MOD,            3, 2, 0, nullptr)       \
     CURB_TOKEN(MOD_EQ,         1, 2, 0, nullptr)       \
+    CURB_TOKEN(AND,            1, 2, 0, "and")         \
+    CURB_TOKEN(OR,             1, 2, 0, "or")          \
     /* Operators - Boolean */                          \
     CURB_TOKEN(EQ,             1, 2, 0, nullptr)       \
     CURB_TOKEN(LT,             2, 2, 0, nullptr)       \
@@ -520,8 +520,6 @@ bool curb_lexer_tokenize_symbol(curb_environment& env, curb_lexer& lexer, curb_t
     case ']': id = CURB_TOKEN_RBRACKET;  break;
     case '{': id = CURB_TOKEN_LBRACE;    break;
     case '}': id = CURB_TOKEN_RBRACE;    break;
-    case '&': id = CURB_TOKEN_AND;       break;
-    case '|': id = CURB_TOKEN_OR;        break;
     case '+':
         if (curb_lexer_peek(lexer) == '=' && curb_lexer_get(lexer))
             id = CURB_TOKEN_ADD_EQ;
