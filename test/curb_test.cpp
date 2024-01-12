@@ -117,7 +117,7 @@ void curb_test_native(const char* filename)
 	curb_value value = curb_call(tester.env, script, "fibonacci", args);
 	
 	bool success = value.i == 102334155;
-	const curb_string message = "fibonacci(30) = " + curb_to_string(&value);
+	const curb_string message = "fibonacci(40) = " + curb_to_string(&value);
 	tester.verify(success, message);
 }
 

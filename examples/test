@@ -1,13 +1,41 @@
-func add3(a, b, c) {
-    b = a + b + c;
-	return b + 1 - 1;
+
+func fizzbuzz(i)
+{
+    var a = i % 3 == 0;
+    var b = i % 5 == 0;
+    if a and b
+    {
+        var msg = "Fizzbuzz";
+        print(msg);
+    }
+    else if a
+    {
+        var msg = "Fizz";
+        print(msg);
+    }
+    else if b
+    {        
+        var msg = "Buzz";
+        print(msg);
+    }
 }
 
-var a = add3(10, -5, 0);
+func fibonacci(n) {
+    var a = 0;
+    var b = 1;
+    var c = 0;
+    var sum = 0;
+    var count = 0;
+    while count < n {
+        count = count + 1;
+        var d = count - 1;
+        fizzbuzz(d);
+        a = b;
+        b = sum; 
+        sum = a + b;
+    }
+    return sum;
+}
 
-expect(add3(1, 10, 100) == 111, "add3(1, 10, 100) = ", add3(1, 10, 100) );
-expect(add3(10, -5, 0) ==  5,    "add3(10, -5, 0)  = ", add3(10, -5, 0)  );
-
-add3(10, -5, 0);
-add3(10, -5, 0);
-add3(10, -5, 0);
+var a = fibonacci(40);
+expect(a == 102334155, "fibonacci(40) = ", a);
