@@ -133,6 +133,7 @@ struct curb_symbol
     // Functions - this is the bytecode address.
     // Variables - this is the local frames stack offset.
     int offset;
+    int argc = 0; // If this is a function, this is the number of expected params
 };
 
 using curb_symtable = curb_map<curb_string, curb_symbol>;
@@ -1785,7 +1786,6 @@ inline curb_ir_scope& curb_ir_current_scope(curb_ir& ir)
 inline int curb_ir_local_offset(curb_ir& ir)
 {
     const curb_ir_scope& scope = curb_ir_current_scope(ir);
-    curb_ir_frame& frame = curb_ir_current_frame(ir);
     return scope.stack_offset - scope.base_index;
 }
 
@@ -1860,7 +1860,7 @@ inline bool curb_ir_set_var(curb_ir& ir, const curb_string& name)
     return true;
 }
 
-inline bool curb_ir_set_func(curb_ir& ir, const curb_string& name)
+inline bool curb_ir_set_func(curb_ir& ir, const curb_string& name, int param_count)
 {
     curb_ir_scope& scope = curb_ir_current_scope(ir);
     const int offset = ir.bytecode_offset;
@@ -1870,6 +1870,7 @@ inline bool curb_ir_set_func(curb_ir& ir, const curb_string& name)
     curb_symbol sym;
     sym.type = CURB_SYM_FUNC;
     sym.offset = offset;
+    sym.argc = param_count;
 
     scope.symtable[name] = sym;
     return true;
@@ -2631,7 +2632,7 @@ void curb_vm_execute(curb_environment& env, curb_vm& vm)
 
                 if ((int)args.size() != arg_count)
                 {
-                    CURB_VM_ERROR(env, vm, "Function Call %s Recieved %d arguments, expected %d", func_name, args.size(), arg_count);
+                    CURB_VM_ERROR(env, vm, "Function Call %s passed %d arguments, expected %d", func_name, (int)args.size(), arg_count);
                     break;
                 }
 
@@ -2879,17 +2880,25 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             const curb_symbol& symbol = curb_ir_get_symbol(ir, func_name);
             if (symbol.type == CURB_SYM_FUNC)
             {
-                // offset to account for the pushed base
-                curb_ir_add_operation(ir, CURB_OPCODE_PUSH_BASE);
-                size_t push_addr = curb_ir_add_operation(ir, CURB_OPCODE_PUSH_INT, curb_ir_operand_from_int(0));
+                if(symbol.argc != arg_count)
+                {
+                    context.valid = false;
+                    CURB_LOG_ERROR(context.env, "Function Call %s passed %d arguments, expected %d", func_name, arg_count, symbol.argc);
+                }
+                else
+                {
+                    // offset to account for the pushed base
+                    curb_ir_add_operation(ir, CURB_OPCODE_PUSH_BASE);
+                    size_t push_addr = curb_ir_add_operation(ir, CURB_OPCODE_PUSH_INT, curb_ir_operand_from_int(0));
 
-                for (const curb_ast* arg : children)
-                    curb_ast_to_ir(context, arg, ir);
+                    for (const curb_ast* arg : children)
+                        curb_ast_to_ir(context, arg, ir);
 
-                const curb_ir_operand& func_addr = curb_ir_operand_from_int(symbol.offset); // func addr
-                curb_ir_add_operation(ir, CURB_OPCODE_CALL, func_addr);
+                    const curb_ir_operand& func_addr = curb_ir_operand_from_int(symbol.offset); // func addr
+                    curb_ir_add_operation(ir, CURB_OPCODE_CALL, func_addr);
 
-                curb_ir_get_operation(ir, push_addr).operands[0] = curb_ir_operand_from_int(ir.bytecode_offset);
+                    curb_ir_get_operation(ir, push_addr).operands[0] = curb_ir_operand_from_int(ir.bytecode_offset);
+                }
             }
             else if (symbol.type == CURB_SYM_VAR)
             {
@@ -3097,16 +3106,17 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             const size_t end_block_jmp = curb_ir_add_operation(ir, CURB_OPCODE_JUMP, stub_operand);
 
             const char* func_name = token.data.c_str();
-            if (!curb_ir_set_func(ir, func_name))
+
+            curb_ast* params = children[0];
+            assert( params && params->id == CURB_AST_PARAM_LIST);
+            const int param_count = params->children.size();
+
+            if (!curb_ir_set_func(ir, func_name, param_count))
             {
                 context.valid = false;
                 CURB_LOG_ERROR(context.env, "Function %s already defined", func_name);
                 break;
             }
-
-            curb_ast* params = children[0];
-            assert( params && params->id == CURB_AST_PARAM_LIST);
-            const int param_count = params->children.size();
 
             // Parameter frame
             curb_ir_push_scope(ir);

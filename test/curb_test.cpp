@@ -1,6 +1,8 @@
 #define CURB_LOG_VERBOSE
 #include <curb.h>
 
+#include <string.h>
+
 void curb_dump_file(curb_environment env, const char* filename);
 
 struct curb_tester

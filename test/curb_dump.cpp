@@ -56,6 +56,11 @@ void dump_ast_tree(curb_ast* node, std::string prefix, bool is_leaf)
 			for (size_t i = 0; i < children.size(); ++i)
 				dump_ast_tree(children[i], prefix, i == children.size()-1);
 			break;
+		case CURB_AST_STMT_VAR:
+			assert(children.size()==1);
+			printf("VAR:%s\n", token.data.c_str());
+			dump_ast_tree(children[0], prefix, true);
+			break;
 		case CURB_AST_STMT_ASSIGN:
 			assert(children.size()==1);
 			printf("ASSIGN:%s\n", token.data.c_str());

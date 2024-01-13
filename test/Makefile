@@ -4,7 +4,7 @@ TARGET = $(OUT_DIR)/shl_test
 SRC = $(wildcard *.cpp)
 CC = g++
 CFLAGS = -Wall
-LIBS = -I../ -std=c++17
+LIBS = -I../ -std=c++11
 
 all: $(OUT_DIR) $(TARGET)
 	echo "Done"
