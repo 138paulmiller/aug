@@ -2916,13 +2916,19 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
                 curb_ast_to_ir(context, children[0], ir);
 
             const curb_symbol& symbol = curb_ir_symbol_relative(ir, token.data);
-            if (symbol.type != CURB_SYM_VAR)
+            if (symbol.type == CURB_SYM_NONE)
             {
-                context.valid = false;
-                CURB_LOG_ERROR(context.env, "Variable %s not defined", token.data.c_str());
+                curb_ir_set_var(ir, token.data);
                 break;
             }
-            
+            else if (symbol.type == CURB_SYM_FUNC)
+            {
+                context.valid = false;
+                CURB_LOG_ERROR(context.env, "Can not assign function %s as a variable", token.data.c_str());
+                break;
+            }
+
+
             const curb_ir_operand& address_operand = curb_ir_operand_from_int(symbol.offset);
             curb_ir_add_operation(ir, CURB_OPCODE_LOAD_LOCAL, address_operand);
 
@@ -2942,9 +2948,9 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             }
             
             curb_ir_set_var(ir, token.data);
-
             break;
         }
+
         case CURB_AST_STMT_IF:
         {
             assert(children.size() == 2); //if ([0]) {[1]}
