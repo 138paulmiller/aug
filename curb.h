@@ -238,7 +238,7 @@ struct curb_token_detail
 {
     const char* label;    // the string representation, used for visualization and debugging
     char prec;            // if the token is an operator, this is the precedence (note: higher values take precendece)
-    int  argc;            // if the token is an operator, this is the number of operands
+    int  argc;            // if the token is an operator, this is the number of arguments
     bool capture;         // if non-zero, the token will contain the source string value (i.e. integer and string literals)
     const char* keyword;  // if non-null, the token must match the provided keyword
 };
@@ -1638,7 +1638,7 @@ struct curb_ir_operand
 struct curb_ir_operation
 {
     curb_opcode opcode;
-    curb_array<curb_ir_operand> operands; //optional parameter. will be encoded in following bytes
+    curb_ir_operand operand; //optional parameter. will be encoded in following bytes
    
 #if CURB_DEBUG
     size_t bytecode_offset;
@@ -1691,32 +1691,15 @@ inline size_t curb_ir_operand_size(const curb_ir_operand& operand)
 inline size_t curb_ir_operation_size(const curb_ir_operation& operation)
 {
     size_t size = sizeof(operation.opcode);
-    for(const curb_ir_operand& operand : operation.operands)
-    {
-        size += curb_ir_operand_size(operand);
-    }
+    size += curb_ir_operand_size(operation.operand);
     return size;
-}
-
-inline size_t curb_ir_add_operation(curb_ir& ir, curb_opcode opcode, const curb_array<curb_ir_operand>& operands)
-{
-    curb_ir_operation operation;
-    operation.opcode = opcode;
-    operation.operands = operands;
-#if CURB_DEBUG
-    operation.bytecode_offset = ir.bytecode_offset;
-#endif //CURB_DEBUG
-    ir.bytecode_offset += curb_ir_operation_size(operation);
-
-    ir.operations.push_back(std::move(operation));
-    return ir.operations.size()-1;
 }
 
 inline size_t curb_ir_add_operation(curb_ir& ir, curb_opcode opcode, const curb_ir_operand& operand)
 {
     curb_ir_operation operation;
     operation.opcode = opcode;
-    operation.operands.push_back(operand);
+    operation.operand = operand;
 #if CURB_DEBUG
     operation.bytecode_offset = ir.bytecode_offset;
 #endif //CURB_DEBUG
@@ -2618,8 +2601,15 @@ void curb_vm_execute(curb_environment& env, curb_vm& vm)
             }
             case CURB_OPCODE_CALL_EXT:
             {
-                const int arg_count = curb_vm_read_int(vm);
-                const char* func_name = curb_vm_read_bytes(vm);;
+                curb_value* func_name_value = curb_vm_pop(env, vm);
+                if(func_name_value == nullptr || func_name_value->type != CURB_STRING)
+                {
+                    CURB_VM_ERROR(env, vm, "External Function Call expected function name to be pushed on stack");
+                    break;                    
+                }
+
+                const int arg_count = curb_vm_read_int(vm);                
+                const char* func_name = func_name_value->str;                
 
                 curb_array<curb_value*> args;
                 args.resize(arg_count);
@@ -2873,58 +2863,6 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             }
             break;
         }
-        case CURB_AST_FUNC_CALL:
-        {
-            const char* func_name = token.data.c_str();
-            const int arg_count = children.size();
-            const curb_symbol& symbol = curb_ir_get_symbol(ir, func_name);
-            if (symbol.type == CURB_SYM_FUNC)
-            {
-                if(symbol.argc != arg_count)
-                {
-                    context.valid = false;
-                    CURB_LOG_ERROR(context.env, "Function Call %s passed %d arguments, expected %d", func_name, arg_count, symbol.argc);
-                }
-                else
-                {
-                    // offset to account for the pushed base
-                    curb_ir_add_operation(ir, CURB_OPCODE_PUSH_BASE);
-                    size_t push_addr = curb_ir_add_operation(ir, CURB_OPCODE_PUSH_INT, curb_ir_operand_from_int(0));
-
-                    for (const curb_ast* arg : children)
-                        curb_ast_to_ir(context, arg, ir);
-
-                    const curb_ir_operand& func_addr = curb_ir_operand_from_int(symbol.offset); // func addr
-                    curb_ir_add_operation(ir, CURB_OPCODE_CALL, func_addr);
-
-                    curb_ir_get_operation(ir, push_addr).operands[0] = curb_ir_operand_from_int(ir.bytecode_offset);
-                }
-            }
-            else if (symbol.type == CURB_SYM_VAR)
-            {
-                context.valid = false;
-                CURB_LOG_ERROR(context.env, "Can not call variable %s as a function", func_name);
-            }
-            else if(context.env.external_functions.count(func_name))
-            {
-                for (const curb_ast* arg : children)
-                    curb_ast_to_ir(context, arg, ir);
-
-                const curb_ir_operand& arg_count_operand = curb_ir_operand_from_int(arg_count);
-                const curb_ir_operand& func_name_operand = curb_ir_operand_from_str(func_name);
-
-                curb_array<curb_ir_operand> operands;
-                operands.push_back(arg_count_operand);
-                operands.push_back(func_name_operand);
-                curb_ir_add_operation(ir, CURB_OPCODE_CALL_EXT, operands);
-            }
-            else
-            {
-                context.valid = false;
-                CURB_LOG_ERROR(context.env, "Function %s not defined", func_name);
-            }
-            break;
-        }
         case CURB_AST_STMT_EXPR:
         {
             if (children.size() == 1)
@@ -2997,7 +2935,7 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
 
             // Fixup stubbed block offsets
             curb_ir_operation& end_block_jmp_operation = curb_ir_get_operation(ir, end_block_jmp);
-            end_block_jmp_operation.operands[0] = curb_ir_operand_from_int(end_block_addr);
+            end_block_jmp_operation.operand = curb_ir_operand_from_int(end_block_addr);
             
             break;
         }
@@ -3032,10 +2970,10 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
 
             // Fixup stubbed block offsets
             curb_ir_operation& else_block_jmp_operation = curb_ir_get_operation(ir, else_block_jmp);
-            else_block_jmp_operation.operands[0] = curb_ir_operand_from_int(else_block_addr);
+            else_block_jmp_operation.operand = curb_ir_operand_from_int(else_block_addr);
 
             curb_ir_operation& end_block_jmp_operation = curb_ir_get_operation(ir, end_block_jmp);
-            end_block_jmp_operation.operands[0] = curb_ir_operand_from_int(end_block_addr);
+            end_block_jmp_operation.operand = curb_ir_operand_from_int(end_block_addr);
             
             break;
         }
@@ -3066,20 +3004,59 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
 
             // Fixup stubbed block offsets
             curb_ir_operation& end_block_jmp_operation = curb_ir_get_operation(ir, end_block_jmp);
-            end_block_jmp_operation.operands[0] = curb_ir_operand_from_int(end_block_addr);
+            end_block_jmp_operation.operand = curb_ir_operand_from_int(end_block_addr);
             
             break;
         }
-        case CURB_AST_PARAM:
+            case CURB_AST_FUNC_CALL:
         {
-            curb_ir_set_var(ir, token.data);
-            break;
-        }
-        case CURB_AST_PARAM_LIST:
-        {                
-            // start stack offset at beginning of parameter (this will be nagative relative to the current frame)
-            for (const curb_ast* param : children)
-                curb_ast_to_ir(context, param, ir);
+            const char* func_name = token.data.c_str();
+            const int arg_count = children.size();
+            const curb_symbol& symbol = curb_ir_get_symbol(ir, func_name);
+            if (symbol.type == CURB_SYM_FUNC)
+            {
+                if(symbol.argc != arg_count)
+                {
+                    context.valid = false;
+                    CURB_LOG_ERROR(context.env, "Function Call %s passed %d arguments, expected %d", func_name, arg_count, symbol.argc);
+                }
+                else
+                {
+                    // offset to account for the pushed base
+                    curb_ir_add_operation(ir, CURB_OPCODE_PUSH_BASE);
+                    size_t push_return_addr = curb_ir_add_operation(ir, CURB_OPCODE_PUSH_INT, curb_ir_operand_from_int(0));
+
+                    for (const curb_ast* arg : children)
+                        curb_ast_to_ir(context, arg, ir);
+
+                    const curb_ir_operand& func_addr = curb_ir_operand_from_int(symbol.offset); // func addr
+                    curb_ir_add_operation(ir, CURB_OPCODE_CALL, func_addr);
+
+                    // fixup the return address to after the call
+                    curb_ir_get_operation(ir, push_return_addr).operand = curb_ir_operand_from_int(ir.bytecode_offset);
+                }
+            }
+            else if (symbol.type == CURB_SYM_VAR)
+            {
+                context.valid = false;
+                CURB_LOG_ERROR(context.env, "Can not call variable %s as a function", func_name);
+            }
+            else if(context.env.external_functions.count(func_name))
+            {
+                for (const curb_ast* arg : children)
+                    curb_ast_to_ir(context, arg, ir);
+
+                const curb_ir_operand& arg_count_operand = curb_ir_operand_from_int(arg_count);
+                const curb_ir_operand& func_name_operand = curb_ir_operand_from_str(func_name);
+
+                curb_ir_add_operation(ir, CURB_OPCODE_PUSH_STRING, func_name_operand);
+                curb_ir_add_operation(ir, CURB_OPCODE_CALL_EXT, arg_count_operand);
+            }
+            else
+            {
+                context.valid = false;
+                CURB_LOG_ERROR(context.env, "Function %s not defined", func_name);
+            }
             break;
         }
         case CURB_AST_RETURN:
@@ -3095,6 +3072,18 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
                 curb_ir_add_operation(ir, CURB_OPCODE_PUSH_NONE);
                 curb_ir_add_operation(ir, CURB_OPCODE_RETURN, offset);
             }
+            break;
+        }
+        case CURB_AST_PARAM:
+        {
+            curb_ir_set_var(ir, token.data);
+            break;
+        }
+        case CURB_AST_PARAM_LIST:
+        {                
+            // start stack offset at beginning of parameter (this will be nagative relative to the current frame)
+            for (const curb_ast* param : children)
+                curb_ast_to_ir(context, param, ir);
             break;
         }
         case CURB_AST_FUNC_DEF:
@@ -3141,7 +3130,7 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
 
             // fixup jump operand
             curb_ir_operation& end_block_jmp_operation = curb_ir_get_operation(ir, end_block_jmp);
-            end_block_jmp_operation.operands[0] = curb_ir_operand_from_int(end_block_addr);
+            end_block_jmp_operation.operand = curb_ir_operand_from_int(end_block_addr);
 
             break;
         }
@@ -3162,25 +3151,23 @@ void curb_ir_to_bytecode(curb_ir& ir, curb_array<char>& bytecode)
         *instruction = (char)operation.opcode;
         ++instruction;    
 
-        for(const curb_ir_operand& operand : operation.operands)
+        const curb_ir_operand& operand = operation.operand;
+        switch (operand.type)
         {
-            switch (operand.type)
-            {
-            case CURB_IR_OPERAND_NONE:
-                break;
-            case CURB_IR_OPERAND_BOOL:
-            case CURB_IR_OPERAND_INT:
-            case CURB_IR_OPERAND_FLOAT:
-                for (size_t i = 0; i < curb_ir_operand_size(operand); ++i)
-                    *(instruction++) = operand.data.bytes[i];
-                break;
-            case CURB_IR_OPERAND_BYTES:
-                for (size_t i = 0; i < strlen(operand.data.str); ++i)
-                    *(instruction++) = operand.data.str[i];
+        case CURB_IR_OPERAND_NONE:
+            break;
+        case CURB_IR_OPERAND_BOOL:
+        case CURB_IR_OPERAND_INT:
+        case CURB_IR_OPERAND_FLOAT:
+            for (size_t i = 0; i < curb_ir_operand_size(operand); ++i)
+                *(instruction++) = operand.data.bytes[i];
+            break;
+        case CURB_IR_OPERAND_BYTES:
+            for (size_t i = 0; i < strlen(operand.data.str); ++i)
+                *(instruction++) = operand.data.str[i];
 
-                *(instruction++) = 0; // null terminate
-                break;
-            }
+            *(instruction++) = 0; // null terminate
+            break;
         }
     }
 }

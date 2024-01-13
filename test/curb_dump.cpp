@@ -136,25 +136,23 @@ void dump_bytecode(const curb_ir& ir)
 	for(const curb_ir_operation& operation : ir.operations)
 	{
 		printf("%d\t\t%s", (int)operation.bytecode_offset, curb_opcode_labels[(int)operation.opcode]);
-		for (curb_ir_operand operand : operation.operands)
+		curb_ir_operand operand = operation.operand;
+		switch (operand.type)
 		{
-			switch (operand.type)
-			{
-			case CURB_IR_OPERAND_BOOL:
-				printf(" %s", operand.data.b ? "true" : "false");
-				break;
-			case CURB_IR_OPERAND_INT:
-				printf(" %d", operand.data.i);
-				break;
-			case CURB_IR_OPERAND_FLOAT:
-				printf(" %f", operand.data.f);
-				break;
-			case CURB_IR_OPERAND_BYTES:
-				printf(" %s", operand.data.str);
-				break;
-			case CURB_IR_OPERAND_NONE:
-				break;
-			}
+		case CURB_IR_OPERAND_BOOL:
+			printf(" %s", operand.data.b ? "true" : "false");
+			break;
+		case CURB_IR_OPERAND_INT:
+			printf(" %d", operand.data.i);
+			break;
+		case CURB_IR_OPERAND_FLOAT:
+			printf(" %f", operand.data.f);
+			break;
+		case CURB_IR_OPERAND_BYTES:
+			printf(" %s", operand.data.str);
+			break;
+		case CURB_IR_OPERAND_NONE:
+			break;
 		}
 		printf("\n");
 	}
