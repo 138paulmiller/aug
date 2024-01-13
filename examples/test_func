@@ -50,17 +50,20 @@ func fizzbuzz(i)
 {
     var a = i % 3 == 0;
     var b = i % 5 == 0;
-    if a & b
+    if a and b
     {
-        print("Fizzbuzz");
+        var c  = a and b;
+        expect(c, "Fizzbuzz");
     }
     else if a
     {
-        print("Fizz");
+        var c  = a and !b;
+        expect(c, "Fizz");
     }
     else if b
     {
-        print("buzz");
+        var c  = !a and b;
+        expect(c, "Buzz");
     }
 }
 

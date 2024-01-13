@@ -135,10 +135,7 @@ struct curb_symbol
     int offset;
 };
 
-struct curb_symtable
-{
-    curb_map<curb_string, curb_symbol> symbols;
-};
+using curb_symtable = curb_map<curb_string, curb_symbol>;
 
 struct curb_script
 {
@@ -1799,14 +1796,14 @@ inline bool curb_ir_set_var(curb_ir& ir, const curb_string& name)
     curb_symtable& symtable = frame.symtable;
     const int offset = frame.stack_offset++;
 
-    if (symtable.symbols.count(name) != 0)
+    if (symtable.count(name) != 0)
         return false;
 
     curb_symbol sym;
     sym.type = CURB_IR_SYM_VAR;
     sym.offset = offset;
 
-    symtable.symbols[name] = sym;
+    symtable[name] = sym;
     return true;
 }
 
@@ -1817,14 +1814,14 @@ inline bool curb_ir_set_func(curb_ir& ir, const curb_string& name)
 
     const int offset = ir.bytecode_offset;
 
-    if (symtable.symbols.count(name) != 0)
+    if (symtable.count(name) != 0)
         return false;
 
     curb_symbol sym;
     sym.type = CURB_IR_SYM_FUNC;
     sym.offset = offset;
 
-    symtable.symbols[name] = sym;
+    symtable[name] = sym;
 }
 
 inline curb_symbol curb_ir_get_symbol(curb_ir& ir, const curb_string& name)
@@ -1832,8 +1829,8 @@ inline curb_symbol curb_ir_get_symbol(curb_ir& ir, const curb_string& name)
     for (int i = ir.frame_stack.size() - 1; i >= 0; --i)
     {
         curb_symtable& symtable = ir.frame_stack.at(i).symtable;
-        if (symtable.symbols.count(name))
-            return symtable.symbols[name];
+        if (symtable.count(name))
+            return symtable[name];
     }
 
     curb_symbol sym;
@@ -1848,11 +1845,11 @@ inline curb_symbol curb_ir_symbol_relative(curb_ir& ir, const curb_string& name)
     {
         curb_ir_frame& frame = ir.frame_stack.at(i);
         curb_symtable& symtable = frame.symtable;
-        if (symtable.symbols.count(name))
+        if (symtable.count(name))
         {
 
             const curb_ir_frame& top_frame = curb_ir_current_frame(ir);
-            curb_symbol symbol = symtable.symbols[name];
+            curb_symbol symbol = symtable[name];
             symbol.offset = symbol.offset - top_frame.base_index;
             return symbol;
         }
@@ -1869,8 +1866,8 @@ inline curb_symbol curb_ir_get_symbol_local(curb_ir& ir, const curb_string& name
     const curb_ir_frame& frame = curb_ir_current_frame(ir);
     const curb_symtable& symtable = frame.symtable;
 
-    if (symtable.symbols.count(name))
-        return symtable.symbols.at(name);
+    if (symtable.count(name))
+        return symtable.at(name);
 
     curb_symbol sym;
     sym.offset = CURB_OPCODE_INVALID;
@@ -2659,13 +2656,13 @@ curb_value curb_vm_execute_function(curb_environment& env, curb_vm& vm, curb_scr
     curb_value ret_value;
     ret_value.type = CURB_NONE;
 
-    if (script.global_symtable.symbols.count(func_name) == 0)
+    if (script.global_symtable.count(func_name) == 0)
     {
         CURB_LOG_ERROR(env, "Function name not defined %s", func_name);
         return ret_value;
     }
 
-    const curb_symbol& symbol = script.global_symtable.symbols[func_name];
+    const curb_symbol& symbol = script.global_symtable[func_name];
     if (symbol.type != CURB_IR_SYM_FUNC)
     {
         CURB_LOG_ERROR(env, "%s is not defined as a function", func_name);
@@ -3175,7 +3172,7 @@ void curb_ir_to_bytecode(curb_ir& ir, curb_array<char>& bytecode)
 bool curb_compile_script(curb_environment& env, curb_ast* root, curb_script& script)
 {
     script.bytecode.clear();
-    script.global_symtable.symbols.clear();
+    script.global_symtable.clear();
 
     bool success = curb_pass_semantic_check(root);
     if (!success)
