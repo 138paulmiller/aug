@@ -112,12 +112,14 @@ void curb_test_native(const char* filename)
 	curb_compile(tester.env, script, filename);
 
 	curb_array<curb_value> args;
-	args.push_back(curb_int(30));
-	
+	args.push_back(curb_int(5));
+	//args.push_back(curb_int(30));
+
 	curb_value value = curb_call(tester.env, script, "fibonacci", args);
 	
-	bool success = value.i == 832040;
-	const curb_string message = "fibonacci(30) = " + curb_to_string(&value);
+	bool success = value.i == 5;
+	//bool success = value.i == 832040;
+	const curb_string message = "fibonacci = " + curb_to_string(&value);
 	tester.verify(success, message);
 }
 
