@@ -1,41 +1,44 @@
-
-func fizzbuzz(i)
-{
-    var a = i % 3 == 0;
-    var b = i % 5 == 0;
-    if a and b
-    {
-        var msg = "Fizzbuzz";
-        print(msg);
-    }
-    else if a
-    {
-        var msg = "Fizz";
-        print(msg);
-    }
-    else if b
-    {        
-        var msg = "Buzz";
-        print(msg);
-    }
-}
+var a = 1;
 
 func fibonacci(n) {
     var a = 0;
     var b = 1;
     var c = 0;
     var sum = 0;
-    var count = 0;
-    while count < n {
-        count = count + 1;
-        var d = count - 1;
-        fizzbuzz(d);
-        a = b;
+    var count = n;
+
+    while count > 0 {
+        count = count - 1; 
+        a = b ;
         b = sum; 
         sum = a + b;
     }
     return sum;
 }
 
-var a = fibonacci(40);
-expect(a == 102334155, "fibonacci(40) = ", a);
+expect(a == 1, "a == ", a);
+
+
+a = fibonacci(30);
+expect(a == 832040, "fibonacci(30) = ", a);
+
+a = fibonacci(20);
+expect(a == 6765, "fibonacci(20) = ", a);
+
+func fibonacci_rec(a) {
+    if a == 0 { 
+        return 0; 
+    }
+    else if a == 1 { 
+        return 1; 
+    }
+    return fibonacci_rec(a-1) + fibonacci_rec(a-2);
+}
+
+a = fibonacci_rec(20);
+expect(a == 6765, "fibonacci_rec(20) = ", a);
+
+a = fibonacci_rec(30);
+expect(a == 832040, "fibonacci_rec(30) = ", a);
+
+

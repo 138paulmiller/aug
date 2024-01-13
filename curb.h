@@ -122,9 +122,9 @@ struct curb_object
 
 enum curb_symbol_type
 {
-    CURB_IR_SYM_NONE,
-    CURB_IR_SYM_VAR,
-    CURB_IR_SYM_FUNC,
+    CURB_SYM_NONE,
+    CURB_SYM_VAR,
+    CURB_SYM_FUNC,
 };
 
 struct curb_symbol
@@ -1800,7 +1800,7 @@ inline bool curb_ir_set_var(curb_ir& ir, const curb_string& name)
         return false;
 
     curb_symbol sym;
-    sym.type = CURB_IR_SYM_VAR;
+    sym.type = CURB_SYM_VAR;
     sym.offset = offset;
 
     symtable[name] = sym;
@@ -1818,7 +1818,7 @@ inline bool curb_ir_set_func(curb_ir& ir, const curb_string& name)
         return false;
 
     curb_symbol sym;
-    sym.type = CURB_IR_SYM_FUNC;
+    sym.type = CURB_SYM_FUNC;
     sym.offset = offset;
 
     symtable[name] = sym;
@@ -1835,7 +1835,7 @@ inline curb_symbol curb_ir_get_symbol(curb_ir& ir, const curb_string& name)
 
     curb_symbol sym;
     sym.offset = CURB_OPCODE_INVALID;
-    sym.type = CURB_IR_SYM_NONE;
+    sym.type = CURB_SYM_NONE;
     return sym;
 }
 
@@ -1857,7 +1857,7 @@ inline curb_symbol curb_ir_symbol_relative(curb_ir& ir, const curb_string& name)
 
     curb_symbol sym;
     sym.offset = CURB_OPCODE_INVALID;
-    sym.type = CURB_IR_SYM_NONE;
+    sym.type = CURB_SYM_NONE;
     return sym;
 }
 
@@ -1871,7 +1871,7 @@ inline curb_symbol curb_ir_get_symbol_local(curb_ir& ir, const curb_string& name
 
     curb_symbol sym;
     sym.offset = CURB_OPCODE_INVALID;
-    sym.type = CURB_IR_SYM_NONE;
+    sym.type = CURB_SYM_NONE;
     return sym;
 }
 
@@ -2663,7 +2663,7 @@ curb_value curb_vm_execute_function(curb_environment& env, curb_vm& vm, curb_scr
     }
 
     const curb_symbol& symbol = script.global_symtable[func_name];
-    if (symbol.type != CURB_IR_SYM_FUNC)
+    if (symbol.type != CURB_SYM_FUNC)
     {
         CURB_LOG_ERROR(env, "%s is not defined as a function", func_name);
         return ret_value;
@@ -2796,14 +2796,14 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
         case CURB_AST_VARIABLE:
         {
             const curb_symbol& symbol = curb_ir_symbol_relative(ir, token.data);
-            if (symbol.type == CURB_IR_SYM_NONE)
+            if (symbol.type == CURB_SYM_NONE)
             {
                 context.valid = false;
                 CURB_LOG_ERROR(context.env, "Variable %s not defined in current block", token.data.c_str());
                 break;
             }
 
-            if (symbol.type == CURB_IR_SYM_FUNC)
+            if (symbol.type == CURB_SYM_FUNC)
             {
                 context.valid = false;
                 CURB_LOG_ERROR(context.env, "Function %s can not be used as a variable", token.data.c_str());
@@ -2862,7 +2862,7 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             const char* func_name = token.data.c_str();
             const int arg_count = children.size();
             const curb_symbol& symbol = curb_ir_get_symbol(ir, func_name);
-            if (symbol.type == CURB_IR_SYM_FUNC)
+            if (symbol.type == CURB_SYM_FUNC)
             {
                 for (const curb_ast* arg : children)
                     curb_ast_to_ir(context, arg, ir);
@@ -2875,7 +2875,7 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
                 operands.push_back(arg_count);
                 curb_ir_add_operation(ir, CURB_OPCODE_CALL, operands);
             }
-            else if (symbol.type == CURB_IR_SYM_VAR)
+            else if (symbol.type == CURB_SYM_VAR)
             {
                 context.valid = false;
                 CURB_LOG_ERROR(context.env, "Can not call variable %s as a function", func_name);
@@ -2916,13 +2916,13 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
                 curb_ast_to_ir(context, children[0], ir);
 
             const curb_symbol& symbol = curb_ir_symbol_relative(ir, token.data);
-            if (symbol.type != CURB_INT)
+            if (symbol.type != CURB_SYM_VAR)
             {
                 context.valid = false;
                 CURB_LOG_ERROR(context.env, "Variable %s not defined", token.data.c_str());
                 break;
             }
-
+            
             const curb_ir_operand& address_operand = curb_ir_operand_from_int(symbol.offset);
             curb_ir_add_operation(ir, CURB_OPCODE_LOAD_LOCAL, address_operand);
 
