@@ -171,13 +171,9 @@ void curb_dump_file(curb_environment env, const char* filename)
 	dump_ast(root);
 
 	// Generate IR
-	curb_ast_to_ir_context context;
-	context.valid = true;
-	context.env = env;
-
 	curb_ir ir;
-
-	curb_ast_to_ir(context, root, ir);
+    curb_ir_init(ir);
+	curb_ast_to_ir(env, root, ir);
 
 	dump_bytecode(ir);
 

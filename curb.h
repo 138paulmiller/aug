@@ -141,7 +141,7 @@ using curb_symtable = curb_map<curb_string, curb_symbol>;
 struct curb_script
 {
     bool valid;
-    curb_symtable global_symtable;
+    curb_symtable globals;
     curb_array<char> bytecode;
 };
 
@@ -1186,7 +1186,6 @@ curb_ast* curb_parse_stmt_var(curb_environment& env, curb_lexer& lexer)
         CURB_PARSE_ERROR(env, lexer, "Variable assignment expected expression after \"=\"");
         return nullptr;
     }
-
     if (lexer.curr.id != CURB_TOKEN_SEMICOLON)
     {
         curb_ast_delete(expr);
@@ -1647,28 +1646,44 @@ struct curb_ir_operation
 
 struct curb_ir_scope
 {
-    int base_index = 0;
-    int stack_offset = 0;
+    int base_index;
+    int stack_offset;
     curb_symtable symtable;
 };
 
 struct curb_ir_frame
 {
-    int base_index = 0;
-    int arg_count = 0;
+    int base_index;
+    int arg_count;
     curb_array< curb_ir_scope> scope_stack;
 };
 
 // All the blocks within a compilation/translation unit (i.e. file, code literal)
 struct curb_ir
 {		
-    curb_array<curb_ir_operation> operations;
-    size_t bytecode_offset = 0;
-    
+    // Transient IR data
     curb_array<curb_ir_frame> frame_stack;
+    int label_count;
 
-    int label_count = 0;
+    // Generated data
+    curb_array<curb_ir_operation> operations;
+    size_t bytecode_offset;
+    
+    // Assigned to the outer-most frame's symbol table. 
+    // This field is initialized after generation, so not available during the generation pass. 
+    curb_symtable globals;
+    bool valid;
 };
+
+
+inline void curb_ir_init(curb_ir& ir)
+{
+    ir.valid = true;
+    ir.label_count = 0;
+    ir.bytecode_offset = 0;
+    ir.frame_stack.clear();
+    ir.operations.clear();
+}
 
 inline size_t curb_ir_operand_size(const curb_ir_operand& operand)
 {
@@ -1804,6 +1819,8 @@ inline void curb_ir_push_frame(curb_ir& ir, int arg_count)
 
 inline void curb_ir_pop_frame(curb_ir& ir)
 {
+    if(ir.frame_stack.size() == 1)
+        ir.globals = curb_ir_current_scope(ir).symtable; // pass global frame symbols to ir
     ir.frame_stack.pop_back();
 }
 
@@ -2653,16 +2670,21 @@ curb_value curb_vm_execute_function(curb_environment& env, curb_vm& vm, curb_scr
     curb_value ret_value;
     ret_value.type = CURB_NONE;
 
-    if (script.global_symtable.count(func_name) == 0)
+    if (script.globals.count(func_name) == 0)
     {
         CURB_LOG_ERROR(env, "Function name not defined %s", func_name);
         return ret_value;
     }
 
-    const curb_symbol& symbol = script.global_symtable[func_name];
+    const curb_symbol& symbol = script.globals[func_name];
     if (symbol.type != CURB_SYM_FUNC)
     {
         CURB_LOG_ERROR(env, "%s is not defined as a function", func_name);
+        return ret_value;
+    }
+    if (symbol.argc != (int)args.size())
+    {
+        CURB_LOG_ERROR(env, "Function Call %s passed %d arguments, expected %d", func_name, (int)args.size(), symbol.argc);
         return ret_value;
     }
 
@@ -2709,15 +2731,10 @@ bool curb_pass_semantic_check(const curb_ast* node)
 }
 
 // -------------------------------------- Transformations ---------------------------------------// 
-struct curb_ast_to_ir_context
-{
-    bool valid;
-    curb_environment env;
-};
 
-void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_ir& ir)
+void curb_ast_to_ir(curb_environment& env, const curb_ast* node, curb_ir& ir)
 {
-    if(node == nullptr|| !context.valid)
+    if(node == nullptr|| !ir.valid)
         return;
 
     const curb_token& token = node->token;
@@ -2727,22 +2744,24 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
     {
         case CURB_AST_ROOT:
         {
-            curb_ir_push_frame(ir, 0); // push a global block. This will be returned
+            curb_ir_push_frame(ir, 0); // push a global frame
 
             for (curb_ast* stmt : children)
-                curb_ast_to_ir(context, stmt, ir);
+                curb_ast_to_ir(env, stmt, ir);
 
-            // End block, default exit
             // Restore stack
             const curb_ir_operand delta = curb_ir_operand_from_int(curb_ir_local_offset(ir));
             curb_ir_add_operation(ir, CURB_OPCODE_DEC_STACK, delta);
             curb_ir_add_operation(ir, CURB_OPCODE_EXIT);
+
+            curb_ir_pop_frame(ir); // pop global block
+
             break;
         }
         case CURB_AST_BLOCK: 
         {
             for (curb_ast* stmt : children)
-                curb_ast_to_ir(context, stmt, ir);
+                curb_ast_to_ir(env, stmt, ir);
             break;
         }
         case CURB_AST_LITERAL:
@@ -2805,15 +2824,15 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             const curb_symbol& symbol = curb_ir_symbol_relative(ir, token.data);
             if (symbol.type == CURB_SYM_NONE)
             {
-                context.valid = false;
-                CURB_LOG_ERROR(context.env, "Variable %s not defined in current block", token.data.c_str());
+                ir.valid = false;
+                CURB_LOG_ERROR(env, "Variable %s not defined in current block", token.data.c_str());
                 break;
             }
 
             if (symbol.type == CURB_SYM_FUNC)
             {
-                context.valid = false;
-                CURB_LOG_ERROR(context.env, "Function %s can not be used as a variable", token.data.c_str());
+                ir.valid = false;
+                CURB_LOG_ERROR(env, "Function %s can not be used as a variable", token.data.c_str());
                 break;
             }
 
@@ -2826,7 +2845,7 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
         {
             assert(children.size() == 1); // token [0]
 
-            curb_ast_to_ir(context, children[0], ir);
+            curb_ast_to_ir(env, children[0], ir);
 
             switch(token.id)
             {
@@ -2839,8 +2858,8 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
         {
             assert(children.size() == 2); // [0] token [1]
 
-            curb_ast_to_ir(context, children[1], ir); // RHS
-            curb_ast_to_ir(context, children[0], ir); // LHS
+            curb_ast_to_ir(env, children[1], ir); // RHS
+            curb_ast_to_ir(env, children[0], ir); // LHS
 
             switch(token.id)
             {
@@ -2867,7 +2886,7 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
         {
             if (children.size() == 1)
             {
-                curb_ast_to_ir(context, children[0], ir);
+                curb_ast_to_ir(env, children[0], ir);
                 // discard the top
                 curb_ir_add_operation(ir, CURB_OPCODE_POP);
             }
@@ -2876,7 +2895,7 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
         case CURB_AST_STMT_ASSIGN:
         {
             if (children.size() == 1) // token = [0]
-                curb_ast_to_ir(context, children[0], ir);
+                curb_ast_to_ir(env, children[0], ir);
 
             const curb_symbol& symbol = curb_ir_symbol_relative(ir, token.data);
             if (symbol.type == CURB_SYM_NONE)
@@ -2886,8 +2905,8 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             }
             else if (symbol.type == CURB_SYM_FUNC)
             {
-                context.valid = false;
-                CURB_LOG_ERROR(context.env, "Can not assign function %s as a variable", token.data.c_str());
+                ir.valid = false;
+                CURB_LOG_ERROR(env, "Can not assign function %s as a variable", token.data.c_str());
                 break;
             }
 
@@ -2900,20 +2919,19 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
         case CURB_AST_STMT_VAR:
         {
             if (children.size() == 1) // token = [0]
-                curb_ast_to_ir(context, children[0], ir);
+                curb_ast_to_ir(env, children[0], ir);
 
             const curb_symbol symbol = curb_ir_get_symbol_local(ir, token.data);
             if (symbol.offset != CURB_OPCODE_INVALID)
             {
-                context.valid = false;
-                CURB_LOG_ERROR(context.env, "Variable %s already defined", token.data.c_str());
+                ir.valid = false;
+                CURB_LOG_ERROR(env, "Variable %s already defined", token.data.c_str());
                 break;
             }
             
             curb_ir_set_var(ir, token.data);
             break;
         }
-
         case CURB_AST_STMT_IF:
         {
             assert(children.size() == 2); //if ([0]) {[1]}
@@ -2921,14 +2939,14 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             const curb_ir_operand stub_operand = curb_ir_operand_from_int(0);
 
             // Evaluate expression. 
-            curb_ast_to_ir(context, children[0], ir);
+            curb_ast_to_ir(env, children[0], ir);
 
             //Jump to end if false
             const size_t end_block_jmp = curb_ir_add_operation(ir, CURB_OPCODE_JUMP_ZERO, stub_operand);
 
             // True block
             curb_ir_push_scope(ir);
-            curb_ast_to_ir(context, children[1], ir);
+            curb_ast_to_ir(env, children[1], ir);
             curb_ir_pop_scope(ir);
 
             const size_t end_block_addr = ir.bytecode_offset;
@@ -2946,14 +2964,14 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             const curb_ir_operand stub_operand = curb_ir_operand_from_int(0);
 
             // Evaluate expression. 
-            curb_ast_to_ir(context, children[0], ir);
+            curb_ast_to_ir(env, children[0], ir);
 
             //Jump to else if false
             const size_t else_block_jmp = curb_ir_add_operation(ir, CURB_OPCODE_JUMP_ZERO, stub_operand);
 
             // True block
             curb_ir_push_scope(ir);
-            curb_ast_to_ir(context, children[1], ir);
+            curb_ast_to_ir(env, children[1], ir);
             curb_ir_pop_scope(ir);
                 
             //Jump to end after true
@@ -2962,7 +2980,7 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
 
             // Else block
             curb_ir_push_scope(ir);
-            curb_ast_to_ir(context, children[2], ir);
+            curb_ast_to_ir(env, children[2], ir);
             curb_ir_pop_scope(ir);
 
             // Tag end address
@@ -2986,14 +3004,14 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             const curb_ir_operand& begin_block_operand = curb_ir_operand_from_int(ir.bytecode_offset);
 
             // Evaluate expression. 
-            curb_ast_to_ir(context, children[0], ir);
+            curb_ast_to_ir(env, children[0], ir);
 
             //Jump to end if false
             const size_t end_block_jmp = curb_ir_add_operation(ir, CURB_OPCODE_JUMP_ZERO, stub_operand);
 
             // Loop block
             curb_ir_push_scope(ir);
-            curb_ast_to_ir(context, children[1], ir);
+            curb_ast_to_ir(env, children[1], ir);
             curb_ir_pop_scope(ir);
 
             // Jump back to beginning, expr evaluation 
@@ -3008,7 +3026,7 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             
             break;
         }
-            case CURB_AST_FUNC_CALL:
+        case CURB_AST_FUNC_CALL:
         {
             const char* func_name = token.data.c_str();
             const int arg_count = children.size();
@@ -3017,8 +3035,8 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             {
                 if(symbol.argc != arg_count)
                 {
-                    context.valid = false;
-                    CURB_LOG_ERROR(context.env, "Function Call %s passed %d arguments, expected %d", func_name, arg_count, symbol.argc);
+                    ir.valid = false;
+                    CURB_LOG_ERROR(env, "Function Call %s passed %d arguments, expected %d", func_name, arg_count, symbol.argc);
                 }
                 else
                 {
@@ -3027,7 +3045,7 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
                     size_t push_return_addr = curb_ir_add_operation(ir, CURB_OPCODE_PUSH_INT, curb_ir_operand_from_int(0));
 
                     for (const curb_ast* arg : children)
-                        curb_ast_to_ir(context, arg, ir);
+                        curb_ast_to_ir(env, arg, ir);
 
                     const curb_ir_operand& func_addr = curb_ir_operand_from_int(symbol.offset); // func addr
                     curb_ir_add_operation(ir, CURB_OPCODE_CALL, func_addr);
@@ -3038,13 +3056,13 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             }
             else if (symbol.type == CURB_SYM_VAR)
             {
-                context.valid = false;
-                CURB_LOG_ERROR(context.env, "Can not call variable %s as a function", func_name);
+                ir.valid = false;
+                CURB_LOG_ERROR(env, "Can not call variable %s as a function", func_name);
             }
-            else if(context.env.external_functions.count(func_name))
+            else if(env.external_functions.count(func_name))
             {
                 for (const curb_ast* arg : children)
-                    curb_ast_to_ir(context, arg, ir);
+                    curb_ast_to_ir(env, arg, ir);
 
                 const curb_ir_operand& arg_count_operand = curb_ir_operand_from_int(arg_count);
                 const curb_ir_operand& func_name_operand = curb_ir_operand_from_str(func_name);
@@ -3054,8 +3072,8 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             }
             else
             {
-                context.valid = false;
-                CURB_LOG_ERROR(context.env, "Function %s not defined", func_name);
+                ir.valid = false;
+                CURB_LOG_ERROR(env, "Function %s not defined", func_name);
             }
             break;
         }
@@ -3064,7 +3082,7 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
             const curb_ir_operand& offset = curb_ir_operand_from_int(curb_ir_calling_offset(ir));
             if(children.size() == 1) //return [0];
             {
-                curb_ast_to_ir(context, children[0], ir);
+                curb_ast_to_ir(env, children[0], ir);
                 curb_ir_add_operation(ir, CURB_OPCODE_RETURN, offset);
             }
             else
@@ -3083,7 +3101,7 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
         {                
             // start stack offset at beginning of parameter (this will be nagative relative to the current frame)
             for (const curb_ast* param : children)
-                curb_ast_to_ir(context, param, ir);
+                curb_ast_to_ir(env, param, ir);
             break;
         }
         case CURB_AST_FUNC_DEF:
@@ -3102,18 +3120,18 @@ void curb_ast_to_ir(curb_ast_to_ir_context& context, const curb_ast* node, curb_
 
             if (!curb_ir_set_func(ir, func_name, param_count))
             {
-                context.valid = false;
-                CURB_LOG_ERROR(context.env, "Function %s already defined", func_name);
+                ir.valid = false;
+                CURB_LOG_ERROR(env, "Function %s already defined", func_name);
                 break;
             }
 
             // Parameter frame
             curb_ir_push_scope(ir);
-            curb_ast_to_ir(context, children[0], ir);
+            curb_ast_to_ir(env, children[0], ir);
 
             // Function block frame
             curb_ir_push_frame(ir, param_count);
-            curb_ast_to_ir(context, children[1], ir);
+            curb_ast_to_ir(env, children[1], ir);
 
             // Ensure there is a return
             if (ir.operations.at(ir.operations.size() - 1).opcode != CURB_OPCODE_RETURN)
@@ -3177,29 +3195,25 @@ void curb_ir_to_bytecode(curb_ir& ir, curb_array<char>& bytecode)
 bool curb_compile_script(curb_environment& env, curb_ast* root, curb_script& script)
 {
     script.bytecode.clear();
-    script.global_symtable.clear();
+    script.globals.clear();
 
     bool success = curb_pass_semantic_check(root);
     if (!success)
         return false;
 
     // Generate IR
-    curb_ast_to_ir_context context;
-    context.valid = true;
-    context.env = env;
-
     curb_ir ir;
-    curb_ast_to_ir(context, root, ir);
+    curb_ir_init(ir);
+    curb_ast_to_ir(env, root, ir);
 
-    if (!context.valid)
+    if (!ir.valid)
         return false;
-
-    script.global_symtable = curb_ir_current_scope(ir).symtable;
 
     // Load bytecode into VM
     curb_ir_to_bytecode(ir, script.bytecode);
 
-    return context.valid;
+    script.globals = ir.globals;
+    return ir.valid;
 }
 
 void curb_register(curb_environment& env, const char* func_name, curb_function_callback *callback)
