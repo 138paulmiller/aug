@@ -31,7 +31,7 @@ struct curb_tester
 
 	void end()
 	{
-		if (verbose)
+		if (verbose && total > 0)
 			printf("[TEST]\tEnded. Passed %d / %d\n", passed, total);
 		else
 			printf("[%s]\t%s\n", passed == total ? "PASS" : "FAIL", filename.c_str());
