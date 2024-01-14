@@ -1,6 +1,6 @@
 
 OUT_DIR = ../build
-TARGET = $(OUT_DIR)/shl_test
+TARGET = $(OUT_DIR)/aug_test
 SRC = $(wildcard *.cpp)
 CC = g++
 CFLAGS = -Wall

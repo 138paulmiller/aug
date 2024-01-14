@@ -1,21 +1,21 @@
-#define CURB_LOG_VERBOSE
-#include <curb.h>
+#define AUG_LOG_VERBOSE
+#include <aug.h>
 
 #include <string.h>
 
-void curb_dump_file(curb_environment env, const char* filename);
+void aug_dump_file(aug_environment env, const char* filename);
 
-struct curb_tester
+struct aug_tester
 {
 	int passed = 0;
 	int total = 0;
 	int verbose = 0;
 	bool dump;
-	curb_string filename;
+	aug_string filename;
 
-	curb_environment env;
+	aug_environment env;
 	
-	void begin(curb_environment test_env, const char* file)
+	void begin(aug_environment test_env, const char* file)
 	{
 		env = test_env;
 		filename = file;
@@ -23,7 +23,7 @@ struct curb_tester
 		total = 0;
 
 		if (dump)
-			curb_dump_file(env, file);
+			aug_dump_file(env, file);
 
 		if (verbose)
 			printf("[TEST]\t%s\n", filename.c_str());
@@ -37,7 +37,7 @@ struct curb_tester
 			printf("[%s]\t%s\n", passed == total ? "PASS" : "FAIL", filename.c_str());
 	}
 
-	void verify(bool success, const curb_string& message)
+	void verify(bool success, const aug_string& message)
 	{
 		++total;
 
@@ -55,39 +55,39 @@ struct curb_tester
 	}
 };
 
-curb_tester tester;
+aug_tester tester;
 
-void print(const curb_value* arg)
+void print(const aug_value* arg)
 {
 	if (arg == nullptr)
 		return;
 
 	switch (arg->type)
 	{
-	case CURB_NONE:
+	case AUG_NONE:
 		printf("none");
 		break;
-	case CURB_BOOL:
+	case AUG_BOOL:
 		printf("%s", arg->b ? "true" : "false");
 		break;
-	case CURB_INT:
+	case AUG_INT:
 		printf("%d", arg->i);
 		break;
-	case CURB_FLOAT:
+	case AUG_FLOAT:
 		printf("%0.3f", arg->f);
 		break;
-	case CURB_STRING:
+	case AUG_STRING:
 		printf("%s", arg->str);
 		break;
-	case CURB_OBJECT:
+	case AUG_OBJECT:
 		printf("object");
 		break;
 	}
 }
 
-void print(curb_value* return_value, const curb_array<curb_value*>& args)
+void print(aug_value* return_value, const aug_array<aug_value*>& args)
 {
-	for (curb_value* arg : args)
+	for (aug_value* arg : args)
 	{
 		print(arg);
 	}
@@ -95,41 +95,41 @@ void print(curb_value* return_value, const curb_array<curb_value*>& args)
 	printf("\n");
 }
 
-void expect(curb_value* return_value, const curb_array<curb_value*>& args)
+void expect(aug_value* return_value, const aug_array<aug_value*>& args)
 {
 	if (args.size() == 0)
 		return;
 
-	bool success = curb_to_bool(args[0]);
-	curb_string message;
+	bool success = aug_to_bool(args[0]);
+	aug_string message;
 	for( size_t i = 1; i < args.size(); ++i)
-		message += curb_to_string(args[i]);
+		message += aug_to_string(args[i]);
 	
 	tester.verify(success, message);
 }
 
-void curb_test_native(const char* filename)
+void aug_test_native(const char* filename)
 {
-	curb_script script;
-	curb_compile(tester.env, script, filename);
+	aug_script script;
+	aug_compile(tester.env, script, filename);
 
-	curb_array<curb_value> args;
-	args.push_back(curb_from_int(5));
-	//args.push_back(curb_from_int(30));
+	aug_array<aug_value> args;
+	args.push_back(aug_from_int(5));
+	//args.push_back(aug_from_int(30));
 
-	curb_value value = curb_call(tester.env, script, "fibonacci", args);
+	aug_value value = aug_call(tester.env, script, "fibonacci", args);
 	
 	bool success = value.i == 5;
 	//bool success = value.i == 832040;
-	const curb_string message = "fibonacci = " + curb_to_string(&value);
+	const aug_string message = "fibonacci = " + aug_to_string(&value);
 	tester.verify(success, message);
 }
 
-curb_environment curb_test_env()
+aug_environment aug_test_env()
 {
-	curb_environment env;
-	curb_register(env, "print", print);
-	curb_register(env, "expect", expect);
+	aug_environment env;
+	aug_register(env, "print", print);
+	aug_register(env, "expect", expect);
 	return env;
 }
 
@@ -166,8 +166,7 @@ struct win32_memorycheck_scope
 
 #endif //_WIN32
 
-
-int curb_test(int argc, char** argv)
+int aug_test(int argc, char** argv)
 {
 #ifdef  _WIN32
 	win32_memorycheck_scope memcheck;
@@ -187,13 +186,13 @@ int curb_test(int argc, char** argv)
 		{
 			if (++i >= argc)
 			{
-				printf("curb_test: --exec parameter expected filename!");
+				printf("aug_test: --exec parameter expected filename!");
 				return -1;
 			}
 			
-			tester.begin(curb_test_env(), argv[i]);
+			tester.begin(aug_test_env(), argv[i]);
 
-			curb_execute(tester.env, argv[i]);
+			aug_execute(tester.env, argv[i]);
 
 			tester.end();
 		}
@@ -201,13 +200,13 @@ int curb_test(int argc, char** argv)
 		{
 			if (++i >= argc)
 			{
-				printf("curb_test: --test_native parameter expected filename!");
+				printf("aug_test: --test_native parameter expected filename!");
 				return -1;
 			}
 
-			tester.begin(curb_test_env(), argv[i]);
+			tester.begin(aug_test_env(), argv[i]);
 
-			curb_test_native(argv[i]);
+			aug_test_native(argv[i]);
 
 			tester.end();
 		}
