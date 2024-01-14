@@ -1,9 +1,31 @@
+/* MIT License
+
+Copyright (c) 2024 Paul Miller (https://github.com/138paulmiller)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE. */
+
 #ifndef __CURB_HEADER__
 #define __CURB_HEADER__
 /*
-    Curb Programming Language
-        Single File parser, bytecode compiler, and virtual machine for the Curb programming language
-    Author: https://github.com/138paulmiller
+    aug.h - 
+    
+    Single File implementation, self-contained lexer, parser, bytecode compiler, and virtual machine 
 
     Use 
         `#define CURB_IMPLEMENTATION`
@@ -28,7 +50,6 @@
     
         func_call := NAME ( args )
 
-
         args := expr args
               | , expr args
               | NULL
@@ -38,6 +59,7 @@
                | NUMBER 
                | STRING 
                | ( expr )
+               | [ args ]
  
         stmt_expr := expr ;
     
@@ -61,13 +83,10 @@
     - VM - Print Stack trace on error. Link back to source file if running uncompiled bytecode
     - Native - Support return value in function callbacks
     - Semantic Pass - resolve IR pass any potential naming, field,  or return issues     
-    - Convert to C
-    Bugs:
-    - VM - Semantic pass to determine if a function call needs to discard the return value (i.e. return not push value on stack)
+    - Convert to C 
+    - Reimplement default data structures, expose custom allocator/deallocator in environment
 */
 
-#include <functional>
-#include <list>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -130,10 +149,10 @@ enum curb_symbol_type
 struct curb_symbol
 {
     curb_symbol_type type;
-    // Functions - this is the bytecode address.
-    // Variables - this is the local frames stack offset.
+    // Functions - offset is the bytecode address, argc is the number of expected params
+    // Variables - offset is the stack offset from the base index
     int offset;
-    int argc = 0; // If this is a function, this is the number of expected params
+    int argc;
 };
 
 using curb_symtable = curb_map<curb_string, curb_symbol>;
@@ -181,7 +200,6 @@ curb_value curb_float(float data);
 #include <fstream>
 #include <iostream>
 #include <sstream>
-#include <memory>
 
 #define CURB_DEBUG 1
 
@@ -607,24 +625,20 @@ bool curb_lexer_tokenize_name(curb_environment& env, curb_lexer& lexer, curb_tok
         c = curb_lexer_get(lexer);
     curb_lexer_unget(lexer);
 
-    curb_string name;
-    curb_lexer_end_tracking(lexer, name);
+    token.id = CURB_TOKEN_NAME;
+    curb_lexer_end_tracking(lexer, token.data);
 
     // find token id for keyword
-    curb_token_id id = CURB_TOKEN_NAME;
     for (size_t i = 0; i < (size_t)CURB_TOKEN_COUNT; ++i)
     {
         const curb_token_detail& detail = curb_token_details[i];
-        if (detail.keyword && detail.keyword == name)
+        if (detail.keyword && detail.keyword == token.data)
         {
-            id = (curb_token_id)i;
+            token.id = (curb_token_id)i;
             break;
         }
     }
     
-    token.id = id;
-    token.data = std::move(name);
-
     return true;
 }
 
@@ -708,17 +722,15 @@ bool curb_lexer_tokenize_number(curb_environment& env, curb_lexer& lexer, curb_t
         curb_lexer_unget(lexer);
     }
 
-    curb_string str;
-    curb_lexer_end_tracking(lexer, str);
+    token.id = id;
+    curb_lexer_end_tracking(lexer, token.data);
 
-    if(id == CURB_TOKEN_ERR)
+    if(token.id == CURB_TOKEN_ERR)
     {
-        CURB_LEXER_ERROR(env, lexer, token, "invalid numeric format %s", str.c_str());
+        CURB_LEXER_ERROR(env, lexer, token, "invalid numeric format %s", token.data.c_str());
         return false;
     }
     
-    token.id = id;
-    token.data = std::move(str);
     return true;
 }
 
@@ -1053,32 +1065,28 @@ curb_ast* curb_parse_funccall(curb_environment& env, curb_lexer& lexer)
     curb_lexer_move(env, lexer); // eat NAME
     curb_lexer_move(env, lexer); // eat LPAREN
 
-    curb_array<curb_ast*> args;
+    curb_ast* funccall = curb_ast_new(CURB_AST_FUNC_CALL, name_token);
     if (curb_ast* expr = curb_parse_expr(env, lexer))
     {
-        args.push_back(expr);
+        funccall->children.push_back(expr);
 
         while (expr && lexer.curr.id == CURB_TOKEN_COMMA)
         {
             curb_lexer_move(env, lexer); // eat COMMA
 
             if((expr = curb_parse_expr(env, lexer)))
-                args.push_back(expr);
+                funccall->children.push_back(expr);
         }
     }
 
     if (lexer.curr.id != CURB_TOKEN_RPAREN)
     {
+        curb_ast_delete(funccall);
         CURB_PARSE_ERROR(env, lexer,  "Function call missing closing parentheses");
-        for(curb_ast* arg : args)
-            delete arg;
         return nullptr;
     }
 
     curb_lexer_move(env, lexer); // eat RPAREN
-
-    curb_ast* funccall = curb_ast_new(CURB_AST_FUNC_CALL, name_token);
-    funccall->children = std::move(args);
     return funccall;
 }
 
@@ -1123,8 +1131,7 @@ curb_ast* curb_parse_value(curb_environment& env, curb_lexer& lexer)
         curb_lexer_move(env, lexer); // eat RPAREN
         return expr;
     }
-    default: 
-    break;
+    default: break;
     }
     return nullptr;
 }
@@ -1477,16 +1484,9 @@ curb_ast* curb_parse_block(curb_environment& env, curb_lexer& lexer)
     }
     curb_lexer_move(env, lexer); // eat LBRACE
 
-    curb_array<curb_ast*> stmts;
-    while(curb_ast* stmt = curb_parse_stmt(env, lexer))
-        stmts.push_back(stmt);
-
-    if(stmts.size() == 0)
-        return nullptr;
-
     curb_ast* block = curb_ast_new(CURB_AST_BLOCK);
-    block->children = std::move(stmts);
-
+    while(curb_ast* stmt = curb_parse_stmt(env, lexer))
+        block->children.push_back(stmt);
 
     if (lexer.curr.id != CURB_TOKEN_RBRACE)
     {
@@ -1720,7 +1720,7 @@ inline size_t curb_ir_add_operation(curb_ir& ir, curb_opcode opcode, const curb_
 #endif //CURB_DEBUG
 
     ir.bytecode_offset += curb_ir_operation_size(operation);
-    ir.operations.push_back(std::move(operation));
+    ir.operations.push_back(operation);
     return ir.operations.size()-1;
 }
 
@@ -1855,6 +1855,7 @@ inline bool curb_ir_set_var(curb_ir& ir, const curb_string& name)
     curb_symbol sym;
     sym.type = CURB_SYM_VAR;
     sym.offset = offset;
+    sym.argc = 0;
 
     scope.symtable[name] = sym;
     return true;
@@ -1893,6 +1894,7 @@ inline curb_symbol curb_ir_get_symbol(curb_ir& ir, const curb_string& name)
     curb_symbol sym;
     sym.offset = CURB_OPCODE_INVALID;
     sym.type = CURB_SYM_NONE;
+    sym.argc = 0;
     return sym;
 }
 
@@ -1918,6 +1920,7 @@ inline curb_symbol curb_ir_symbol_relative(curb_ir& ir, const curb_string& name)
     curb_symbol sym;
     sym.offset = CURB_OPCODE_INVALID;
     sym.type = CURB_SYM_NONE;
+    sym.argc = 0;
     return sym;
 }
 
@@ -1930,6 +1933,7 @@ inline curb_symbol curb_ir_get_symbol_local(curb_ir& ir, const curb_string& name
     curb_symbol sym;
     sym.offset = CURB_OPCODE_INVALID;
     sym.type = CURB_SYM_NONE;
+    sym.argc = 0;
     return sym;
 }
 
