@@ -14,5 +14,9 @@ func fibonacci(n) {
     return sum;
 }
 
+
+a = fibonacci(20);
+expect(a == 6765, "fibonacci(20) = ", a);
+
 a = fibonacci(30);
 expect(a == 832040, "fibonacci(30) = ", a);

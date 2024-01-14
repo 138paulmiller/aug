@@ -1,7 +1,7 @@
 var a = 1;
 
 func add3(a, b, c) {
-    b = a + b + c;
+    var b = a + b + c;
 	return b + 1 - 1;
 }
 
@@ -21,29 +21,8 @@ func fibonacci(n) {
     return sum;
 }
 
+expect(a == 1, "a == ", a);
 expect(add3(1, 10, 100) == 111, "add3(1, 10, 100) == ", add3(1, 10, 100));
-
-a = fibonacci(30);
-expect(a == 832040, "fibonacci(30) = ", a);
-
-a = fibonacci(20);
-expect(a == 6765, "fibonacci(20) = ", a);
-
-func fibonacci_rec(a) {
-    if a == 0 { 
-        return 0; 
-    }
-    else if a == 1 { 
-        return 1; 
-    }
-    return fibonacci_rec(a-1) + fibonacci_rec(a-2);
-}
-
-a = fibonacci_rec(20);
-expect(a == 6765, "fibonacci_rec(20) = ", a);
-
-a = fibonacci_rec(30);
-expect(a == 832040, "fibonacci_rec(30) = ", a);
 
 
 func fizzbuzz(i)
@@ -85,4 +64,4 @@ func fibonacci_fizzbuzz(n) {
 }
 
 a = fibonacci_fizzbuzz(30);
-expect(a == 832040, "fibonacci_rec(30) = ", a);
+expect(a == 832040, "fibonacci_fizzbuzz(30) = ", a);

@@ -730,7 +730,6 @@ bool curb_lexer_tokenize_number(curb_environment& env, curb_lexer& lexer, curb_t
         CURB_LEXER_ERROR(env, lexer, token, "invalid numeric format %s", token.data.c_str());
         return false;
     }
-    
     return true;
 }
 
@@ -803,7 +802,7 @@ curb_token curb_lexer_tokenize(curb_environment& env, curb_lexer& lexer)
     case '+':
     case '-':
     {
-        // To prevent contention with sign as an operator, if the proceeding token is a number
+        // To prevent contention with sign as an operator, if the proceeding token is a number or name (variable)
         // treat sign as an operator, else, treat as the number's sign
         bool allow_sign = true;
         switch(lexer.curr.id)
