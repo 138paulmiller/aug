@@ -23,16 +23,15 @@ SOFTWARE. */
 #ifndef __CURB_HEADER__
 #define __CURB_HEADER__
 /*
-    aug.h - 
-    
-    Single File implementation, self-contained lexer, parser, bytecode compiler, and virtual machine 
+    AUG - embeddable script engine
 
-    Use 
-        `#define CURB_IMPLEMENTATION`
-        `#include "curb.h"`
+    * aug.h - single file implementation, self-contained lexer, parser, bytecode compiler, and virtual machine 
 
-    Syntax:
-        
+    * To use exactly one source file must contain the following 
+        #define CURB_IMPLEMENTATION
+        #include "aug.h"
+
+    * syntax:
         block := { stmts }
 
         stmt := stmt_expr
@@ -84,13 +83,16 @@ SOFTWARE. */
     - Native - Support return value in function callbacks
     - Semantic Pass - resolve IR pass any potential naming, field,  or return issues     
     - Convert to C 
-    - Reimplement default data structures, expose custom allocator/deallocator in environment
+    - Reimplement primary data structures, expose custom allocator/deallocator in environment
 */
 
 #include <string>
 #include <vector>
 #include <unordered_map>
 
+// AUG data structures
+
+struct curb_symbol;
 struct curb_value;
 struct curb_object;
 
@@ -102,9 +104,12 @@ using curb_array = std::vector<type>;
 template <class key, class type>
 using curb_map = std::unordered_map<key, type>;
 
+using curb_symtable = curb_map<curb_string, curb_symbol>;
+
 typedef void(curb_error_callback)(const char* /*msg*/);
 typedef void(curb_function_callback)(curb_value* /*return_value*/, const curb_array<curb_value*>& /*args*/);
 
+// 
 enum curb_type
 {
     CURB_BOOL,
@@ -155,8 +160,7 @@ struct curb_symbol
     int argc;
 };
 
-using curb_symtable = curb_map<curb_string, curb_symbol>;
-
+// Represents a "compiled" script
 struct curb_script
 {
     bool valid;
@@ -164,9 +168,16 @@ struct curb_script
     curb_array<char> bytecode;
 };
 
+
+// USer specific environment
 struct curb_environment
 {
+    // External functions are native functions that can be called from scripts   
+    // This external function map contains the user's registered functions. 
+    // Use curb_register/curb_unregister to modify this field
     curb_map<curb_string, curb_function_callback*> external_functions;
+
+    // The error callback is triggered when the engine triggers an error, either parsing or runtime. 
     curb_error_callback* error_callback = nullptr;
 };
 
@@ -182,9 +193,9 @@ curb_value curb_call(curb_environment& env, curb_script& script, const char* fun
 curb_string curb_to_string(const curb_value* value);
 bool curb_to_bool(const curb_value* value);
 
-curb_value curb_bool(bool data);
-curb_value curb_int(int data);
-curb_value curb_float(float data);
+curb_value curb_from_bool(bool data);
+curb_value curb_from_int(int data);
+curb_value curb_from_float(float data);
 
 #endif //__CURB_HEADER__
 
@@ -3270,6 +3281,8 @@ void curb_evaluate(curb_environment& env, const char* code)
     curb_vm_startup(env, vm, script);
     curb_vm_execute(env, vm);
     curb_vm_shutdown(env, vm);
+
+    // Should this return the top ?
 }
 
 bool curb_compile(curb_environment& env, curb_script& script, const char* filename)
@@ -3302,21 +3315,21 @@ curb_value curb_call(curb_environment& env, curb_script& script, const char* fun
     return ret_value;
 }
 
-curb_value curb_bool(bool data)
+curb_value curb_from_bool(bool data)
 {
     curb_value value;
     curb_set_bool(&value, data);
     return value;
 }
 
-curb_value curb_int(int data)
+curb_value curb_from_int(int data)
 {
     curb_value value;
     curb_set_int(&value, data);
     return value;
 }
 
-curb_value curb_float(float data)
+curb_value curb_from_float(float data)
 {
     curb_value value;
     curb_set_float(&value, data);
