@@ -2119,10 +2119,9 @@ inline bool aug_set_string(aug_value* value, const char* data)
     if (value == nullptr)
         return false;
 
-    
     value->type = AUG_STRING;
     value->str = AUG_NEW(aug_string);
-    value->str->ref_count = 0;
+    value->str->ref_count = 1;
     value->str->data.assign(data, strlen(data));
     return true;
 }
@@ -2134,7 +2133,7 @@ inline bool aug_set_list(aug_value* value)
 
     value->type = AUG_LIST;
     value->list = AUG_NEW(aug_list);
-    value->list->ref_count = 0; 
+    value->list->ref_count = 1; 
      return true;
 }
 
@@ -2649,7 +2648,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_set_string(&value, aug_vm_read_bytes(vm));
 
                 aug_value* top = aug_vm_push(env, vm);                
-                aug_assign(top, &value);
+                aug_move(top, &value);
                 break;
             }
            case AUG_OPCODE_PUSH_LIST:
@@ -2665,8 +2664,8 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                     value.list->data.push_back(entry);
                 }
 
-                aug_value* top = aug_vm_push(env, vm);
-                aug_assign(top, &value);
+                aug_value* top = aug_vm_push(env, vm);                
+                aug_move(top, &value);
                 break;
             }
             case AUG_OPCODE_PUSH_LOCAL:
@@ -2684,7 +2683,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* local = aug_vm_get_local(env, vm, stack_offset);
 
                 aug_value* top = aug_vm_pop(env, vm);
-                aug_assign(local, top);
+                aug_move(local, top);
                 break;
             }
             case AUG_OPCODE_ADD:
@@ -2923,7 +2922,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                     if (arg != nullptr)
                     {
                         aug_value value = aug_none();
-                        aug_assign(&value, arg);
+                        aug_move(&value, arg);
                         args.push_back(value);
                     }
                 }
