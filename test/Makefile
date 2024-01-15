@@ -3,20 +3,14 @@ OUT_DIR = ../build
 TARGET = $(OUT_DIR)/aug_test
 SRC = $(wildcard *.cpp)
 CC = g++
-CFLAGS = -Wall
+CFLAGS = -Wall -O3
 LIBS = -I../ -std=c++11
 
 all: $(OUT_DIR) $(TARGET)
 	echo "Done"
 
-monolith : $(TARGET)_monolith
-	echo "Done"
-
 clean: 
 	rm -f $(TARGET)
-
-$(TARGET)_monolith: $(TARGET)_monolith.cpp
-	$(CC) -o $@ $^ $(CFLAGS) $(LIBS)
 
 $(OUT_DIR):
 	mkdir $(OUT_DIR)
