@@ -2,12 +2,5 @@
 clear 
 make clean 
 make
-#valgrind  --track-origins=yes --leak-check=full --tool=memcheck ../build/shl_test ../build/aug_test --dump ../examples/test --test ../examples/test
-
-valgrind  --track-origins=yes --leak-check=full --tool=memcheck ../build/aug_test  \
---test ../examples/test_binops         \
---test ../examples/test_fib            \
---test ../examples/test_fib_recursive  \
---test ../examples/test_func           \
---test ../examples/test_func_local     \
---test ../examples/test_native         
+valgrind  --track-origins=yes --leak-check=full --tool=memcheck \
+../build/aug_test --verbose --dump ../examples/test_list --test ../examples/test_list

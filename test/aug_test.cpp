@@ -11,7 +11,7 @@ struct aug_tester
 	int total = 0;
 	int verbose = 0;
 	bool dump;
-	aug_string filename;
+	aug_std_string filename;
 
 	aug_environment env;
 	
@@ -37,7 +37,7 @@ struct aug_tester
 			printf("[%s]\t%s\n", passed == total ? "PASS" : "FAIL", filename.c_str());
 	}
 
-	void verify(bool success, const aug_string& message)
+	void verify(bool success, const aug_std_string& message)
 	{
 		++total;
 
@@ -58,82 +58,77 @@ struct aug_tester
 aug_tester tester;
 
 
-aug_string to_string(const aug_value* value)
+aug_std_string to_string(const aug_value& value)
 {
-    if (value == nullptr)
-        return "null";
-
     char out[1024];
     int len = 0;
-    switch (value->type)
+    switch (value.type)
     {
     case AUG_NONE:
         return "none";
     case AUG_BOOL:
-        len = snprintf(out, sizeof(out), "%s", value->b ? "true" : "false");
+        len = snprintf(out, sizeof(out), "%s", value.b ? "true" : "false");
         break;
     case AUG_INT:
-        len = snprintf(out, sizeof(out), "%d", value->i);
+        len = snprintf(out, sizeof(out), "%d", value.i);
         break;
     case AUG_FLOAT:
-        len = snprintf(out, sizeof(out), "%f", value->f);
+        len = snprintf(out, sizeof(out), "%f", value.f);
         break;
     case AUG_STRING:
-        len = snprintf(out, sizeof(out), "%s", value->str);
+        len = snprintf(out, sizeof(out), "%s", value.str->data.c_str());
         break;
     case AUG_OBJECT:
         return "object";
     case AUG_LIST:
     {
-        aug_string str;
-        aug_list_node* node = value->list->front; 
-        while(node)
-        {
-            str += to_string(node->value);
-            node = node->next;
-        }
+        aug_std_string str = "[ ";
+		if(value.list)
+		{
+			for(const aug_value& entry : value.list->data)
+			{
+				str += to_string(entry);
+				str += " ";
+			}
+		}
+		str += "]";
         return str;
     }
     }
-    return aug_string(out, len);
+    return aug_std_string(out, len);
 }
 
-void print(const aug_value* arg)
+void print(const aug_value& value)
 {
-	if (arg == nullptr)
-		return;
-
-	switch (arg->type)
+	switch (value.type)
 	{
 	case AUG_NONE:
 		printf("none");
 		break;
 	case AUG_BOOL:
-		printf("%s", arg->b ? "true" : "false");
+		printf("%s", value.b ? "true" : "false");
 		break;
 	case AUG_INT:
-		printf("%d", arg->i);
+		printf("%d", value.i);
 		break;
 	case AUG_FLOAT:
-		printf("%0.3f", arg->f);
+		printf("%0.3f", value.f);
 		break;
 	case AUG_STRING:
-		printf("%s", arg->str);
+		printf("%s", value.str->data.c_str());
 		break;
 	case AUG_OBJECT:
 		printf("object");
 		break;
 	case AUG_LIST:
 	{
-		printf("[");
-		if(arg->list)
+		printf("[ ");
+		if(value.list)
 		{
-			aug_list_node* node = arg->list->front; 
-			while(node)
+			for(const aug_value& entry : value.list->data)
 			{
+				print(entry);
 				printf(" ");
-				print(node->value);
-				node = node->next;
 			}
 		}
 		printf("]");
@@ -142,27 +137,74 @@ void print(const aug_value* arg)
 	}
 }
 
-void print(aug_value* return_value, const aug_array<aug_value*>& args)
+float sum(const aug_value& value, aug_value_type& type)
 {
-	for (aug_value* arg : args)
+	switch (value.type)
+	{
+	case AUG_NONE:
+	case AUG_BOOL:
+	case AUG_STRING:
+	case AUG_OBJECT:
+		// INVALID TYPE!
+		return 0.0f;
+	case AUG_INT:
+		return value.i;
+	case AUG_FLOAT:
+		type = AUG_FLOAT;
+		return value.f;
+	case AUG_LIST:
+	{
+		float  total = 0;
+		if(value.list)
+		{
+			for(const aug_value& entry : value.list->data)
+				total += sum(entry, type);
+		}
+		return total;
+	}
+	}
+	return 0.0f;
+}
+
+aug_value sum(const aug_std_array<aug_value>& args)
+{
+	aug_value_type type = AUG_INT;
+	float total = 0.0;
+	for (const aug_value& arg : args)
+		total += sum(arg, type);
+
+	if(type == AUG_FLOAT)
+		return  aug_from_float(total);
+	else if(type == AUG_INT)
+		return aug_from_int(total);
+	return aug_none();
+}
+
+aug_value print(const aug_std_array<aug_value>& args)
+{
+	for (const aug_value& arg : args)
 	{
 		print(arg);
 	}
 
 	printf("\n");
+
+	return aug_none();
 }
 
-void expect(aug_value* return_value, const aug_array<aug_value*>& args)
+aug_value expect(const aug_std_array<aug_value>& args)
 {
 	if (args.size() == 0)
-		return;
+		return aug_none();
 
-	bool success = aug_to_bool(args[0]);
-	aug_string message;
+	bool success = aug_to_bool(&args[0]);
+	aug_std_string message;
 	for( size_t i = 1; i < args.size(); ++i)
 		message += to_string(args[i]);
 	
 	tester.verify(success, message);
+
+	return aug_none();
 }
 
 void aug_test_native(const char* filename)
@@ -171,7 +213,7 @@ void aug_test_native(const char* filename)
 	aug_compile(tester.env, script, filename);
 
 	{	
-		aug_array<aug_value> args;
+		aug_std_array<aug_value> args;
 		args.push_back(aug_from_int(5));
 		//args.push_back(aug_from_int(30));
 
@@ -179,17 +221,17 @@ void aug_test_native(const char* filename)
 		
 		bool success = value.i == 5;
 		//bool success = value.i == 832040;
-		const aug_string message = "fibonacci = " + to_string(&value);
+		const aug_std_string message = "fibonacci = " + to_string(value);
 		tester.verify(success, message);
 	}
 	{
-		aug_array<aug_value> args;
+		aug_std_array<aug_value> args;
 		args.push_back(aug_from_int(10000));
 
 		aug_value value = aug_call(tester.env, script, "count", args);
 		
 		bool success = value.i == 10000;
-		const aug_string message = "count = " + to_string(&value);
+		const aug_std_string message = "count = " + to_string(value);
 		tester.verify(success, message);
 	}
 
@@ -200,6 +242,7 @@ aug_environment aug_test_env()
 	aug_environment env;
 	aug_register(env, "print", print);
 	aug_register(env, "expect", expect);
+	aug_register(env, "sum", sum);
 	return env;
 }
 

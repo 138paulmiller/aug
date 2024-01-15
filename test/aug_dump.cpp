@@ -43,7 +43,7 @@ void dump_ast_tree(aug_ast* node, std::string prefix, bool is_leaf)
 	}
 
 	const aug_token& token = node->token;
-	const aug_array<aug_ast*>& children = node->children;
+	const aug_std_array<aug_ast*>& children = node->children;
 
 	switch(node->id)
 	{
