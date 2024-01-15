@@ -82,15 +82,35 @@ SOFTWARE. */
     - Semantic Pass - resolve IR pass any potential naming, field,  or return issues     
     - Convert to C 
     - Reimplement primary data structures, expose custom allocator/deallocator in environment
+    - Reference Count objects to ensure unused are freed correctly
+
+    Issues:
+        When assigning, or pushing values on the stack. Free the stack value entry.
+        When booting up stack, default first value to none. to prevent invalid free
 */
 
 #ifndef __AUG_HEADER__
 #define __AUG_HEADER__
-#define AUG_DEBUG 1
 
 #ifndef AUG_STACK_SIZE
     #define AUG_STACK_SIZE (1024 * 16)
 #endif//AUG_STACK_SIZE
+
+#ifndef AUG_NEW
+    #define AUG_NEW(type) new type
+#endif//AUG_NEW
+
+#ifndef AUG_NEW_ARRAY
+    #define AUG_NEW_ARRAY(type, count) new type [count]
+#endif//AUG_NEW_ARRAY
+
+#ifndef AUG_DELETE
+    #define AUG_DELETE(ptr) delete ptr
+#endif//AUG_DELETE
+
+#ifndef AUG_DELETE_ARRAY
+    #define AUG_DELETE_ARRAY(ptr) delete [] ptr
+#endif//AUG_DELETE_ARRAY
 
 #ifndef AUG_VM_APPROX_THRESHOLD
     #define AUG_VM_APPROX_THRESHOLD 0.0000001
@@ -120,6 +140,7 @@ SOFTWARE. */
 struct aug_symbol;
 struct aug_value;
 struct aug_object;
+struct aug_list;
 
 using aug_string = std::string;
 
@@ -142,13 +163,14 @@ enum aug_type
     AUG_FLOAT, 
     AUG_STRING, 
     AUG_OBJECT,
+    AUG_LIST,
     AUG_NONE
 };
 
 #if defined(AUG_IMPLEMENTATION)
 const char* aug_type_labels[] =
 {
-    "bool", "int", "float", "string", "object", "none"
+    "bool", "int", "float", "string", "object", "list", "none"
 };
 static_assert(sizeof(aug_type_labels) / sizeof(aug_type_labels[0]) == (int)AUG_NONE + 1, "Type labels must be up to date with enum");
 #endif //AUG_IMPLEMENTATION
@@ -162,8 +184,9 @@ struct aug_value
         bool b;
         int i; 
         float f;
-        const char* str;
+        char* str;
         aug_object* obj;
+        aug_list* list;
     };
 };
 
@@ -178,6 +201,20 @@ struct aug_attribute
 struct aug_object
 {
     aug_array<aug_attribute> attribs;
+};
+
+// List instance
+class aug_list_node;
+struct aug_list_node
+{
+    aug_value* value;
+    aug_list_node* next;
+};
+
+struct aug_list
+{
+    aug_list_node* front;
+    aug_list_node* back;
 };
 
 // Symbol types
@@ -262,12 +299,18 @@ void aug_evaluate(aug_environment& env, const char* code);
 bool aug_compile(aug_environment& env, aug_script& script, const char* filename);
 aug_value aug_call(aug_environment& env, aug_script& script, const char* func_name, const aug_array<aug_value>& args);
 
-aug_string aug_to_string(const aug_value* value);
 bool aug_to_bool(const aug_value* value);
+void aug_delete(aug_value* value);
 
 aug_value aug_from_bool(bool data);
 aug_value aug_from_int(int data);
 aug_value aug_from_float(float data);
+aug_value aug_from_string(const char* data);
+
+aug_list* aug_list_new();
+void aug_list_delete(aug_list* list);
+void aug_list_push_back(aug_list* list, aug_value* value);
+void aug_list_push_front(aug_list* list, aug_value* value);
 
 #endif //__AUG_HEADER__
 
@@ -930,7 +973,7 @@ bool aug_lexer_open(aug_environment& env, aug_lexer& lexer, const char* code)
 {
     aug_lexer_close(lexer);
 
-    std::istringstream* iss = new std::istringstream(code, std::fstream::in);
+    std::istringstream* iss = AUG_NEW(std::istringstream(code, std::fstream::in));
     if (iss == nullptr || !iss->good())
     {
         AUG_LOG_ERROR(env,"Lexer failed to open code");
@@ -949,7 +992,7 @@ bool aug_lexer_open_file(aug_environment& env, aug_lexer& lexer, const char* fil
 {
     aug_lexer_close(lexer);
 
-    std::fstream* file = new std::fstream(filename, std::fstream::in);
+    std::fstream* file = AUG_NEW(std::fstream(filename, std::fstream::in));
     if (file == nullptr || !file->is_open())
     {
         AUG_LOG_ERROR(env,"Lexer failed to open file %s", filename);
@@ -983,6 +1026,7 @@ enum aug_ast_id : uint8_t
     AUG_AST_STMT_WHILE,
     AUG_AST_LITERAL, 
     AUG_AST_VARIABLE, 
+    AUG_AST_EXPR_LIST,
     AUG_AST_UNARY_OP, 
     AUG_AST_BINARY_OP, 
     AUG_AST_FUNC_CALL,
@@ -1004,7 +1048,7 @@ aug_ast* aug_parse_block(aug_environment& env, aug_lexer& lexer);
 
 aug_ast* aug_ast_new(aug_ast_id id, const aug_token& token = aug_token())
 {
-    aug_ast* node = new aug_ast();
+    aug_ast* node = AUG_NEW(aug_ast);
     node->id = id;
     node->token = token;
     return node;
@@ -1146,20 +1190,45 @@ aug_ast* aug_parse_funccall(aug_environment& env, aug_lexer& lexer)
     return funccall;
 }
 
+aug_ast* aug_parse_expr_list(aug_environment& env, aug_lexer& lexer)
+{
+    aug_token name_token = lexer.curr;
+    if (name_token.id != AUG_TOKEN_LBRACKET)
+        return nullptr;
+
+    aug_lexer_move(env, lexer); // eat LBRACKET
+
+    aug_ast* expr_list = aug_ast_new(AUG_AST_EXPR_LIST, name_token);
+    if (aug_ast* expr = aug_parse_expr(env, lexer))
+    {
+        expr_list->children.push_back(expr);
+
+        while (expr && lexer.curr.id == AUG_TOKEN_COMMA)
+        {
+            aug_lexer_move(env, lexer); // eat COMMA
+
+            if((expr = aug_parse_expr(env, lexer)))
+                expr_list->children.push_back(expr);
+        }
+    }
+
+    if (lexer.curr.id != AUG_TOKEN_RBRACKET)
+    {
+        aug_ast_delete(expr_list);
+        AUG_PARSE_ERROR(env, lexer,  "List missing closing bracket");
+        return nullptr;
+    }
+
+    aug_lexer_move(env, lexer); // eat RBRACKET
+    return expr_list;
+}
+
 aug_ast* aug_parse_value(aug_environment& env, aug_lexer& lexer)
 {
+    aug_ast* value = nullptr;
     aug_token token = lexer.curr;
     switch (token.id)
     {
-    case AUG_TOKEN_NAME:
-    {   
-        if (aug_ast* funccall = aug_parse_funccall(env, lexer))
-            return funccall;
-
-        aug_lexer_move(env, lexer);
-        aug_ast* var = aug_ast_new(AUG_AST_VARIABLE, token);
-        return var;
-    }
     case AUG_TOKEN_DECIMAL:
     case AUG_TOKEN_HEXIDECIMAL:
     case AUG_TOKEN_BINARY:
@@ -1169,27 +1238,43 @@ aug_ast* aug_parse_value(aug_environment& env, aug_lexer& lexer)
     case AUG_TOKEN_FALSE:
     {
         aug_lexer_move(env, lexer);
-        aug_ast* literal = aug_ast_new(AUG_AST_LITERAL, token);
-        literal->id = AUG_AST_LITERAL;
-        literal->token = token;
-        return literal;
+        value = aug_ast_new(AUG_AST_LITERAL, token);
+        break;
+    }
+    case AUG_TOKEN_NAME:
+    {   
+        value = aug_parse_funccall(env, lexer);
+        if (value == nullptr)
+        {
+            aug_lexer_move(env, lexer);
+            value = aug_ast_new(AUG_AST_VARIABLE, token);
+        }
+        break;
+    }
+    case AUG_TOKEN_LBRACKET:
+    {
+        value = aug_parse_expr_list(env, lexer);
+        break;
     }
     case AUG_TOKEN_LPAREN:
     {
         aug_lexer_move(env, lexer); // eat LPAREN
-        aug_ast* expr = aug_parse_expr(env, lexer);
-        if (lexer.curr.id != AUG_TOKEN_RPAREN)
+        value = aug_parse_expr(env, lexer);
+        if (lexer.curr.id == AUG_TOKEN_RPAREN)
+        {
+            aug_lexer_move(env, lexer); // eat RPAREN
+        }
+        else
         {
             AUG_PARSE_ERROR(env, lexer,  "Expression missing closing parentheses");
-            aug_ast_delete(expr);    
-            return nullptr;
+            aug_ast_delete(value);    
+            value = nullptr;
         }
-        aug_lexer_move(env, lexer); // eat RPAREN
-        return expr;
+        break;
     }
     default: break;
     }
-    return nullptr;
+    return value;
 }
 
 aug_ast* aug_parse_stmt_expr(aug_environment& env, aug_lexer& lexer)
@@ -1397,11 +1482,9 @@ aug_ast* aug_parse_param_list(aug_environment& env, aug_lexer& lexer)
     aug_lexer_move(env, lexer); // eat LPAREN
 
     aug_ast* param_list = aug_ast_new(AUG_AST_PARAM_LIST);
-
     if (lexer.curr.id == AUG_TOKEN_NAME)
     {
-        aug_ast* param = aug_ast_new(AUG_AST_PARAM);
-        param->token = lexer.curr;
+        aug_ast* param = aug_ast_new(AUG_AST_PARAM, lexer.curr);
         param_list->children.push_back(param);
 
         aug_lexer_move(env, lexer); // eat NAME
@@ -1417,8 +1500,7 @@ aug_ast* aug_parse_param_list(aug_environment& env, aug_lexer& lexer)
                 return nullptr;
             }
 
-            aug_ast* param = aug_ast_new(AUG_AST_PARAM);
-            param->token = lexer.curr;
+            aug_ast* param = aug_ast_new(AUG_AST_PARAM, lexer.curr);
             param_list->children.push_back(param);
 
             aug_lexer_move(env, lexer); // eat NAME
@@ -1460,10 +1542,12 @@ aug_ast* aug_parse_stmt_func(aug_environment& env, aug_lexer& lexer)
 
     aug_ast* block = aug_parse_block(env, lexer);
     if (block == nullptr)
+    {
+        aug_ast_delete(param_list);
         return nullptr;
+    }
 
-    aug_ast* func_def = aug_ast_new(AUG_AST_FUNC_DEF);
-    func_def->token = func_name;
+    aug_ast* func_def = aug_ast_new(AUG_AST_FUNC_DEF, func_name);
     func_def->children.push_back(param_list);
     func_def->children.push_back(block);
 
@@ -1604,6 +1688,7 @@ aug_ast* aug_parse_file(aug_environment& env, const char* filename)
 	AUG_OPCODE(PUSH_INT)          \
 	AUG_OPCODE(PUSH_FLOAT)        \
 	AUG_OPCODE(PUSH_STRING)       \
+	AUG_OPCODE(PUSH_LIST)         \
 	AUG_OPCODE(PUSH_LOCAL)        \
 	AUG_OPCODE(LOAD_LOCAL)        \
 	AUG_OPCODE(ADD)               \
@@ -1655,12 +1740,16 @@ enum aug_opcode : uint8_t
 };
 static_assert(AUG_OPCODE_COUNT < 255, "AUG Opcode count too large. This will affect bytecode instruction set");
 
+#ifdef AUG_DEBUG
+
 static const char* aug_opcode_labels[] =
 {
 #define AUG_OPCODE(opcode) #opcode,
 	AUG_OPCODE_LIST
 #undef AUG_OPCODE
 }; 
+
+#endif// AUG_DEBUG
 
 #undef AUG_OPCODE_LIST
 
@@ -1696,7 +1785,7 @@ struct aug_ir_operation
     aug_opcode opcode;
     aug_ir_operand operand; //optional parameter. will be encoded in following bytes
    
-#if AUG_DEBUG
+#ifdef AUG_DEBUG
     size_t bytecode_offset;
 #endif //AUG_DEBUG
 };
@@ -1731,7 +1820,6 @@ struct aug_ir
     aug_symtable globals;
     bool valid;
 };
-
 
 inline void aug_ir_init(aug_ir& ir)
 {
@@ -1772,7 +1860,7 @@ inline size_t aug_ir_add_operation(aug_ir& ir, aug_opcode opcode, const aug_ir_o
     aug_ir_operation operation;
     operation.opcode = opcode;
     operation.operand = operand;
-#if AUG_DEBUG
+#ifdef AUG_DEBUG
     operation.bytecode_offset = ir.bytecode_offset;
 #endif //AUG_DEBUG
 
@@ -2023,6 +2111,26 @@ inline bool aug_set_float(aug_value* value, float data)
     return true;
 }
 
+inline bool aug_set_string(aug_value* value, const char* data)
+{
+    if (value == nullptr)
+        return false;
+    value->type = AUG_STRING;
+    
+    if(data == nullptr)
+    {
+        value->str = nullptr;
+        return true;
+    }
+
+    int len = strlen(data);
+    value->str = AUG_NEW_ARRAY(char, len + 1);
+    value->str[len] = '\0';
+    for(int i = 0; i < len; ++i)
+        value->str[i] = data[i];
+    return true;
+}
+
 #define AUG_DEFINE_BINOP(result, lhs, rhs,                      \
     int_int_case,                                               \
     int_float_case,                                             \
@@ -2071,7 +2179,7 @@ inline bool aug_add(aug_value* result, aug_value* lhs, aug_value* rhs)
         return aug_set_float(result, lhs->f + rhs->f),
         return false
     )
-        return false;
+    return false;
 }
 
 inline bool aug_sub(aug_value* result, aug_value* lhs, aug_value* rhs)
@@ -2083,7 +2191,7 @@ inline bool aug_sub(aug_value* result, aug_value* lhs, aug_value* rhs)
         return aug_set_float(result, lhs->f - rhs->f),
         return false
     )
-        return false;
+    return false;
 }
 
 inline bool aug_mul(aug_value* result, aug_value* lhs, aug_value* rhs)
@@ -2095,7 +2203,7 @@ inline bool aug_mul(aug_value* result, aug_value* lhs, aug_value* rhs)
         return aug_set_float(result, lhs->f * rhs->f),
         return false
     )
-        return false;
+    return false;
 }
 
 inline bool aug_div(aug_value* result, aug_value* lhs, aug_value* rhs)
@@ -2107,7 +2215,7 @@ inline bool aug_div(aug_value* result, aug_value* lhs, aug_value* rhs)
         return aug_set_float(result, lhs->f / rhs->f),
         return false
     )
-        return false;
+    return false;
 }
 
 inline bool aug_pow(aug_value* result, aug_value* lhs, aug_value* rhs)
@@ -2119,7 +2227,7 @@ inline bool aug_pow(aug_value* result, aug_value* lhs, aug_value* rhs)
         return aug_set_float(result, powf(lhs->f, rhs->f)),
         return false
     )
-        return false;
+    return false;
 }
 
 inline bool aug_mod(aug_value* result, aug_value* lhs, aug_value* rhs)
@@ -2131,7 +2239,7 @@ inline bool aug_mod(aug_value* result, aug_value* lhs, aug_value* rhs)
         return aug_set_float(result, (float)fmod(lhs->f, rhs->f)),
         return false
     )
-        return false;
+    return false;
 }
 
 inline bool aug_lt(aug_value* result, aug_value* lhs, aug_value* rhs)
@@ -2143,7 +2251,7 @@ inline bool aug_lt(aug_value* result, aug_value* lhs, aug_value* rhs)
         return aug_set_bool(result, lhs->f < rhs->f),
         return false
     )
-        return false;
+    return false;
 }
 
 inline bool aug_lte(aug_value* result, aug_value* lhs, aug_value* rhs)
@@ -2155,7 +2263,7 @@ inline bool aug_lte(aug_value* result, aug_value* lhs, aug_value* rhs)
         return aug_set_bool(result, lhs->f <= rhs->f),
         return false
     )
-        return false;
+    return false;
 }
 
 inline bool aug_gt(aug_value* result, aug_value* lhs, aug_value* rhs)
@@ -2167,7 +2275,7 @@ inline bool aug_gt(aug_value* result, aug_value* lhs, aug_value* rhs)
         return aug_set_bool(result, lhs->f > rhs->f),
         return false
     )
-        return false;
+    return false;
 }
 
 inline bool aug_gte(aug_value* result, aug_value* lhs, aug_value* rhs)
@@ -2179,7 +2287,7 @@ inline bool aug_gte(aug_value* result, aug_value* lhs, aug_value* rhs)
         return aug_set_bool(result, lhs->f >= rhs->f),
         return false
     )
-        return false;
+    return false;
 }
 
 inline bool aug_eq(aug_value* result, aug_value* lhs, aug_value* rhs)
@@ -2192,7 +2300,7 @@ inline bool aug_eq(aug_value* result, aug_value* lhs, aug_value* rhs)
         return aug_set_bool(result, lhs->f == rhs->f),
         return aug_set_bool(result, lhs->b == rhs->b)
     )
-        return false;
+    return false;
 }
 
 inline bool aug_neq(aug_value* result, aug_value* lhs, aug_value* rhs)
@@ -2205,7 +2313,7 @@ inline bool aug_neq(aug_value* result, aug_value* lhs, aug_value* rhs)
         return aug_set_bool(result, lhs->f != rhs->f),
         return aug_set_bool(result, lhs->b != rhs->b)
     )
-        return false;
+    return false;
 }
 
 inline bool aug_approxeq(aug_value* result, aug_value* lhs, aug_value* rhs)
@@ -2217,7 +2325,7 @@ inline bool aug_approxeq(aug_value* result, aug_value* lhs, aug_value* rhs)
         return aug_set_bool(result, abs(lhs->f - rhs->f) < AUG_VM_APPROX_THRESHOLD),
         return aug_set_bool(result, lhs->b == rhs->b)
     )
-        return false;
+    return false;
 }
 
 #undef AUG_DEFINE_BINOP
@@ -2278,6 +2386,12 @@ inline aug_value* aug_vm_pop(aug_environment& env, aug_vm& vm)
     aug_value* top = aug_vm_top(env, vm);
     --vm.stack_index;
     return top;
+}
+
+inline void aug_vm_free(aug_value* value)
+{
+    // TODO: determine if the object or list is still being referenced.
+    aug_delete(value);
 }
 
 inline aug_value* aug_vm_get_local(aug_environment& env, aug_vm& vm, int stack_offset)
@@ -2370,7 +2484,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
             }
             case AUG_OPCODE_POP:
             {
-                aug_vm_pop(env, vm);
+                aug_vm_free(aug_vm_pop(env, vm));
                 break;
             }
             case AUG_OPCODE_PUSH_NONE:
@@ -2386,8 +2500,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* value = aug_vm_push(env, vm);
                 if (value == nullptr)
                     break;
-                value->type = AUG_BOOL;
-                value->b = aug_vm_read_bool(vm);
+                aug_set_bool(value, aug_vm_read_bool(vm));
                 break;
             }
             case AUG_OPCODE_PUSH_INT:   
@@ -2395,8 +2508,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* value = aug_vm_push(env, vm);
                 if(value == nullptr) 
                     break;
-                value->type = AUG_INT;
-                value->i = aug_vm_read_int(vm);
+                aug_set_int(value, aug_vm_read_int(vm));
                 break;
             }
             case AUG_OPCODE_PUSH_FLOAT:
@@ -2404,8 +2516,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* value = aug_vm_push(env, vm);
                 if(value == nullptr) 
                     break;
-                value->type = AUG_FLOAT;
-                value->f = aug_vm_read_float(vm);
+                aug_set_float(value, aug_vm_read_float(vm));
                 break;
             }                                  
             case AUG_OPCODE_PUSH_STRING:
@@ -2413,8 +2524,25 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* value = aug_vm_push(env, vm);
                 if(value == nullptr) 
                     break;
-                value->type = AUG_STRING;
-                value->str = aug_vm_read_bytes(vm); // TODO: Duplicate string ? When popping string from stack, clean up allocated string ?  Otherwise, this string can not be modified
+                aug_set_string(value, aug_vm_read_bytes(vm));
+                break;
+            }
+           case AUG_OPCODE_PUSH_LIST:
+            {
+                aug_list* list = aug_list_new();
+
+                int list_count = aug_vm_read_int(vm);
+                while(list_count > 0)
+                {
+                    aug_value* top = aug_vm_pop(env, vm);
+                    aug_list_push_back(list, top);
+                    list_count--;
+                }
+                aug_value* value = aug_vm_push(env, vm);
+                if(value == nullptr) 
+                    break;
+                value->type = AUG_LIST;
+                value->list = list;
                 break;
             }
             case AUG_OPCODE_PUSH_LOCAL:
@@ -2444,6 +2572,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* target = aug_vm_push(env, vm);    
                 if (!aug_add(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(env, vm, lhs, rhs, "+");
+                aug_vm_free(lhs);
                 break;
             }
             case AUG_OPCODE_SUB:
@@ -2453,6 +2582,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* target = aug_vm_push(env, vm);    
                 if (!aug_sub(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(env, vm, lhs, rhs, "-");
+                aug_vm_free(lhs);
                 break;
             }
             case AUG_OPCODE_MUL:
@@ -2462,6 +2592,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* target = aug_vm_push(env, vm);    
                 if (!aug_mul(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(env, vm, lhs, rhs, "*");
+                aug_vm_free(lhs);
                 break;
             }
             case AUG_OPCODE_DIV:
@@ -2471,6 +2602,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* target = aug_vm_push(env, vm);    
                 if(!aug_div(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(env, vm, lhs, rhs, "/");
+                aug_vm_free(lhs);
                 break;
             }
             case AUG_OPCODE_POW:
@@ -2480,6 +2612,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* target = aug_vm_push(env, vm);
                 if (!aug_pow(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(env, vm, lhs, rhs, "^");
+                aug_vm_free(lhs);
                 break;
             }
             case AUG_OPCODE_MOD:
@@ -2489,6 +2622,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* target = aug_vm_push(env, vm);
                 if (!aug_mod(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(env, vm, lhs, rhs, "%%");
+                aug_vm_free(lhs);
                 break;
             }
             case AUG_OPCODE_NOT:
@@ -2506,6 +2640,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* target = aug_vm_push(env, vm);
                 if (!aug_set_bool(target, aug_to_bool(lhs) && aug_to_bool(rhs)))
                     AUG_VM_BINOP_ERROR(env, vm, lhs, rhs, "&");
+                aug_vm_free(lhs);
                 break;
             }
             case AUG_OPCODE_OR:
@@ -2515,6 +2650,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* target = aug_vm_push(env, vm);
                 if (!aug_set_bool(target, aug_to_bool(lhs) || aug_to_bool(rhs)))
                     AUG_VM_BINOP_ERROR(env, vm, lhs, rhs, "|");
+                aug_vm_free(lhs);                
                 break;
             }
             case AUG_OPCODE_LT:
@@ -2524,6 +2660,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* target = aug_vm_push(env, vm);
                 if (!aug_lt(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(env, vm, lhs, rhs, "<");
+                aug_vm_free(lhs);               
                 break;
             }
             case AUG_OPCODE_LTE:
@@ -2533,6 +2670,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* target = aug_vm_push(env, vm);
                 if (!aug_lte(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(env, vm, lhs, rhs, "<=");
+                aug_vm_free(lhs);            
                 break;
             }
             case AUG_OPCODE_GT:
@@ -2542,6 +2680,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* target = aug_vm_push(env, vm);
                 if (!aug_gt(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(env, vm, lhs, rhs, ">");
+                aug_vm_free(lhs);           
                 break;
             }
             case AUG_OPCODE_GTE:
@@ -2551,6 +2690,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* target = aug_vm_push(env, vm);
                 if (!aug_gte(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(env, vm, lhs, rhs, ">=");
+                aug_vm_free(lhs);             
                 break;
             }
             case AUG_OPCODE_EQ:
@@ -2560,6 +2700,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* target = aug_vm_push(env, vm);
                 if (!aug_eq(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(env, vm, lhs, rhs, "==");
+                aug_vm_free(lhs);           
                 break;
             }
             case AUG_OPCODE_NEQ:
@@ -2569,6 +2710,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* target = aug_vm_push(env, vm);
                 if (!aug_neq(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(env, vm, lhs, rhs, "!=");
+                aug_vm_free(lhs);
                 break;
             }
             case AUG_OPCODE_APPROXEQ:
@@ -2578,6 +2720,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* target = aug_vm_push(env, vm);
                 if (!aug_approxeq(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(env, vm, lhs, rhs, "~=");
+                aug_vm_free(lhs);            
                 break;
             }
             case AUG_OPCODE_JUMP:
@@ -2592,6 +2735,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* top = aug_vm_pop(env, vm);
                 if (aug_to_bool(top) != 0)
                     vm.instruction = vm.bytecode + instruction_offset;
+                aug_vm_free(top);
                 break;
             }
             case AUG_OPCODE_JUMP_ZERO:
@@ -2600,6 +2744,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* top = aug_vm_pop(env, vm);
                 if (aug_to_bool(top) == 0)
                     vm.instruction = vm.bytecode + instruction_offset;
+                aug_vm_free(top);
                 break;
             }
             case AUG_OPCODE_PUSH_BASE:
@@ -2614,7 +2759,9 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
             case AUG_OPCODE_DEC_STACK:
             {
                 const int delta = aug_vm_read_int(vm);
-                vm.stack_index = vm.stack_index - delta;
+                for(int i = 0; i < delta; ++i)
+                    aug_vm_free(aug_vm_pop(env, vm));
+                //vm.stack_index = vm.stack_index - delta;
                 break;
             }
             case AUG_OPCODE_CALL:
@@ -2629,13 +2776,17 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* ret_value = aug_vm_pop(env, vm);
                 
                 const int delta = aug_vm_read_int(vm);
-                vm.stack_index = vm.stack_index - delta;
+                for(int i = 0; i < delta; ++i)
+                    aug_vm_free(aug_vm_pop(env, vm));
+                //vm.stack_index = vm.stack_index - delta;
 
                 aug_value* ret_addr = aug_vm_pop(env, vm);
                 vm.instruction = vm.bytecode + ret_addr->i;
+                aug_vm_free(ret_addr);
 
                 aug_value* ret_base = aug_vm_pop(env, vm);
                 vm.base_index = ret_base->i;
+                aug_vm_free(ret_base);
 
                 aug_value* top = aug_vm_push(env, vm);
                 if (ret_value != nullptr && top != nullptr)
@@ -2648,6 +2799,8 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* func_name_value = aug_vm_pop(env, vm);
                 if(func_name_value == nullptr || func_name_value->type != AUG_STRING)
                 {
+                    aug_vm_free(func_name_value);
+
                     AUG_VM_ERROR(env, vm, "External Function Call expected function name to be pushed on stack");
                     break;                    
                 }
@@ -2666,12 +2819,20 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
 
                 if ((int)args.size() != arg_count)
                 {
+                    aug_vm_free(func_name_value);
+                    for (int i = 0; i < arg_count; ++i)
+                        aug_vm_free(args[i]);
+
                     AUG_VM_ERROR(env, vm, "Function Call %s passed %d arguments, expected %d", func_name, (int)args.size(), arg_count);
                     break;
                 }
 
                 if (env.external_functions.count(func_name) == 0)
                 {
+                    aug_vm_free(func_name_value);
+                    for (int i = 0; i < arg_count; ++i)
+                        aug_vm_free(args[i]);
+
                     AUG_VM_ERROR(env, vm, "External Function Call %s not registered", func_name);
                     break;
                 }
@@ -2683,6 +2844,11 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_value* top = aug_vm_push(env, vm);
                 if (top)
                     *top = ret_value;
+
+                aug_vm_free(func_name_value);
+                for (int i = 0; i < arg_count; ++i)
+                    aug_vm_free(args[i]);
+
                 break;
             }
             default:
@@ -2859,6 +3025,16 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
                 // discard the top
                 aug_ir_add_operation(ir, AUG_OPCODE_POP);
             }
+            break;
+        }
+        case AUG_AST_EXPR_LIST:
+        {            
+            const int expr_count = children.size();
+            for(int i = 0; i < expr_count; ++i) 
+                aug_ast_to_ir(env, children[0], ir);
+
+            const aug_ir_operand& count_operand = aug_ir_operand_from_int(expr_count);
+            aug_ir_add_operation(ir, AUG_OPCODE_PUSH_LIST, count_operand);
             break;
         }
         case AUG_AST_STMT_ASSIGN:
@@ -3343,35 +3519,11 @@ aug_value aug_from_float(float data)
     return value;
 }
 
-aug_string aug_to_string(const aug_value* value)
+aug_value aug_from_string(const char* data)
 {
-    if (value == nullptr)
-        return "null";
-
-    char out[1024];
-    int len = 0;
-    switch (value->type)
-    {
-    case AUG_NONE:
-        len = snprintf(out, sizeof(out), "%s", aug_type_labels[value->type]);
-        break;
-    case AUG_BOOL:
-        len = snprintf(out, sizeof(out), "%s", value->b ? "true" : "false");
-        break;
-    case AUG_INT:
-        len = snprintf(out, sizeof(out), "%d", value->i);
-        break;
-    case AUG_FLOAT:
-        len = snprintf(out, sizeof(out), "%f", value->f);
-        break;
-    case AUG_STRING:
-        len = snprintf(out, sizeof(out), "%s", value->str);
-        break;
-    case AUG_OBJECT:
-        len = snprintf(out, sizeof(out), "%s", aug_type_labels[value->type]);
-        break;
-    }
-    return aug_string(out, len);
+    aug_value value;
+    aug_set_string(&value, data);
+    return value;
 }
 
 bool aug_to_bool(const aug_value* value)
@@ -3393,8 +3545,91 @@ bool aug_to_bool(const aug_value* value)
         return value->str != nullptr;
     case AUG_OBJECT:
         return value->obj != nullptr;
+    case AUG_LIST:
+        return value->list != nullptr;
     }
     return false;
+}
+
+void aug_delete(aug_value* value)
+{
+    if (value == nullptr)
+        return;
+
+    switch (value->type)
+    {
+    case AUG_NONE:
+    case AUG_BOOL:
+    case AUG_INT:
+    case AUG_FLOAT:
+        break;
+    case AUG_STRING:
+        AUG_DELETE_ARRAY(value->str);
+        break;
+    case AUG_OBJECT:
+        AUG_DELETE(value->obj);
+        break;
+    case AUG_LIST:
+        aug_list_delete(value->list);
+        break;
+    }
+    value->type = AUG_NONE;
+}
+
+aug_list* aug_list_new()
+{
+    aug_list* list = AUG_NEW(aug_list);
+    list->front = nullptr;
+    list->back = nullptr;
+    return list;
+}
+
+void aug_list_delete(aug_list* list)
+{
+    aug_list_node* current = list->front;
+    while(current && current != list->back)
+    {
+        aug_list_node* next = current->next;
+        aug_delete(current->value);
+        AUG_DELETE(current);
+        current = next;
+    }
+}
+
+void aug_list_push_back(aug_list* list, aug_value* value)
+{
+    aug_list_node* node = AUG_NEW(aug_list_node);
+    node->value = value;
+    node->next = nullptr;
+
+    if(list->front == nullptr)
+    {
+        list->front = node;
+        list->back = node;
+    }
+    else
+    {
+        list->back->next = node;
+        list->back = node;
+    }
+}
+
+void aug_list_push_front(aug_list* list, aug_value* value)
+{
+    aug_list_node* node = AUG_NEW(aug_list_node);
+    node->value = value;
+    node->next = nullptr;
+
+    if(list->front == nullptr)
+    {
+        list->front = node;
+        list->back = node;
+    }
+    else
+    {
+        node->next = list->front;
+        list->front = node;
+    }
 }
 
 #endif

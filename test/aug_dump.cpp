@@ -1,5 +1,6 @@
 #define AUG_IMPLEMENTATION
 #define AUG_LOG_VERBOSE
+#define AUG_DEBUG
 #include <aug.h>
 
 void dump_lexer(const char* filename)
@@ -116,6 +117,11 @@ void dump_ast_tree(aug_ast* node, std::string prefix, bool is_leaf)
 			printf("RETURN\n");
 			if(children.size() == 1)
 			dump_ast_tree(children[0], prefix, true);
+			break;
+		case AUG_AST_EXPR_LIST:
+			printf("LIST\n");
+			for (size_t i = 0; i < children.size(); ++i)
+				dump_ast_tree(children[i], prefix, i == children.size() - 1);
 			break;
 		case AUG_AST_PARAM:
 		case AUG_AST_VARIABLE:

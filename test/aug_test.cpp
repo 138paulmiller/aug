@@ -57,6 +57,47 @@ struct aug_tester
 
 aug_tester tester;
 
+
+aug_string to_string(const aug_value* value)
+{
+    if (value == nullptr)
+        return "null";
+
+    char out[1024];
+    int len = 0;
+    switch (value->type)
+    {
+    case AUG_NONE:
+        return "none";
+    case AUG_BOOL:
+        len = snprintf(out, sizeof(out), "%s", value->b ? "true" : "false");
+        break;
+    case AUG_INT:
+        len = snprintf(out, sizeof(out), "%d", value->i);
+        break;
+    case AUG_FLOAT:
+        len = snprintf(out, sizeof(out), "%f", value->f);
+        break;
+    case AUG_STRING:
+        len = snprintf(out, sizeof(out), "%s", value->str);
+        break;
+    case AUG_OBJECT:
+        return "object";
+    case AUG_LIST:
+    {
+        aug_string str;
+        aug_list_node* node = value->list->front; 
+        while(node)
+        {
+            str += to_string(node->value);
+            node = node->next;
+        }
+        return str;
+    }
+    }
+    return aug_string(out, len);
+}
+
 void print(const aug_value* arg)
 {
 	if (arg == nullptr)
@@ -82,6 +123,22 @@ void print(const aug_value* arg)
 	case AUG_OBJECT:
 		printf("object");
 		break;
+	case AUG_LIST:
+	{
+		printf("[");
+		if(arg->list)
+		{
+			aug_list_node* node = arg->list->front; 
+			while(node)
+			{
+				printf(" ");
+				print(node->value);
+				node = node->next;
+			}
+		}
+		printf("]");
+		break;
+	}
 	}
 }
 
@@ -103,7 +160,7 @@ void expect(aug_value* return_value, const aug_array<aug_value*>& args)
 	bool success = aug_to_bool(args[0]);
 	aug_string message;
 	for( size_t i = 1; i < args.size(); ++i)
-		message += aug_to_string(args[i]);
+		message += to_string(args[i]);
 	
 	tester.verify(success, message);
 }
@@ -122,7 +179,7 @@ void aug_test_native(const char* filename)
 		
 		bool success = value.i == 5;
 		//bool success = value.i == 832040;
-		const aug_string message = "fibonacci = " + aug_to_string(&value);
+		const aug_string message = "fibonacci = " + to_string(&value);
 		tester.verify(success, message);
 	}
 	{
@@ -132,7 +189,7 @@ void aug_test_native(const char* filename)
 		aug_value value = aug_call(tester.env, script, "count", args);
 		
 		bool success = value.i == 10000;
-		const aug_string message = "count = " + aug_to_string(&value);
+		const aug_string message = "count = " + to_string(&value);
 		tester.verify(success, message);
 	}
 
