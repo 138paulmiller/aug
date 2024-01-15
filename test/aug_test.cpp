@@ -113,16 +113,29 @@ void aug_test_native(const char* filename)
 	aug_script script;
 	aug_compile(tester.env, script, filename);
 
-	aug_array<aug_value> args;
-	args.push_back(aug_from_int(5));
-	//args.push_back(aug_from_int(30));
+	{	
+		aug_array<aug_value> args;
+		args.push_back(aug_from_int(5));
+		//args.push_back(aug_from_int(30));
 
-	aug_value value = aug_call(tester.env, script, "fibonacci", args);
-	
-	bool success = value.i == 5;
-	//bool success = value.i == 832040;
-	const aug_string message = "fibonacci = " + aug_to_string(&value);
-	tester.verify(success, message);
+		aug_value value = aug_call(tester.env, script, "fibonacci", args);
+		
+		bool success = value.i == 5;
+		//bool success = value.i == 832040;
+		const aug_string message = "fibonacci = " + aug_to_string(&value);
+		tester.verify(success, message);
+	}
+	{
+		aug_array<aug_value> args;
+		args.push_back(aug_from_int(10000));
+
+		aug_value value = aug_call(tester.env, script, "count", args);
+		
+		bool success = value.i == 10000;
+		const aug_string message = "count = " + aug_to_string(&value);
+		tester.verify(success, message);
+	}
+
 }
 
 aug_environment aug_test_env()

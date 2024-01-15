@@ -4,3 +4,10 @@ func fibonacci(a) {
     }
     return fibonacci(a-1) + fibonacci(a-2);
 }
+
+func count(a) {
+    if a < 0 { 
+        return 0; 
+    }
+    return count(a) + 1;
+}

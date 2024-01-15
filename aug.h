@@ -20,8 +20,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE. */
 
-#ifndef __AUG_HEADER__
-#define __AUG_HEADER__
 /*
     AUG - embeddable script engine
 
@@ -86,12 +84,39 @@ SOFTWARE. */
     - Reimplement primary data structures, expose custom allocator/deallocator in environment
 */
 
+#ifndef __AUG_HEADER__
+#define __AUG_HEADER__
+#define AUG_DEBUG 1
+
+#ifndef AUG_STACK_SIZE
+    #define AUG_STACK_SIZE (1024 * 16)
+#endif//AUG_STACK_SIZE
+
+#ifndef AUG_VM_APPROX_THRESHOLD
+    #define AUG_VM_APPROX_THRESHOLD 0.0000001
+#endif//AUG_VM_APPROX_THRESHOLD 
+
+#ifndef AUG_OPERAND_LEN
+    #define AUG_OPERAND_LEN 8
+#endif//AUG_TOKEN_BUFFER_LEN 
+
+#ifndef AUG_TOKEN_BUFFER_LEN
+    #define AUG_TOKEN_BUFFER_LEN 32
+#endif//AUG_TOKEN_BUFFER_LEN 
+
+#ifndef AUG_COMMENT_SYMBOL
+    #define AUG_COMMENT_SYMBOL '#'
+#endif//AUG_COMMENT_SYMBOL 
+
+#ifndef AUG_LOG_PRELUDE
+    #define AUG_LOG_PRELUDE "[AUG]"
+#endif//AUG_LOG_PRELUDE 
+
 #include <string>
 #include <vector>
 #include <unordered_map>
 
-// AUG data structures
-
+// Data structures
 struct aug_symbol;
 struct aug_value;
 struct aug_object;
@@ -109,7 +134,7 @@ using aug_symtable = aug_map<aug_string, aug_symbol>;
 typedef void(aug_error_callback)(const char* /*msg*/);
 typedef void(aug_function_callback)(aug_value* /*return_value*/, const aug_array<aug_value*>& /*args*/);
 
-// 
+// Value Types
 enum aug_type
 {
     AUG_BOOL,
@@ -120,6 +145,15 @@ enum aug_type
     AUG_NONE
 };
 
+#if defined(AUG_IMPLEMENTATION)
+const char* aug_type_labels[] =
+{
+    "bool", "int", "float", "string", "object", "none"
+};
+static_assert(sizeof(aug_type_labels) / sizeof(aug_type_labels[0]) == (int)AUG_NONE + 1, "Type labels must be up to date with enum");
+#endif //AUG_IMPLEMENTATION
+
+// Values instance 
 struct aug_value
 {
     aug_type type;
@@ -133,17 +167,20 @@ struct aug_value
     };
 };
 
+// Object attributes
 struct aug_attribute
 {
     aug_string id;
     aug_value value;
 };
 
+// Object instance
 struct aug_object
 {
     aug_array<aug_attribute> attribs;
 };
 
+// Symbol types
 enum aug_symbol_type
 {
     AUG_SYM_NONE,
@@ -151,6 +188,7 @@ enum aug_symbol_type
     AUG_SYM_FUNC,
 };
 
+// Script symbols 
 struct aug_symbol
 {
     aug_symbol_type type;
@@ -163,11 +201,37 @@ struct aug_symbol
 // Represents a "compiled" script
 struct aug_script
 {
-    bool valid;
     aug_symtable globals;
     aug_array<char> bytecode;
+    bool valid;
 };
 
+// Calling frames are used to preserve and access parameters and local variables from the stack within a calling context
+struct aug_frame
+{
+    int base_index;
+    int stack_index;
+    // For function frames, there will be a return instruction and arg count. Otherwise, the frame is used for local scope 
+
+    bool func_call;
+    int arg_count;
+    const char* instruction; 
+};
+
+// Running instance of the virtual machine
+struct aug_vm
+{
+    bool valid;
+
+    const char* instruction;
+    const char* bytecode;
+ 
+    aug_value stack[AUG_STACK_SIZE];
+    int stack_index;
+    int base_index;
+
+    // TODO: debug symtable from addr to func name / variable offsets
+};
 
 // USer specific environment
 struct aug_environment
@@ -175,11 +239,19 @@ struct aug_environment
     // External functions are native functions that can be called from scripts   
     // This external function map contains the user's registered functions. 
     // Use aug_register/aug_unregister to modify this field
+    
+    // TODO: use an array, have call_ext call via index
     aug_map<aug_string, aug_function_callback*> external_functions;
 
     // The error callback is triggered when the engine triggers an error, either parsing or runtime. 
     aug_error_callback* error_callback = nullptr;
+
+    // The virtual machine instance
+    aug_vm vm;
 };
+
+void aug_startup(aug_environment& env);
+void aug_shutdown(aug_environment& env);
 
 void aug_register(aug_environment& env, const char* func_name, aug_function_callback* callback);
 void aug_unregister(aug_environment& env, const char* func_name);
@@ -211,32 +283,6 @@ aug_value aug_from_float(float data);
 #include <fstream>
 #include <iostream>
 #include <sstream>
-
-#define AUG_DEBUG 1
-
-#ifndef AUG_VM_APPROX_THRESHOLD
-    #define AUG_VM_APPROX_THRESHOLD 0.0000001
-#endif//AUG_VM_APPROX_THRESHOLD 
-
-#ifndef AUG_VM_OPERAND_LEN
-    #define AUG_VM_OPERAND_LEN 8
-#endif//AUG_TOKEN_BUFFER_LEN 
-
-#ifndef AUG_TOKEN_BUFFER_LEN
-    #define AUG_TOKEN_BUFFER_LEN 32
-#endif//AUG_TOKEN_BUFFER_LEN 
-
-#ifndef AUG_STACK_SIZE
-    #define AUG_STACK_SIZE (1024 * 16)
-#endif//AUG_STACK_SIZE
-
-#ifndef AUG_COMMENT_SYMBOL
-    #define AUG_COMMENT_SYMBOL '#'
-#endif//AUG_COMMENT_SYMBOL 
-
-#ifndef AUG_LOG_PRELUDE
-    #define AUG_LOG_PRELUDE "[AUG]"
-#endif//AUG_LOG_PRELUDE 
 
 #ifdef AUG_LOG_VERBOSE
     #ifdef WIN32
@@ -1637,8 +1683,9 @@ struct aug_ir_operand
         bool b;
         int i;
         float f;
+        char bytes[AUG_OPERAND_LEN]; //Used to access raw byte data to bool, float and int types
+
         const char* str; // NOTE: weak pointer to token data
-        char bytes[AUG_VM_OPERAND_LEN]; // NOTE: weak pointer to token data
     } data;
 
     aug_ir_operand_type type = AUG_IR_OPERAND_NONE;
@@ -1948,12 +1995,6 @@ inline aug_symbol aug_ir_get_symbol_local(aug_ir& ir, const aug_string& name)
 }
 
 // --------------------------------------- Value Operations -------------------------------------------------------//
-const char* aug_type_labels[] =
-{
-    "bool", "int", "float", "string", "object", "none"
-};
-
-static_assert(sizeof(aug_type_labels) / sizeof(aug_type_labels[0]) == (int)AUG_NONE + 1, "Type labels must be up to date with enum");
 
 inline bool aug_set_bool(aug_value* value, bool data)
 {
@@ -2183,38 +2224,13 @@ inline bool aug_approxeq(aug_value* result, aug_value* lhs, aug_value* rhs)
 
 // -------------------------------------- Virtual Machine / Bytecode ----------------------------------------------// 
 
-// Calling frames are used to preserve and access parameters and local variables from the stack within a calling context
-struct aug_frame
-{
-    int base_index;
-    int stack_index;
-    // For function frames, there will be a return instruction and arg count. Otherwise, the frame is used for local scope 
-
-    bool func_call;
-    int arg_count;
-    const char* instruction; 
-};
-
-struct aug_vm
-{
-    bool valid;
-    const char* instruction;
-    const char* bytecode;
- 
-    aug_value stack[AUG_STACK_SIZE];
-    int stack_index;
-    int base_index;
-
-    // TODO: debug symtable from addr to func name / variable offsets
-};
-
 // Used to convert values to/from bytes for constant values
 union aug_vm_bytecode_value
 {
     bool b;
     int i;
     float f;
-    unsigned char bytes[AUG_VM_OPERAND_LEN];
+    unsigned char bytes[AUG_OPERAND_LEN]; //Used to access raw byte data to bool, float and int types
 };
 
 #define AUG_VM_ERROR(env, vm, ...)     \
@@ -2315,7 +2331,7 @@ inline const char* aug_vm_read_bytes(aug_vm& vm)
     return vm.instruction - len;
 }
 
-void aug_vm_startup(aug_environment& env, aug_vm& vm, const aug_script& script)
+void aug_vm_startup(aug_vm& vm, const aug_script& script)
 {
     if (script.bytecode.size() == 0)
         vm.bytecode = nullptr;
@@ -2327,22 +2343,19 @@ void aug_vm_startup(aug_environment& env, aug_vm& vm, const aug_script& script)
     vm.valid = true; 
 }
 
-void aug_vm_shutdown(aug_environment& env, aug_vm& vm)
+bool aug_vm_shutdown(aug_vm& vm)
 {
     if (!vm.valid)
-        return;
+        return false;
 
     // Ensure that stack has returned to beginning state
-    assert(vm.stack_index == 0);
+    return vm.stack_index == 0;
 }
 
 void aug_vm_execute(aug_environment& env, aug_vm& vm)
 {
     while(vm.instruction)
     {
-#if 0
-        printf("[%d] %s\n", vm.instruction - vm.bytecode, aug_opcode_labels[(*vm.instruction)]);
-#endif
         aug_opcode opcode = (aug_opcode) (*vm.instruction);
         ++vm.instruction;
 
@@ -2679,63 +2692,6 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
     }
 }
 
-aug_value aug_vm_execute_function(aug_environment& env, aug_vm& vm, aug_script& script, const char* func_name, const aug_array<aug_value>& args)
-{
-    aug_value ret_value;
-    ret_value.type = AUG_NONE;
-
-    if (script.globals.count(func_name) == 0)
-    {
-        AUG_LOG_ERROR(env, "Function name not defined %s", func_name);
-        return ret_value;
-    }
-
-    const aug_symbol& symbol = script.globals[func_name];
-    if (symbol.type != AUG_SYM_FUNC)
-    {
-        AUG_LOG_ERROR(env, "%s is not defined as a function", func_name);
-        return ret_value;
-    }
-    if (symbol.argc != (int)args.size())
-    {
-        AUG_LOG_ERROR(env, "Function Call %s passed %d arguments, expected %d", func_name, (int)args.size(), symbol.argc);
-        return ret_value;
-    }
-
-    // Since the call operation is implicit, setup calling frame manually 
-    // push base 
-    aug_value* base = aug_vm_push(env, vm);
-    base->type = AUG_INT;
-    base->i = vm.base_index;
-
-    // push return address
-    aug_value* return_address = aug_vm_push(env, vm);
-    return_address->type = AUG_INT;
-    return_address->i = 0;
-
-    // Jump to function call
-    vm.instruction = vm.bytecode + symbol.offset;
-
-    const size_t arg_count = args.size();
-    for (size_t i = 0; i < arg_count; ++i)
-    {
-        aug_value* value = aug_vm_push(env, vm);
-        if (value)
-            *value = args[i];
-    }
-
-    // Setup base index to be current stack index
-    vm.base_index = vm.stack_index;
-
-    aug_vm_execute(env, vm);
-
-    aug_value* top = aug_vm_pop(env, vm);
-    if (top)
-        ret_value = *top;
-
-    return ret_value;
-}
-
 // -------------------------------------- Passes ------------------------------------------------// 
 bool aug_pass_semantic_check(const aug_ast* node)
 {
@@ -2743,7 +2699,6 @@ bool aug_pass_semantic_check(const aug_ast* node)
         return false;
     return true;
 }
-
 // -------------------------------------- Transformations ---------------------------------------// 
 
 void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
@@ -2924,7 +2879,6 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
                 break;
             }
 
-
             const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
             aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
 
@@ -2944,6 +2898,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             }
             
             aug_ir_set_var(ir, token.data);
+
             break;
         }
         case AUG_AST_STMT_IF:
@@ -2968,7 +2923,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             // Fixup stubbed block offsets
             aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
             end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
-            
+     
             break;
         }
         case AUG_AST_STMT_IF_ELSE:
@@ -3204,7 +3159,7 @@ void aug_ir_to_bytecode(aug_ir& ir, aug_array<char>& bytecode)
     }
 }
 
-// -------------------------------------- API ------ ---------------------------------------// 
+// -------------------------------------- API ---------------------------------------------// 
 
 bool aug_compile_script(aug_environment& env, aug_ast* root, aug_script& script)
 {
@@ -3242,22 +3197,18 @@ void aug_unregister(aug_environment& env, const char* func_name)
 
 void aug_execute(aug_environment& env, const char* filename)
 {
-    // Parse file
-    aug_ast* root = aug_parse_file(env, filename);
-    if (root == nullptr)
-        return;
-
     aug_script script;
-    const bool success = aug_compile_script(env, root, script);
-    aug_ast_delete(root);
-
+    bool success = aug_compile(env, script, filename);
     if (!success)
         return;
 
-    aug_vm vm;
-    aug_vm_startup(env, vm, script);
-    aug_vm_execute(env, vm);
-    aug_vm_shutdown(env, vm);
+    aug_vm_startup(env.vm, script);
+
+    aug_vm_execute(env, env.vm);
+
+    success = aug_vm_shutdown(env.vm);
+    if(!success)
+        AUG_LOG_ERROR(env, "Virtual machine error. Invalid stack state");
 }
 
 void aug_evaluate(aug_environment& env, const char* code)
@@ -3269,7 +3220,7 @@ void aug_evaluate(aug_environment& env, const char* code)
 
     // Load bytecode into VM
     aug_script script;
-    const bool success = aug_compile_script(env, root, script);
+    bool success = aug_compile_script(env, root, script);
 
     // Cleanup 
     aug_ast_delete(root);
@@ -3277,21 +3228,26 @@ void aug_evaluate(aug_environment& env, const char* code)
     if (!success)
         return;
 
-    aug_vm vm;
-    aug_vm_startup(env, vm, script);
-    aug_vm_execute(env, vm);
-    aug_vm_shutdown(env, vm);
+    aug_vm_startup(env.vm, script);
 
+    aug_vm_execute(env, env.vm);
+
+    success = aug_vm_shutdown(env.vm);
+    if(!success)
+        AUG_LOG_ERROR(env, "Virtual machine error. Invalid stack state");
+    
     // Should this return the top ?
 }
 
 bool aug_compile(aug_environment& env, aug_script& script, const char* filename)
 {
-    script.valid = false;
     // Parse file
     aug_ast* root = aug_parse_file(env, filename);
     if (root == nullptr)
+    {
+        script.valid = false;
         return false;
+    }
 
     script.valid = aug_compile_script(env, root, script);
     aug_ast_delete(root);
@@ -3301,17 +3257,68 @@ bool aug_compile(aug_environment& env, aug_script& script, const char* filename)
 
 aug_value aug_call(aug_environment& env, aug_script& script, const char* func_name, const aug_array<aug_value>& args)
 {
+    aug_value ret_value;
+    ret_value.type = AUG_NONE;
     if (!script.valid)
+        return ret_value;
+
+    if (script.globals.count(func_name) == 0)
     {
-        aug_value ret_value;
-        ret_value.type = AUG_NONE;
+        AUG_LOG_ERROR(env, "Function name not defined %s", func_name);
         return ret_value;
     }
 
-    aug_vm vm;
-    aug_vm_startup(env, vm, script);
-    const aug_value& ret_value = aug_vm_execute_function(env, vm, script, func_name, args);
-    aug_vm_shutdown(env, vm);
+    const aug_symbol& symbol = script.globals[func_name];
+    if (symbol.type != AUG_SYM_FUNC)
+    {
+        AUG_LOG_ERROR(env, "%s is not defined as a function", func_name);
+        return ret_value;
+    }
+    if (symbol.argc != (int)args.size())
+    {
+        AUG_LOG_ERROR(env, "Function Call %s passed %d arguments, expected %d", func_name, (int)args.size(), symbol.argc);
+        return ret_value;
+    }
+
+    aug_vm& vm = env.vm;
+    // Setup the VM
+    aug_vm_startup(vm, script);
+
+    // Since the call operation is implicit, setup calling frame manually 
+    // push base addr
+    aug_value* base = aug_vm_push(env, vm);
+    base->type = AUG_INT;
+    base->i = vm.base_index;
+
+    // push return address
+    aug_value* return_address = aug_vm_push(env, vm);
+    return_address->type = AUG_INT;
+    return_address->i = 0;
+
+    // Jump to function call
+    vm.instruction = vm.bytecode + symbol.offset;
+
+    const size_t arg_count = args.size();
+    for (size_t i = 0; i < arg_count; ++i)
+    {
+        aug_value* value = aug_vm_push(env, vm);
+        if (value)
+            *value = args[i];
+    }
+
+    // Setup base index to be current stack index
+    vm.base_index = vm.stack_index;
+
+    aug_vm_execute(env, vm);
+
+    aug_value* top = aug_vm_pop(env, vm);
+    if (top)
+        ret_value = *top;
+
+    bool success = aug_vm_shutdown(env.vm);
+    if(!success)
+        AUG_LOG_ERROR(env, "Virtual machine error. Invalid stack state");
+
     return ret_value;
 }
 
