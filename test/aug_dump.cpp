@@ -7,10 +7,10 @@ void dump_lexer(const char* filename)
 {
 	printf("Tokens \n");
 
-	aug_environment env;
 	aug_lexer lexer;
-	aug_lexer_open_file(env, lexer, filename);
-	while (aug_lexer_move(env, lexer) && lexer.curr.id != AUG_TOKEN_END)
+	aug_lexer_init(lexer, nullptr);
+	aug_lexer_open_file(lexer, filename);
+	while (aug_lexer_move(lexer) && lexer.curr.id != AUG_TOKEN_END)
 	{
 		//printf("\tPREV: %s (%s)%d:%d\n", lexer.prev.detail->label, lexer.prev.data.c_str(), lexer.prev.line, lexer.prev.col);
 		printf("\tCURR: %s (%s) %d:%d\n", lexer.curr.detail->label, lexer.curr.data.c_str(), lexer.curr.line, lexer.curr.col);

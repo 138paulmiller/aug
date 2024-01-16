@@ -65,3 +65,14 @@ func fibonacci_fizzbuzz(n) {
 
 a = fibonacci_fizzbuzz(30);
 expect(a == 832040, "fibonacci_fizzbuzz(30) = ", a);
+
+
+func count(a) {
+    if a <= 0 { 
+        return 0; 
+    }
+    return count(a-1) + 1;
+}
+
+a = count(1000);
+expect(a == 1000, "count(1000) = ", a);

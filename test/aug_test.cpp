@@ -5,16 +5,25 @@
 
 void aug_dump_file(aug_environment env, const char* filename);
 
+struct aug_tester;
+typedef void(aug_tester_func)();
+
 struct aug_tester
 {
 	int passed = 0;
 	int total = 0;
 	int verbose = 0;
 	bool dump;
-	aug_std_string filename;
+	std::string filename;
 
 	aug_environment env;
 	
+	static aug_tester& get()
+	{ 
+		static aug_tester tester;
+		return tester;
+	}
+
 	void begin(aug_environment test_env, const char* file)
 	{
 		env = test_env;
@@ -29,20 +38,23 @@ struct aug_tester
 			printf("[TEST]\t%s\n", filename.c_str());
 	}
 
-	void run()
+	void run(aug_tester_func* func = nullptr)
 	{
-		aug_execute(env, filename.c_str());
+		if (func != nullptr)
+			func();
+		else
+			aug_execute(env, filename.c_str());
 	}
 
 	void end()
 	{
-		if (verbose && total > 0)
+		if (verbose)
 			printf("[TEST]\tEnded. Passed %d / %d\n", passed, total);
 		else
-			printf("[%s]\t%s\n", passed == total ? "PASS" : "FAIL", filename.c_str());
+			printf("[%s]\t%s\n", total > 0 && passed == total ? "PASS" : "FAIL", filename.c_str());
 	}
 
-	void verify(bool success, const aug_std_string& message)
+	void verify(bool success, const std::string& message)
 	{
 		++total;
 
@@ -60,10 +72,8 @@ struct aug_tester
 	}
 };
 
-aug_tester tester;
 
-
-aug_std_string to_string(const aug_value& value)
+std::string to_string(const aug_value& value)
 {
     char out[1024];
     int len = 0;
@@ -81,13 +91,13 @@ aug_std_string to_string(const aug_value& value)
         len = snprintf(out, sizeof(out), "%f", value.f);
         break;
     case AUG_STRING:
-        len = snprintf(out, sizeof(out), "%s", value.str->data.c_str());
+        len = snprintf(out, sizeof(out), "%s", value.str->c_str());
         break;
     case AUG_OBJECT:
         return "object";
     case AUG_LIST:
     {
-        aug_std_string str = "[ ";
+        std::string str = "[ ";
 		if(value.list)
 		{
 			for(const aug_value& entry : value.list->data)
@@ -100,7 +110,7 @@ aug_std_string to_string(const aug_value& value)
         return str;
     }
     }
-    return aug_std_string(out, len);
+    return std::string(out, len);
 }
 
 void print(const aug_value& value)
@@ -120,7 +130,7 @@ void print(const aug_value& value)
 		printf("%0.3f", value.f);
 		break;
 	case AUG_STRING:
-		printf("%s", value.str->data.c_str());
+		printf("%s", value.str->c_str());
 		break;
 	case AUG_OBJECT:
 		printf("object");
@@ -153,7 +163,7 @@ float sum(const aug_value& value, aug_value_type& type)
 		// INVALID TYPE!
 		return 0.0f;
 	case AUG_INT:
-		return value.i;
+		return (float)value.i;
 	case AUG_FLOAT:
 		type = AUG_FLOAT;
 		return value.f;
@@ -181,7 +191,7 @@ aug_value sum(const aug_std_array<aug_value>& args)
 	if(type == AUG_FLOAT)
 		return  aug_from_float(total);
 	else if(type == AUG_INT)
-		return aug_from_int(total);
+		return aug_from_int((int)total);
 	return aug_none();
 }
 
@@ -203,46 +213,43 @@ aug_value expect(const aug_std_array<aug_value>& args)
 		return aug_none();
 
 	bool success = aug_to_bool(&args[0]);
-	aug_std_string message;
+	std::string message;
 	for( size_t i = 1; i < args.size(); ++i)
 		message += to_string(args[i]);
 	
-	tester.verify(success, message);
+	aug_tester::get().verify(success, message);
 
 	return aug_none();
 }
 
-void aug_test_native(const char* filename)
+void aug_test_native()
 {
 	aug_script script;
-	aug_compile(tester.env, script, filename);
+	aug_compile(aug_tester::get().env, script, aug_tester::get().filename.c_str());
 
-#if 0
 	{	
 		aug_std_array<aug_value> args;
 		args.push_back(aug_from_int(5));
 		//args.push_back(aug_from_int(30));
 
-		aug_value value = aug_call(tester.env, script, "fibonacci", args);
+		aug_value value = aug_call(aug_tester::get().env, script, "fibonacci", args);
 		
 		bool success = value.i == 5;
 		//bool success = value.i == 832040;
-		const aug_std_string message = "fibonacci = " + to_string(value);
-		tester.verify(success, message);
+		const std::string message = "fibonacci = " + to_string(value);
+		aug_tester::get().verify(success, message);
 	}
-#endif
 	{
 		const int n = 5000;
 		aug_std_array<aug_value> args;
 		args.push_back(aug_from_int(n));
 
-		aug_value value = aug_call(tester.env, script, "count", args);
+		aug_value value = aug_call(aug_tester::get().env, script, "count", args);
 		
 		bool success = value.i == n;
-		const aug_std_string message = "count = " + to_string(value);
-		tester.verify(success, message);
+		const std::string message = "count = " + to_string(value);
+		aug_tester::get().verify(success, message);
 	}
-
 }
 
 aug_environment aug_test_env()
@@ -255,27 +262,84 @@ aug_environment aug_test_env()
 	return env;
 }
 
+int aug_test(int argc, char** argv)
+{
+	for(int i = 1; i < argc; ++i)
+	{
+		if (argv[i] && strcmp(argv[i], "--verbose") == 0)
+		{
+			aug_tester::get().verbose = 1;
+		}
+		else if(argv[i] && strcmp(argv[i], "--dump") == 0)
+		{
+			aug_tester::get().dump = true;
+		}
+		else if (argv[i] && strcmp(argv[i], "--test") == 0)
+		{
+			if (++i >= argc)
+			{
+				printf("aug_test: --exec parameter expected filename!");
+				break;
+			}
+			aug_tester::get().begin(aug_test_env(), argv[i]);
+			aug_tester::get().run();
+			aug_tester::get().end();
+		}
+		else if (argv[i] && strcmp(argv[i], "--test_native") == 0)
+		{
+			if (++i >= argc)
+			{
+				printf("aug_test: --test_native parameter expected filename!");
+				break;
+			}
+
+			aug_tester::get().begin(aug_test_env(), argv[i]);
+			aug_tester::get().run(aug_test_native);
+			aug_tester::get().end();
+		}
+		else if (argv[i] && strcmp(argv[i], "--test_all") == 0)
+		{
+			if (++i >= argc)
+			{
+				printf("aug_test: --test_all parameter expected filename!");
+				break;
+			}
+
+			while ( i < argc && strncmp(argv[i], "--", 2) != 0)
+			{
+				const char* arg = argv[i++];
+
+				aug_tester::get().begin(aug_test_env(), arg);
+				aug_tester::get().run();
+				aug_tester::get().end();
+			}
+		}
+	}
+
+	return 0;
+}
+
 #ifdef  _WIN32
 
 #include "windows.h"
 #define _CRTDBG_MAP_ALLOC //to get more details
 
-struct win32_memorycheck_scope
+struct win32_memorycheck
 {
 	_CrtMemState start_memstate;
 
-	win32_memorycheck_scope()
+	win32_memorycheck()
 	{
 		_CrtMemCheckpoint(&start_memstate); //take a snapshot
 	}
-	
-	~win32_memorycheck_scope()
+
+	~win32_memorycheck()
 	{
 		_CrtMemState end_memstate, diff_memstate;
 		_CrtMemCheckpoint(&end_memstate); //take a snapshot 
 		if (_CrtMemDifference(&diff_memstate, &start_memstate, &end_memstate)) // if there is a difference
 		{
-			OutputDebugString(L"!!! MEMORY LEAK !!! Check debug output!");
+			printf("-----------------------  !!! MEMORY LEAK !!! ----------------------- ");
 			OutputDebugString(L"-----------_CrtMemDumpStatistics ---------");
 			_CrtMemDumpStatistics(&diff_memstate);
 			OutputDebugString(L"-----------_CrtMemDumpAllObjectsSince ---------");
@@ -284,70 +348,6 @@ struct win32_memorycheck_scope
 			_CrtDumpMemoryLeaks();
 		}
 	}
-};
+} memcheck;
 
 #endif //_WIN32
-
-int aug_test(int argc, char** argv)
-{
-#ifdef  _WIN32
-	win32_memorycheck_scope memcheck;
-#endif //_WIN32
-
-	for(int i = 1; i < argc; ++i)
-	{
-		if (argv[i] && strcmp(argv[i], "--verbose") == 0)
-		{
-			tester.verbose = 1;
-		}
-		else if(argv[i] && strcmp(argv[i], "--dump") == 0)
-		{
-			tester.dump = true;
-		}
-		else if (argv[i] && strcmp(argv[i], "--test") == 0)
-		{
-			if (++i >= argc)
-			{
-				printf("aug_test: --exec parameter expected filename!");
-				return -1;
-			}
-			
-			tester.begin(aug_test_env(), argv[i]);
-			tester.run();
-			tester.end();
-		}
-		else if (argv[i] && strcmp(argv[i], "--test_native") == 0)
-		{
-			if (++i >= argc)
-			{
-				printf("aug_test: --test_native parameter expected filename!");
-				return -1;
-			}
-
-			tester.begin(aug_test_env(), argv[i]);
-
-			aug_test_native(argv[i]);
-
-			tester.end();
-		}
-		else if (argv[i] && strcmp(argv[i], "--test_all") == 0)
-		{
-			if (++i >= argc)
-			{
-				printf("aug_test: --test_native parameter expected filename!");
-				return -1;
-			}
-
-			while ( i < argc && strncmp(argv[i], "--", 2) != 0)
-			{
-				const char* arg = argv[i++];
-
-				tester.begin(aug_test_env(), arg);
-				aug_execute(tester.env, arg);
-				tester.end();
-			}
-		}
-	}
-
-	return 0;
-}
