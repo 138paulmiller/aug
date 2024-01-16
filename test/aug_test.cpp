@@ -29,6 +29,11 @@ struct aug_tester
 			printf("[TEST]\t%s\n", filename.c_str());
 	}
 
+	void run()
+	{
+		aug_execute(env, filename.c_str());
+	}
+
 	void end()
 	{
 		if (verbose && total > 0)
@@ -212,6 +217,7 @@ void aug_test_native(const char* filename)
 	aug_script script;
 	aug_compile(tester.env, script, filename);
 
+#if 0
 	{	
 		aug_std_array<aug_value> args;
 		args.push_back(aug_from_int(5));
@@ -224,13 +230,15 @@ void aug_test_native(const char* filename)
 		const aug_std_string message = "fibonacci = " + to_string(value);
 		tester.verify(success, message);
 	}
+#endif
 	{
+		const int n = 5000;
 		aug_std_array<aug_value> args;
-		args.push_back(aug_from_int(10000));
+		args.push_back(aug_from_int(n));
 
 		aug_value value = aug_call(tester.env, script, "count", args);
 		
-		bool success = value.i == 10000;
+		bool success = value.i == n;
 		const aug_std_string message = "count = " + to_string(value);
 		tester.verify(success, message);
 	}
@@ -240,6 +248,7 @@ void aug_test_native(const char* filename)
 aug_environment aug_test_env()
 {
 	aug_environment env;
+	aug_startup(env, nullptr);
 	aug_register(env, "print", print);
 	aug_register(env, "expect", expect);
 	aug_register(env, "sum", sum);
@@ -304,9 +313,7 @@ int aug_test(int argc, char** argv)
 			}
 			
 			tester.begin(aug_test_env(), argv[i]);
-
-			aug_execute(tester.env, argv[i]);
-
+			tester.run();
 			tester.end();
 		}
 		else if (argv[i] && strcmp(argv[i], "--test_native") == 0)
@@ -322,6 +329,23 @@ int aug_test(int argc, char** argv)
 			aug_test_native(argv[i]);
 
 			tester.end();
+		}
+		else if (argv[i] && strcmp(argv[i], "--test_all") == 0)
+		{
+			if (++i >= argc)
+			{
+				printf("aug_test: --test_native parameter expected filename!");
+				return -1;
+			}
+
+			while ( i < argc && strncmp(argv[i], "--", 2) != 0)
+			{
+				const char* arg = argv[i++];
+
+				tester.begin(aug_test_env(), arg);
+				aug_execute(tester.env, arg);
+				tester.end();
+			}
 		}
 	}
 

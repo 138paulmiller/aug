@@ -94,7 +94,7 @@ SOFTWARE. */
 #define __AUG_HEADER__
 
 #ifndef AUG_STACK_SIZE
-    #define AUG_STACK_SIZE (1024 * 16)
+    #define AUG_STACK_SIZE (1024 * 32)
 #endif//AUG_STACK_SIZE
 
 #ifndef AUG_NEW
@@ -119,10 +119,6 @@ SOFTWARE. */
 
 #ifndef AUG_OPERAND_LEN
     #define AUG_OPERAND_LEN 8
-#endif//AUG_TOKEN_BUFFER_LEN 
-
-#ifndef AUG_TOKEN_BUFFER_LEN
-    #define AUG_TOKEN_BUFFER_LEN 32
 #endif//AUG_TOKEN_BUFFER_LEN 
 
 #ifndef AUG_COMMENT_SYMBOL
@@ -283,21 +279,21 @@ struct aug_environment
 {
     // External functions are native functions that can be called from scripts   
     // This external function map contains the user's registered functions. 
-    // Use aug_register/aug_unregister to modify this field
-    
-    // TODO: use an array, have call_ext call via index
-    aug_std_map<aug_std_string, aug_function_callback*> external_functions;
+    // Use aug_register/aug_unregister to modify these fields
+    aug_std_array<aug_function_callback*> external_functions;
+    aug_std_array<aug_std_string>         external_function_names;
 
     // The error callback is triggered when the engine triggers an error, either parsing or runtime. 
-    aug_error_callback* error_callback = nullptr;
+    aug_error_callback* error_callback;
 
     // The virtual machine instance
     aug_vm vm;
 };
 
-void aug_startup(aug_environment& env);
+void aug_startup(aug_environment& env, aug_error_callback* error_callback);
 void aug_shutdown(aug_environment& env);
 
+// NOTE: changing the registered functions will require a script recompilation. Can not guarantee the external function call will work. 
 void aug_register(aug_environment& env, const char* func_name, aug_function_callback* callback);
 void aug_unregister(aug_environment& env, const char* func_name);
 
@@ -354,6 +350,8 @@ aug_value aug_from_string(const char* data);
     if(env.error_callback) env.error_callback(buffer);                      \
 }
 
+#define AUG_NEAREST_POW_2(x) pow(2, ceil(log(x) / log(2)))
+
 // -------------------------------------- Lexer  ---------------------------------------// 
 // Static token details
 struct aug_token_detail
@@ -367,53 +365,53 @@ struct aug_token_detail
 
 #define AUG_TOKEN_LIST                                \
     /* State */                                        \
-    AUG_TOKEN(NONE,           0, 0, 0, nullptr)       \
-    AUG_TOKEN(ERR,	          0, 0, 0, nullptr)        \
-    AUG_TOKEN(END,            0, 0, 0, nullptr)       \
+    AUG_TOKEN(NONE,           0, 0, 0, NULL)       \
+    AUG_TOKEN(ERR,	          0, 0, 0, NULL)        \
+    AUG_TOKEN(END,            0, 0, 0, NULL)       \
     /* Symbols */			                           \
-    AUG_TOKEN(DOT,            0, 0, 0, nullptr)       \
-    AUG_TOKEN(COMMA,          0, 0, 0, nullptr)       \
-    AUG_TOKEN(COLON,          0, 0, 0, nullptr)       \
-    AUG_TOKEN(SEMICOLON,      0, 0, 0, nullptr)       \
-    AUG_TOKEN(LPAREN,         0, 0, 0, nullptr)       \
-    AUG_TOKEN(RPAREN,         0, 0, 0, nullptr)       \
-    AUG_TOKEN(LBRACKET,       0, 0, 0, nullptr)       \
-    AUG_TOKEN(RBRACKET,       0, 0, 0, nullptr)       \
-    AUG_TOKEN(LBRACE,         0, 0, 0, nullptr)       \
-    AUG_TOKEN(RBRACE,         0, 0, 0, nullptr)       \
+    AUG_TOKEN(DOT,            0, 0, 0, NULL)       \
+    AUG_TOKEN(COMMA,          0, 0, 0, NULL)       \
+    AUG_TOKEN(COLON,          0, 0, 0, NULL)       \
+    AUG_TOKEN(SEMICOLON,      0, 0, 0, NULL)       \
+    AUG_TOKEN(LPAREN,         0, 0, 0, NULL)       \
+    AUG_TOKEN(RPAREN,         0, 0, 0, NULL)       \
+    AUG_TOKEN(LBRACKET,       0, 0, 0, NULL)       \
+    AUG_TOKEN(RBRACKET,       0, 0, 0, NULL)       \
+    AUG_TOKEN(LBRACE,         0, 0, 0, NULL)       \
+    AUG_TOKEN(RBRACE,         0, 0, 0, NULL)       \
     /* Operators - Arithmetic */                       \
-    AUG_TOKEN(ADD,            2, 2, 0, nullptr)       \
-    AUG_TOKEN(ADD_EQ,         1, 2, 0, nullptr)       \
-    AUG_TOKEN(SUB,            2, 2, 0, nullptr)       \
-    AUG_TOKEN(SUB_EQ,         1, 2, 0, nullptr)       \
-    AUG_TOKEN(MUL,            3, 2, 0, nullptr)       \
-    AUG_TOKEN(MUL_EQ,         1, 2, 0, nullptr)       \
-    AUG_TOKEN(DIV,            3, 2, 0, nullptr)       \
-    AUG_TOKEN(DIV_EQ,         1, 2, 0, nullptr)       \
-    AUG_TOKEN(POW,            3, 2, 0, nullptr)       \
-    AUG_TOKEN(POW_EQ,         1, 2, 0, nullptr)       \
-    AUG_TOKEN(MOD,            3, 2, 0, nullptr)       \
-    AUG_TOKEN(MOD_EQ,         1, 2, 0, nullptr)       \
+    AUG_TOKEN(ADD,            2, 2, 0, NULL)       \
+    AUG_TOKEN(ADD_EQ,         1, 2, 0, NULL)       \
+    AUG_TOKEN(SUB,            2, 2, 0, NULL)       \
+    AUG_TOKEN(SUB_EQ,         1, 2, 0, NULL)       \
+    AUG_TOKEN(MUL,            3, 2, 0, NULL)       \
+    AUG_TOKEN(MUL_EQ,         1, 2, 0, NULL)       \
+    AUG_TOKEN(DIV,            3, 2, 0, NULL)       \
+    AUG_TOKEN(DIV_EQ,         1, 2, 0, NULL)       \
+    AUG_TOKEN(POW,            3, 2, 0, NULL)       \
+    AUG_TOKEN(POW_EQ,         1, 2, 0, NULL)       \
+    AUG_TOKEN(MOD,            3, 2, 0, NULL)       \
+    AUG_TOKEN(MOD_EQ,         1, 2, 0, NULL)       \
     AUG_TOKEN(AND,            1, 2, 0, "and")         \
     AUG_TOKEN(OR,             1, 2, 0, "or")          \
     /* Operators - Boolean */                          \
-    AUG_TOKEN(EQ,             1, 2, 0, nullptr)       \
-    AUG_TOKEN(LT,             2, 2, 0, nullptr)       \
-    AUG_TOKEN(GT,             2, 2, 0, nullptr)       \
-    AUG_TOKEN(LT_EQ,          2, 2, 0, nullptr)       \
-    AUG_TOKEN(GT_EQ,          2, 2, 0, nullptr)       \
-    AUG_TOKEN(NOT,            3, 1, 0, nullptr)       \
-    AUG_TOKEN(NOT_EQ,         2, 2, 0, nullptr)       \
-    AUG_TOKEN(APPROX_EQ,      1, 2, 0, nullptr)       \
+    AUG_TOKEN(EQ,             1, 2, 0, NULL)       \
+    AUG_TOKEN(LT,             2, 2, 0, NULL)       \
+    AUG_TOKEN(GT,             2, 2, 0, NULL)       \
+    AUG_TOKEN(LT_EQ,          2, 2, 0, NULL)       \
+    AUG_TOKEN(GT_EQ,          2, 2, 0, NULL)       \
+    AUG_TOKEN(NOT,            3, 1, 0, NULL)       \
+    AUG_TOKEN(NOT_EQ,         2, 2, 0, NULL)       \
+    AUG_TOKEN(APPROX_EQ,      1, 2, 0, NULL)       \
     /* Literals */                                     \
-    AUG_TOKEN(DECIMAL,        0, 0, 1, nullptr)       \
-    AUG_TOKEN(HEXIDECIMAL,    0, 0, 1, nullptr)       \
-    AUG_TOKEN(BINARY,         0, 0, 1, nullptr)       \
-    AUG_TOKEN(FLOAT,          0, 0, 1, nullptr)       \
-    AUG_TOKEN(STRING,         0, 0, 1, nullptr)       \
+    AUG_TOKEN(DECIMAL,        0, 0, 1, NULL)       \
+    AUG_TOKEN(HEXIDECIMAL,    0, 0, 1, NULL)       \
+    AUG_TOKEN(BINARY,         0, 0, 1, NULL)       \
+    AUG_TOKEN(FLOAT,          0, 0, 1, NULL)       \
+    AUG_TOKEN(STRING,         0, 0, 1, NULL)       \
     /* Misc */                                         \
-    AUG_TOKEN(NAME,           0, 0, 1, nullptr)       \
-    AUG_TOKEN(ASSIGN,         0, 0, 0, nullptr)       \
+    AUG_TOKEN(NAME,           0, 0, 1, NULL)       \
+    AUG_TOKEN(ASSIGN,         0, 0, 0, NULL)       \
     /* Keywords */                                     \
     AUG_TOKEN(IF,             0, 0, 0, "if")          \
     AUG_TOKEN(ELSE,           0, 0, 0, "else")        \
@@ -462,14 +460,15 @@ struct aug_lexer
     aug_token curr;
     aug_token next;
 
-    std::istream* input = nullptr;
+    std::istream* input = NULL;
     aug_std_string inputname;
 
     int line, col;
     int prev_line, prev_col;
     std::streampos pos_start;
 
-    char token_buffer[AUG_TOKEN_BUFFER_LEN];
+    char* token_buffer = NULL;
+    size_t token_buffer_len;
 };
 
 #define AUG_LEXER_ERROR(env, lexer, token, ...)              \
@@ -478,6 +477,23 @@ struct aug_lexer
     AUG_LOG_ERROR(env, "%s(%d,%d):",                         \
         lexer.inputname.c_str(), lexer.line+1, lexer.col+1); \
     AUG_LOG_ERROR(env, __VA_ARGS__);                         \
+}
+
+void aug_lexer_init(aug_lexer& lexer)
+{
+    lexer.input = NULL;
+    lexer.line = 0;
+    lexer.col = 0;
+    lexer.prev_line = 0;
+    lexer.prev_col = 0;
+    lexer.pos_start = 0;
+
+    lexer.token_buffer = NULL;
+    lexer.token_buffer_len = 0;
+
+    lexer.prev = aug_token();
+    lexer.curr = aug_token();
+    lexer.next = aug_token();
 }
 
 char aug_lexer_get(aug_lexer& lexer)
@@ -525,6 +541,13 @@ void aug_lexer_end_tracking(aug_lexer& lexer, aug_std_string& s)
     const std::streampos pos_end = lexer.input->tellg();
     const std::streamoff len = (pos_end - lexer.pos_start);
     
+    if (len >= lexer.token_buffer_len)
+    {
+        AUG_DELETE_ARRAY(lexer.token_buffer);
+        lexer.token_buffer_len = AUG_NEAREST_POW_2(len);
+        lexer.token_buffer = AUG_NEW_ARRAY(char, lexer.token_buffer_len);
+    }
+
     lexer.token_buffer[0] = '\0';
     lexer.input->seekg(lexer.pos_start);
     lexer.input->read(lexer.token_buffer, len);
@@ -842,7 +865,7 @@ aug_token aug_lexer_tokenize(aug_environment& env, aug_lexer& lexer)
     aug_token token;
 
     // if file is not open, or already at then end. return invalid token
-    if (lexer.input == nullptr)
+    if (lexer.input == NULL)
     {
         token.id = AUG_TOKEN_NONE;
         token.detail = &aug_token_details[(int)token.id];
@@ -958,19 +981,13 @@ bool aug_lexer_move(aug_environment& env, aug_lexer& lexer)
 
 void aug_lexer_close(aug_lexer& lexer)
 {
-    if (lexer.input)
-        delete lexer.input;
+    if (lexer.input != NULL)
+        AUG_DELETE(lexer.input);
 
-    lexer.input = nullptr;
-    lexer.line = 0;
-    lexer.col = 0;
-    lexer.prev_line = 0;
-    lexer.prev_col = 0;
-    lexer.pos_start = 0;
+    if (lexer.token_buffer != NULL)
+        AUG_DELETE_ARRAY(lexer.token_buffer);
 
-    lexer.prev = aug_token();
-    lexer.curr = aug_token();
-    lexer.next = aug_token();
+    aug_lexer_init(lexer);
 }
 
 bool aug_lexer_open(aug_environment& env, aug_lexer& lexer, const char* code)
@@ -978,7 +995,7 @@ bool aug_lexer_open(aug_environment& env, aug_lexer& lexer, const char* code)
     aug_lexer_close(lexer);
 
     std::istringstream* iss = AUG_NEW(std::istringstream(code, std::fstream::in));
-    if (iss == nullptr || !iss->good())
+    if (iss == NULL || !iss->good())
     {
         AUG_LOG_ERROR(env,"Lexer failed to open code");
         if(iss) 
@@ -997,7 +1014,7 @@ bool aug_lexer_open_file(aug_environment& env, aug_lexer& lexer, const char* fil
     aug_lexer_close(lexer);
 
     std::fstream* file = AUG_NEW(std::fstream(filename, std::fstream::in));
-    if (file == nullptr || !file->is_open())
+    if (file == NULL || !file->is_open())
     {
         AUG_LOG_ERROR(env,"Lexer failed to open file %s", filename);
         if (file)
@@ -1060,7 +1077,7 @@ aug_ast* aug_ast_new(aug_ast_id id, const aug_token& token = aug_token())
 
 void aug_ast_delete(aug_ast* node)
 {
-    if (node == nullptr)
+    if (node == NULL)
         return;
     for(aug_ast* child : node->children)
         aug_ast_delete(child);
@@ -1117,7 +1134,7 @@ aug_ast* aug_parse_expr(aug_environment& env, aug_lexer& lexer)
             while(op_stack.size() && op_stack.back().detail->prec >= op.detail->prec)
             {
                 if(!aug_parse_expr_pop(env, lexer,  op_stack, expr_stack))
-                    return nullptr;
+                    return NULL;
             }
 
             op_stack.push_back(op);
@@ -1126,7 +1143,7 @@ aug_ast* aug_parse_expr(aug_environment& env, aug_lexer& lexer)
         else
         {
             aug_ast* value = aug_parse_value(env, lexer);
-            if(value == nullptr)
+            if(value == NULL)
                 break;
             expr_stack.push_back(value);
         }
@@ -1134,12 +1151,12 @@ aug_ast* aug_parse_expr(aug_environment& env, aug_lexer& lexer)
 
     // Not an expression
     if(op_stack.size() == 0 && expr_stack.size() == 0)
-        return nullptr;
+        return NULL;
 
     while(op_stack.size())
     {
         if(!aug_parse_expr_pop(env, lexer,  op_stack, expr_stack))
-            return nullptr;
+            return NULL;
     }
 
     // Not a valid expression. Either malformed or missing semicolon 
@@ -1151,7 +1168,7 @@ aug_ast* aug_parse_expr(aug_environment& env, aug_lexer& lexer)
             expr_stack.pop_back();
         }
         AUG_PARSE_ERROR(env, lexer,  "Invalid expression syntax");
-        return nullptr;
+        return NULL;
     }
 
     return expr_stack.back();
@@ -1161,10 +1178,10 @@ aug_ast* aug_parse_funccall(aug_environment& env, aug_lexer& lexer)
 {
     aug_token name_token = lexer.curr;
     if (name_token.id != AUG_TOKEN_NAME)
-        return nullptr;
+        return NULL;
 
     if (lexer.next.id != AUG_TOKEN_LPAREN)
-        return nullptr;
+        return NULL;
 
     aug_lexer_move(env, lexer); // eat NAME
     aug_lexer_move(env, lexer); // eat LPAREN
@@ -1187,7 +1204,7 @@ aug_ast* aug_parse_funccall(aug_environment& env, aug_lexer& lexer)
     {
         aug_ast_delete(funccall);
         AUG_PARSE_ERROR(env, lexer,  "Function call missing closing parentheses");
-        return nullptr;
+        return NULL;
     }
 
     aug_lexer_move(env, lexer); // eat RPAREN
@@ -1198,7 +1215,7 @@ aug_ast* aug_parse_expr_list(aug_environment& env, aug_lexer& lexer)
 {
     aug_token name_token = lexer.curr;
     if (name_token.id != AUG_TOKEN_LBRACKET)
-        return nullptr;
+        return NULL;
 
     aug_lexer_move(env, lexer); // eat LBRACKET
 
@@ -1220,7 +1237,7 @@ aug_ast* aug_parse_expr_list(aug_environment& env, aug_lexer& lexer)
     {
         aug_ast_delete(expr_list);
         AUG_PARSE_ERROR(env, lexer,  "List missing closing bracket");
-        return nullptr;
+        return NULL;
     }
 
     aug_lexer_move(env, lexer); // eat RBRACKET
@@ -1229,7 +1246,7 @@ aug_ast* aug_parse_expr_list(aug_environment& env, aug_lexer& lexer)
 
 aug_ast* aug_parse_value(aug_environment& env, aug_lexer& lexer)
 {
-    aug_ast* value = nullptr;
+    aug_ast* value = NULL;
     aug_token token = lexer.curr;
     switch (token.id)
     {
@@ -1248,7 +1265,7 @@ aug_ast* aug_parse_value(aug_environment& env, aug_lexer& lexer)
     case AUG_TOKEN_NAME:
     {   
         value = aug_parse_funccall(env, lexer);
-        if (value == nullptr)
+        if (value == NULL)
         {
             aug_lexer_move(env, lexer);
             value = aug_ast_new(AUG_AST_VARIABLE, token);
@@ -1272,7 +1289,7 @@ aug_ast* aug_parse_value(aug_environment& env, aug_lexer& lexer)
         {
             AUG_PARSE_ERROR(env, lexer,  "Expression missing closing parentheses");
             aug_ast_delete(value);    
-            value = nullptr;
+            value = NULL;
         }
         break;
     }
@@ -1284,14 +1301,14 @@ aug_ast* aug_parse_value(aug_environment& env, aug_lexer& lexer)
 aug_ast* aug_parse_stmt_expr(aug_environment& env, aug_lexer& lexer)
 {
     aug_ast* expr = aug_parse_expr(env, lexer);
-    if (expr == nullptr)
-        return nullptr;
+    if (expr == NULL)
+        return NULL;
     
     if (lexer.curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(expr);
         AUG_PARSE_ERROR(env, lexer, "Missing semicolon at end of expression");
-        return nullptr;
+        return NULL;
     }
 
     aug_lexer_move(env, lexer); // eat SEMICOLON
@@ -1304,7 +1321,7 @@ aug_ast* aug_parse_stmt_expr(aug_environment& env, aug_lexer& lexer)
 aug_ast* aug_parse_stmt_var(aug_environment& env, aug_lexer& lexer)
 {
     if (lexer.curr.id != AUG_TOKEN_VAR)
-        return nullptr;
+        return NULL;
 
     aug_lexer_move(env, lexer); // eat VAR
 
@@ -1312,7 +1329,7 @@ aug_ast* aug_parse_stmt_var(aug_environment& env, aug_lexer& lexer)
     if (name_token.id != AUG_TOKEN_NAME)
     {
         AUG_PARSE_ERROR(env, lexer, "Variable assignment expected name");
-        return nullptr;
+        return NULL;
     }
     aug_lexer_move(env, lexer); // eat NAME
 
@@ -1327,22 +1344,22 @@ aug_ast* aug_parse_stmt_var(aug_environment& env, aug_lexer& lexer)
     if (lexer.curr.id != AUG_TOKEN_ASSIGN)
     {
         AUG_PARSE_ERROR(env, lexer, "Variable assignment expected \"=\" or ;");
-        return nullptr;
+        return NULL;
     }
 
     aug_lexer_move(env, lexer); // eat ASSIGN
 
     aug_ast* expr = aug_parse_expr(env, lexer);
-    if (expr == nullptr)
+    if (expr == NULL)
     {
         AUG_PARSE_ERROR(env, lexer, "Variable assignment expected expression after \"=\"");
-        return nullptr;
+        return NULL;
     }
     if (lexer.curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(expr);
         AUG_PARSE_ERROR(env, lexer, "Variable assignment missing semicolon at end of expression");
-        return nullptr;
+        return NULL;
     }
 
     aug_lexer_move(env, lexer); // eat SEMICOLON
@@ -1357,23 +1374,23 @@ aug_ast* aug_parse_stmt_assign(aug_environment& env, aug_lexer& lexer)
     aug_token name_token = lexer.curr;
     aug_token eq_token = lexer.next;
     if (name_token.id != AUG_TOKEN_NAME || eq_token.id != AUG_TOKEN_ASSIGN)
-        return nullptr;
+        return NULL;
 
     aug_lexer_move(env, lexer); // eat NAME
     aug_lexer_move(env, lexer); // eat ASSIGN
 
     aug_ast* expr = aug_parse_expr(env, lexer);
-    if (expr == nullptr)
+    if (expr == NULL)
     {
         AUG_PARSE_ERROR(env, lexer, "Assignment expected expression after \"=\"");
-        return nullptr;
+        return NULL;
     }
 
     if (lexer.curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(expr);
         AUG_PARSE_ERROR(env, lexer, "Missing semicolon at end of expression");
-        return nullptr;
+        return NULL;
     }
 
     aug_lexer_move(env, lexer); // eat SEMICOLON
@@ -1386,23 +1403,23 @@ aug_ast* aug_parse_stmt_assign(aug_environment& env, aug_lexer& lexer)
 aug_ast* aug_parse_stmt_if(aug_environment& env, aug_lexer& lexer)
 {
     if (lexer.curr.id != AUG_TOKEN_IF)
-        return nullptr;
+        return NULL;
 
     aug_lexer_move(env, lexer); // eat IF
 
     aug_ast* expr = aug_parse_expr(env, lexer);
-    if(expr == nullptr)
+    if(expr == NULL)
     {
         AUG_PARSE_ERROR(env, lexer, "If statement missing expression");
-        return nullptr;      
+        return NULL;      
     }
 
     aug_ast* block = aug_parse_block(env, lexer);
-    if (block == nullptr)
+    if (block == NULL)
     {
         aug_ast_delete(expr);
         AUG_PARSE_ERROR(env, lexer, "If statement missing block");
-        return nullptr;
+        return NULL;
     }
 
     // Parse else 
@@ -1418,21 +1435,21 @@ aug_ast* aug_parse_stmt_if(aug_environment& env, aug_lexer& lexer)
         if (lexer.curr.id == AUG_TOKEN_IF)
         {
             aug_ast* trailing_if_stmt = aug_parse_stmt_if(env, lexer);
-            if (trailing_if_stmt == nullptr)
+            if (trailing_if_stmt == NULL)
             {
                 aug_ast_delete(if_else_stmt);
-                return nullptr;
+                return NULL;
             }
             if_else_stmt->children.push_back(trailing_if_stmt);
         }
         else
         {
             aug_ast* else_block = aug_parse_block(env, lexer);
-            if (else_block == nullptr)
+            if (else_block == NULL)
             {
                 aug_ast_delete(if_else_stmt);
                 AUG_PARSE_ERROR(env, lexer, "If Else statement missing block");
-                return nullptr;
+                return NULL;
             }
             if_else_stmt->children.push_back(else_block);
         }
@@ -1449,23 +1466,23 @@ aug_ast* aug_parse_stmt_if(aug_environment& env, aug_lexer& lexer)
 aug_ast* aug_parse_stmt_while(aug_environment& env, aug_lexer& lexer)
 {
     if (lexer.curr.id != AUG_TOKEN_WHILE)
-        return nullptr;
+        return NULL;
 
     aug_lexer_move(env, lexer); // eat WHILE
 
     aug_ast* expr = aug_parse_expr(env, lexer);
-    if (expr == nullptr)
+    if (expr == NULL)
     {
         AUG_PARSE_ERROR(env, lexer, "While statement missing expression");
-        return nullptr;
+        return NULL;
     }
 
     aug_ast* block = aug_parse_block(env, lexer);
-    if (block == nullptr)
+    if (block == NULL)
     {
         aug_ast_delete(expr);
         AUG_PARSE_ERROR(env, lexer, "While statement missing block");
-        return nullptr;
+        return NULL;
     }
 
     aug_ast* while_stmt = aug_ast_new(AUG_AST_STMT_WHILE);
@@ -1480,7 +1497,7 @@ aug_ast* aug_parse_param_list(aug_environment& env, aug_lexer& lexer)
     if (lexer.curr.id != AUG_TOKEN_LPAREN)
     {
         AUG_PARSE_ERROR(env, lexer, "Missing opening parentheses in function parameter list");
-        return nullptr;
+        return NULL;
     }
 
     aug_lexer_move(env, lexer); // eat LPAREN
@@ -1501,7 +1518,7 @@ aug_ast* aug_parse_param_list(aug_environment& env, aug_lexer& lexer)
             {
                 AUG_PARSE_ERROR(env, lexer, "Invalid function parameter. Expected parameter name");
                 aug_ast_delete(param_list);
-                return nullptr;
+                return NULL;
             }
 
             aug_ast* param = aug_ast_new(AUG_AST_PARAM, lexer.curr);
@@ -1515,7 +1532,7 @@ aug_ast* aug_parse_param_list(aug_environment& env, aug_lexer& lexer)
     {
         AUG_PARSE_ERROR(env, lexer, "Missing closing parentheses in function parameter list");
         aug_ast_delete(param_list);
-        return nullptr;
+        return NULL;
     }
 
     aug_lexer_move(env, lexer); // eat RPAREN
@@ -1526,14 +1543,14 @@ aug_ast* aug_parse_param_list(aug_environment& env, aug_lexer& lexer)
 aug_ast* aug_parse_stmt_func(aug_environment& env, aug_lexer& lexer)
 {
     if (lexer.curr.id != AUG_TOKEN_FUNC)
-        return nullptr;
+        return NULL;
 
     aug_lexer_move(env, lexer); // eat FUNC
 
     if (lexer.curr.id != AUG_TOKEN_NAME)
     {
         AUG_PARSE_ERROR(env, lexer, "Missing name in function definition");
-        return nullptr;
+        return NULL;
     }
 
     const aug_token func_name = lexer.curr;
@@ -1541,14 +1558,14 @@ aug_ast* aug_parse_stmt_func(aug_environment& env, aug_lexer& lexer)
     aug_lexer_move(env, lexer); // eat NAME
 
     aug_ast* param_list = aug_parse_param_list(env, lexer);
-    if (param_list == nullptr)
-        return nullptr;
+    if (param_list == NULL)
+        return NULL;
 
     aug_ast* block = aug_parse_block(env, lexer);
-    if (block == nullptr)
+    if (block == NULL)
     {
         aug_ast_delete(param_list);
-        return nullptr;
+        return NULL;
     }
 
     aug_ast* func_def = aug_ast_new(AUG_AST_FUNC_DEF, func_name);
@@ -1561,21 +1578,21 @@ aug_ast* aug_parse_stmt_func(aug_environment& env, aug_lexer& lexer)
 aug_ast* aug_parse_stmt_return(aug_environment& env, aug_lexer& lexer)
 {
     if (lexer.curr.id != AUG_TOKEN_RETURN)
-        return nullptr;
+        return NULL;
 
     aug_lexer_move(env, lexer); // eat RETURN
 
     aug_ast* return_stmt = aug_ast_new(AUG_AST_RETURN);
 
     aug_ast* expr = aug_parse_expr(env, lexer);
-    if (expr != nullptr)
+    if (expr != NULL)
         return_stmt->children.push_back(expr);
 
     if (lexer.curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(return_stmt);
         AUG_PARSE_ERROR(env, lexer, "Missing semicolon at end of expression");
-        return nullptr;
+        return NULL;
     }
 
     aug_lexer_move(env, lexer); // eat SEMICOLON
@@ -1587,7 +1604,7 @@ aug_ast* aug_parse_stmt(aug_environment& env, aug_lexer& lexer)
 {
     //TODO: assignment, funcdef etc..
     // Default, epxression parsing. 
-    aug_ast* stmt = nullptr;
+    aug_ast* stmt = NULL;
 
     switch (lexer.curr.id)
     {
@@ -1624,7 +1641,7 @@ aug_ast* aug_parse_block(aug_environment& env, aug_lexer& lexer)
     if (lexer.curr.id != AUG_TOKEN_LBRACE)
     {
         AUG_PARSE_ERROR(env, lexer, "Block missing opening \"{\"");
-        return nullptr;
+        return NULL;
     }
     aug_lexer_move(env, lexer); // eat LBRACE
 
@@ -1636,7 +1653,7 @@ aug_ast* aug_parse_block(aug_environment& env, aug_lexer& lexer)
     {
         AUG_PARSE_ERROR(env, lexer, "Block missing closing \"}\"");
         aug_ast_delete(block);
-        return nullptr;
+        return NULL;
     }
     aug_lexer_move(env, lexer); // eat RBRACE
 
@@ -1652,7 +1669,7 @@ aug_ast* aug_parse_root(aug_environment& env, aug_lexer& lexer)
     if (root->children.size() == 0)
     {
         aug_ast_delete(root);
-        return nullptr;
+        return NULL;
     }
     return root;
 }
@@ -1660,24 +1677,24 @@ aug_ast* aug_parse_root(aug_environment& env, aug_lexer& lexer)
 aug_ast* aug_parse(aug_environment& env, const char* code)
 {
     aug_lexer lexer;
+    aug_lexer_init(lexer);
     if(!aug_lexer_open(env, lexer, code))
-        return nullptr;
+        return NULL;
 
     aug_ast* root = aug_parse_root(env, lexer);
     aug_lexer_close(lexer);
-
     return root;
 }
 
 aug_ast* aug_parse_file(aug_environment& env, const char* filename)
 {
     aug_lexer lexer;
+    aug_lexer_init(lexer);
     if(!aug_lexer_open_file(env, lexer, filename))
-        return nullptr;
+        return NULL;
 
     aug_ast* root = aug_parse_root(env, lexer);
     aug_lexer_close(lexer);
-
     return root;
 }
 
@@ -2089,7 +2106,7 @@ inline aug_symbol aug_ir_get_symbol_local(aug_ir& ir, const aug_std_string& name
 // --------------------------------------- Value Operations -------------------------------------------------------//
 inline bool aug_set_bool(aug_value* value, bool data)
 {
-    if (value == nullptr)
+    if (value == NULL)
         return false;
     value->type = AUG_BOOL;
     value->b = data;
@@ -2098,7 +2115,7 @@ inline bool aug_set_bool(aug_value* value, bool data)
 
 inline bool aug_set_int(aug_value* value, int data)
 {
-    if (value == nullptr)
+    if (value == NULL)
         return false;
     value->type = AUG_INT;
     value->i = data;
@@ -2107,7 +2124,7 @@ inline bool aug_set_int(aug_value* value, int data)
 
 inline bool aug_set_float(aug_value* value, float data)
 {
-    if (value == nullptr)
+    if (value == NULL)
         return false;
     value->type = AUG_FLOAT;
     value->f = data;
@@ -2116,7 +2133,7 @@ inline bool aug_set_float(aug_value* value, float data)
 
 inline bool aug_set_string(aug_value* value, const char* data)
 {
-    if (value == nullptr)
+    if (value == NULL)
         return false;
 
     value->type = AUG_STRING;
@@ -2128,7 +2145,7 @@ inline bool aug_set_string(aug_value* value, const char* data)
 
 inline bool aug_set_list(aug_value* value)
 {
-    if (value == nullptr)
+    if (value == NULL)
         return false;
 
     value->type = AUG_LIST;
@@ -2146,7 +2163,7 @@ aug_value aug_none()
 
 bool aug_to_bool(const aug_value* value)
 {
-    if (value == nullptr)
+    if (value == NULL)
         return false;
 
     switch (value->type)
@@ -2160,18 +2177,18 @@ bool aug_to_bool(const aug_value* value)
     case AUG_FLOAT:
         return value->f != 0.0f;
     case AUG_STRING:
-        return value->str != nullptr;
+        return value->str != NULL;
     case AUG_OBJECT:
-        return value->obj != nullptr;
+        return value->obj != NULL;
     case AUG_LIST:
-        return value->list != nullptr;
+        return value->list != NULL;
     }
     return false;
 }
 
 inline bool aug_move(aug_value* to, aug_value* from)
 {
-    if(from == nullptr || to == nullptr)
+    if(from == NULL || to == NULL)
         return false;
 
     aug_delete(to);
@@ -2183,7 +2200,7 @@ inline bool aug_move(aug_value* to, aug_value* from)
 
 inline bool aug_assign(aug_value* to, aug_value* from)
 {
-    if(from == nullptr || to == nullptr)
+    if(from == NULL || to == NULL)
         return false;
 
     aug_delete(to);
@@ -2211,7 +2228,7 @@ inline bool aug_assign(aug_value* to, aug_value* from)
 
 inline void aug_delete(aug_value* value)
 {
-    if (value == nullptr)
+    if (value == NULL)
         return;
 
     switch (value->type)
@@ -2255,7 +2272,7 @@ inline void aug_delete(aug_value* value)
     bool_bool_case                                              \
 )                                                               \
 {                                                               \
-    if(result == nullptr || lhs == nullptr || rhs == nullptr )  \
+    if(result == NULL || lhs == NULL || rhs == NULL )  \
         return false;                                           \
     switch(lhs->type)                                           \
     {                                                           \
@@ -2461,12 +2478,12 @@ union aug_vm_bytecode_value
 {                                       \
     AUG_LOG_ERROR(env, __VA_ARGS__);   \
     vm.valid = false;                   \
-    vm.instruction = nullptr;           \
+    vm.instruction = NULL;           \
 }
 
 #define AUG_VM_UNOP_ERROR(env, vm, arg, op)          \
 {                                                    \
-    if (arg != nullptr)                              \
+    if (arg != NULL)                              \
         AUG_VM_ERROR(env, vm, "%s %s not defined",   \
             op,                                      \
             aug_value_type_labels[(int)arg->type]);        \
@@ -2474,7 +2491,7 @@ union aug_vm_bytecode_value
 
 #define AUG_VM_BINOP_ERROR(env, vm, lhs, rhs, op)     \
 {                                                     \
-    if (lhs != nullptr && rhs != nullptr)             \
+    if (lhs != NULL && rhs != NULL)             \
         AUG_VM_ERROR(env, vm, "%s %s %s not defined", \
             aug_value_type_labels[(int)lhs->type],          \
             op,                                       \
@@ -2492,7 +2509,7 @@ inline aug_value* aug_vm_push(aug_environment& env, aug_vm& vm)
     {                                              
         if(vm.valid)
             AUG_VM_ERROR(env, vm, "Stack overflow");      
-        return nullptr;                           
+        return NULL;                           
     }
     aug_value* top = &vm.stack[vm.stack_index++];
     //*top = aug_none();
@@ -2518,13 +2535,13 @@ inline aug_value* aug_vm_get_local(aug_environment& env, aug_vm& vm, int stack_o
     {
         if (vm.instruction)
             AUG_VM_ERROR(env, vm, "Stack underflow");
-        return nullptr;
+        return NULL;
     }
     else if (offset >= AUG_STACK_SIZE)
     {
         if (vm.instruction)
             AUG_VM_ERROR(env, vm, "Stack overflow");
-        return nullptr;
+        return NULL;
     }
 
     return &vm.stack[offset];
@@ -2565,7 +2582,7 @@ inline const char* aug_vm_read_bytes(aug_vm& vm)
 void aug_vm_startup(aug_vm& vm, const aug_script& script)
 {
     if (script.bytecode.size() == 0)
-        vm.bytecode = nullptr;
+        vm.bytecode = NULL;
     else
         vm.bytecode = &script.bytecode[0];
     vm.instruction = vm.bytecode;
@@ -2580,6 +2597,7 @@ void aug_vm_startup(aug_vm& vm, const aug_script& script)
 bool aug_vm_shutdown(aug_vm& vm)
 {
     if (!vm.valid)
+        // Cleanup 
         return false;
 
     // Ensure that stack has returned to beginning state
@@ -2593,16 +2611,13 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
         aug_opcode opcode = (aug_opcode) (*vm.instruction);
         ++vm.instruction;
 
-        //printf("%s", aug_opcode_labels[(int)opcode]);
-        //getchar();
-
         switch(opcode)
         {
             case AUG_OPCODE_NO_OP:
                 break;
             case AUG_OPCODE_EXIT:
             {
-                vm.instruction = nullptr;
+                vm.instruction = NULL;
                 break;
             }
             case AUG_OPCODE_POP:
@@ -2613,7 +2628,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
             case AUG_OPCODE_PUSH_NONE:
             {
                 aug_value* value = aug_vm_push(env, vm);
-                if (value == nullptr)
+                if (value == NULL)
                     break;
                 value->type = AUG_NONE;
                 break;
@@ -2621,7 +2636,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
             case AUG_OPCODE_PUSH_BOOL:
             {
                 aug_value* value = aug_vm_push(env, vm);
-                if (value == nullptr)
+                if (value == NULL)
                     break;
                 aug_set_bool(value, aug_vm_read_bool(vm));
                 break;
@@ -2629,7 +2644,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
             case AUG_OPCODE_PUSH_INT:   
             {
                 aug_value* value = aug_vm_push(env, vm);
-                if(value == nullptr) 
+                if(value == NULL) 
                     break;
                 aug_set_int(value, aug_vm_read_int(vm));
                 break;
@@ -2637,7 +2652,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
             case AUG_OPCODE_PUSH_FLOAT:
             {
                 aug_value* value = aug_vm_push(env, vm);
-                if(value == nullptr) 
+                if(value == NULL) 
                     break;
                 aug_set_float(value, aug_vm_read_float(vm));
                 break;
@@ -2856,7 +2871,7 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
             case AUG_OPCODE_PUSH_BASE:
             {              
                 aug_value* value = aug_vm_push(env, vm);
-                if (value == nullptr)
+                if (value == NULL)
                     break;
                 value->type = AUG_INT;
                 value->i = vm.base_index;
@@ -2895,66 +2910,63 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
                 aug_vm_free(ret_base);
 
                 aug_value* top = aug_vm_push(env, vm);
-                if (ret_value != nullptr && top != nullptr)
+                if (ret_value != NULL && top != NULL)
                     *top = *ret_value;
 
                 break;
             }
             case AUG_OPCODE_CALL_EXT:
             {
-                aug_value* func_name_value = aug_vm_pop(env, vm);
-                if(func_name_value == nullptr || func_name_value->type != AUG_STRING)
+                aug_value* func_index_value = aug_vm_pop(env, vm);
+                if(func_index_value == NULL || func_index_value->type != AUG_INT)
                 {
-                    aug_vm_free(func_name_value);
+                    aug_vm_free(func_index_value);
 
-                    AUG_VM_ERROR(env, vm, "External Function Call expected function name to be pushed on stack");
+                    AUG_VM_ERROR(env, vm, "External Function Call expected function index to be pushed on stack");
                     break;                    
                 }
 
                 const int arg_count = aug_vm_read_int(vm);                
-                const char* func_name = func_name_value->str->data.c_str();                
+                const int func_index = func_index_value->i;
 
+                // Gather arguments
                 aug_std_array<aug_value> args;
                 args.reserve(arg_count);
                 for (int i = arg_count - 1; i >= 0; --i)
                 {
                     aug_value* arg = aug_vm_pop(env, vm);
-                    if (arg != nullptr)
+                    if (arg != NULL)
                     {
                         aug_value value = aug_none();
                         aug_move(&value, arg);
                         args.push_back(value);
                     }
                 }
-                if ((int)args.size() != arg_count)
-                {
-                    aug_vm_free(func_name_value);
-                    for (int i = 0; i < arg_count; ++i)
-                        aug_vm_free(&args[i]);
 
-                    AUG_VM_ERROR(env, vm, "Function Call %s passed %d arguments, expected %d", func_name, (int)args.size(), arg_count);
-                    break;
+                // Check function call
+                if (func_index < 0 || func_index >= env.external_function_names.size() || env.external_functions[func_index] == NULL)
+                {
+                    AUG_VM_ERROR(env, vm, "External Function Called at index %d not registered", func_index);
+                }
+                else if ((int)args.size() != arg_count)
+                {
+                    const aug_std_string& func_name = env.external_function_names[func_index];
+                    AUG_VM_ERROR(env, vm, "External Function Call %s passed %d arguments, expected %d", func_name.c_str(), (int)args.size(), arg_count);
+                }
+                else
+                {
+                    // Call the external function. Move return value on to top of stack
+                    aug_value ret_value = env.external_functions[func_index](args);
+                    aug_value* top = aug_vm_push(env, vm);
+                    if (top)
+                        aug_move(top, &ret_value);
                 }
 
-                if (env.external_functions.count(func_name) == 0)
-                {
-                    aug_vm_free(func_name_value);
-                    for (int i = 0; i < arg_count; ++i)
-                        aug_vm_free(&args[i]);
-
-                    AUG_VM_ERROR(env, vm, "External Function Call %s not registered", func_name);
-                    break;
-                }
-
-                aug_value ret_value = env.external_functions.at(func_name)(args);
-                
-                aug_vm_free(func_name_value);
+                // Cleanup arguments
+                aug_vm_free(func_index_value);
                 for (int i = 0; i < arg_count; ++i)
                     aug_vm_free(&args[i]);
 
-                aug_value* top = aug_vm_push(env, vm);
-                if(top)
-                    aug_move(top, &ret_value);
                 break;
             }
             default:
@@ -2962,12 +2974,19 @@ void aug_vm_execute(aug_environment& env, aug_vm& vm)
             break;
         }
     }
+
+    if (!vm.valid)
+    {
+        // Cleanup if failed. Free any outstanding values
+        for (int i = 0; i < vm.stack_index; ++i)
+            aug_vm_free(aug_vm_pop(env, vm));
+    }
 }
 
 // -------------------------------------- Passes ------------------------------------------------// 
 bool aug_pass_semantic_check(const aug_ast* node)
 {
-    if(node == nullptr)
+    if(node == NULL)
         return false;
     return true;
 }
@@ -2975,7 +2994,7 @@ bool aug_pass_semantic_check(const aug_ast* node)
 
 void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
 {
-    if(node == nullptr|| !ir.valid)
+    if(node == NULL|| !ir.valid)
         return;
 
     const aug_token& token = node->token;
@@ -3282,6 +3301,15 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             const char* func_name = token.data.c_str();
             const int arg_count = children.size();
             const aug_symbol& symbol = aug_ir_get_symbol(ir, func_name);
+
+            if (symbol.type == AUG_SYM_VAR)
+            {
+                ir.valid = false;
+                AUG_LOG_ERROR(env, "Can not call variable %s as a function", func_name);
+                break;
+            }
+
+            // If the symbol is a user defined function.
             if (symbol.type == AUG_SYM_FUNC)
             {
                 if(symbol.argc != arg_count)
@@ -3304,28 +3332,41 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
                     // fixup the return address to after the call
                     aug_ir_get_operation(ir, push_return_addr).operand = aug_ir_operand_from_int(ir.bytecode_offset);
                 }
+                break;
             }
-            else if (symbol.type == AUG_SYM_VAR)
-            {
-                ir.valid = false;
-                AUG_LOG_ERROR(env, "Can not call variable %s as a function", func_name);
-            }
-            else if(env.external_functions.count(func_name))
-            {
-                for(int i = arg_count - 1; i >= 0; --i) 
-                    aug_ast_to_ir(env, children[i], ir);
 
-                const aug_ir_operand& arg_count_operand = aug_ir_operand_from_int(arg_count);
-                const aug_ir_operand& func_name_operand = aug_ir_operand_from_str(func_name);
-
-                aug_ir_add_operation(ir, AUG_OPCODE_PUSH_STRING, func_name_operand);
-                aug_ir_add_operation(ir, AUG_OPCODE_CALL_EXT, arg_count_operand);
+            // Check if the symbol is a registered function
+            int func_index = -1;
+            for (int i = 0; i < env.external_function_names.size(); ++i)
+            {
+                if (env.external_function_names[i] == func_name)
+                {
+                    func_index = i;
+                    break;
+                }
             }
-            else
+
+            if (func_index == -1)
             {
                 ir.valid = false;
                 AUG_LOG_ERROR(env, "Function %s not defined", func_name);
+                break;
             }
+            if (env.external_functions[func_index] == nullptr)
+            {
+                ir.valid = false;
+                AUG_LOG_ERROR(env, "External Function %s was not properly registered.", func_name);
+                break;
+            }
+
+            for(int i = arg_count - 1; i >= 0; --i) 
+                aug_ast_to_ir(env, children[i], ir);
+
+            const aug_ir_operand& func_index_operand = aug_ir_operand_from_int(func_index);
+            aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, func_index_operand);
+
+            const aug_ir_operand& arg_count_operand = aug_ir_operand_from_int(arg_count);
+            aug_ir_add_operation(ir, AUG_OPCODE_CALL_EXT, arg_count_operand);
             break;
         }
         case AUG_AST_RETURN:
@@ -3467,14 +3508,43 @@ bool aug_compile_script(aug_environment& env, aug_ast* root, aug_script& script)
     return ir.valid;
 }
 
+void aug_startup(aug_environment& env, aug_error_callback* error_callback)
+{
+    env.error_callback = error_callback;
+}
+
+void aug_shutdown(aug_environment& env)
+{
+    env.error_callback = NULL;
+    env.external_functions.clear();
+    env.external_function_names.clear();
+}
+
 void aug_register(aug_environment& env, const char* func_name, aug_function_callback *callback)
 {
-    env.external_functions[func_name] = callback;
+    for (int i = 0; i < env.external_functions.size(); ++i)
+    {
+        if (env.external_functions[i] == NULL)
+        {
+            env.external_functions[i] = callback;
+            env.external_function_names[i] = func_name;
+            return;
+        }
+    }
+    env.external_functions.push_back(callback);
+    env.external_function_names.push_back(func_name);
 }
 
 void aug_unregister(aug_environment& env, const char* func_name)
 {
-    env.external_functions.erase(func_name);
+    for (int i = 0; i < env.external_functions.size(); ++i)
+    {
+        if (env.external_function_names[i] == func_name)
+        {
+            env.external_functions[i] = NULL;
+            break;
+        }
+    }
 }
 
 void aug_execute(aug_environment& env, const char* filename)
@@ -3497,7 +3567,7 @@ void aug_evaluate(aug_environment& env, const char* code)
 {
     // Parse file
     aug_ast* root = aug_parse(env, code);
-    if (root == nullptr)
+    if (root == NULL)
         return;
 
     // Load bytecode into VM
@@ -3525,7 +3595,7 @@ bool aug_compile(aug_environment& env, aug_script& script, const char* filename)
 {
     // Parse file
     aug_ast* root = aug_parse_file(env, filename);
-    if (root == nullptr)
+    if (root == NULL)
     {
         script.valid = false;
         return false;
