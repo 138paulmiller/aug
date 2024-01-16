@@ -353,8 +353,6 @@ aug_value aug_from_string(const char* data);
     if(error_callback) error_callback(buffer);                              \
 }
 
-#define AUG_NEAREST_POW_2(x) pow(2, ceil(log(x) / log(2)))
-
 // -------------------------------------- Lexer  ---------------------------------------// 
 // Static token details
 struct aug_token_detail
