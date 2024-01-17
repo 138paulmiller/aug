@@ -1,3 +1,4 @@
+
 /* MIT License
 
 Copyright (c) 2024 Paul Miller (https://github.com/138paulmiller)
@@ -86,15 +87,15 @@ SOFTWARE. */
     - PUshing string literals should not create copy. Create a flag to determine if in memory bytes
 
     Issues:
-        When assigning, or pushing values on the stack. Free the stack value entry.
-        When booting up stack, default first value to none. to prevent invalid free
+    - Maximum recursion depth in recursive descent parser and IR generation. Should rewrite both such that they use a Job queue.
+        Example. For IR generation, push child job and invalidate child, push parent back onto queue. If child is invalidate, add operations. This will ensure order is preserved.
 */
 
 #ifndef __AUG_HEADER__
 #define __AUG_HEADER__
 
 #ifndef AUG_STACK_SIZE
-#define AUG_STACK_SIZE (1024 * 32)
+#define AUG_STACK_SIZE (1024 * 128)
 #endif//AUG_STACK_SIZE
 
 // Max number of characters per name
@@ -476,92 +477,76 @@ struct aug_lexer
 
 #define AUG_LEXER_ERROR(lexer, token, ...)                   \
 {                                                            \
-    lexer.valid = false;                                     \
+    lexer->valid = false;                                     \
     token.id = AUG_TOKEN_ERR;                                \
-    AUG_LOG_ERROR(lexer.error_callback, "%s(%d,%d):",        \
-        lexer.inputname.c_str(), lexer.line+1, lexer.col+1); \
-    AUG_LOG_ERROR(lexer.error_callback, __VA_ARGS__);        \
+    AUG_LOG_ERROR(lexer->error_callback, "%s(%d,%d):",        \
+        lexer->inputname.c_str(), lexer->line+1, lexer->col+1); \
+    AUG_LOG_ERROR(lexer->error_callback, __VA_ARGS__);        \
 }
 
-void aug_lexer_init(aug_lexer& lexer, aug_error_callback* error_callback)
+inline char aug_lexer_get(aug_lexer* lexer)
 {
-    lexer.valid = true;
-    lexer.error_callback = error_callback;
-    lexer.input = NULL;
-    lexer.line = 0;
-    lexer.col = 0;
-    lexer.prev_line = 0;
-    lexer.prev_col = 0;
-    lexer.pos_start = 0;
-
-    lexer.prev = aug_token();
-    lexer.curr = aug_token();
-    lexer.next = aug_token();
-}
-
-char aug_lexer_get(aug_lexer& lexer)
-{
-    const char c = lexer.input->get();
+    const char c = lexer->input->get();
     
-    lexer.prev_line = lexer.line;
-    lexer.prev_col = lexer.col;
+    lexer->prev_line = lexer->line;
+    lexer->prev_col = lexer->col;
 
-    ++lexer.col;
+    ++lexer->col;
 
     if (c == '\n')
     {
-        ++lexer.line;
-        lexer.col = 0;
+        ++lexer->line;
+        lexer->col = 0;
     }
     return c;
 }
 
-char aug_lexer_peek(aug_lexer& lexer)
+inline char aug_lexer_peek(aug_lexer* lexer)
 {
-    return lexer.input->peek();
+    return lexer->input->peek();
 }
 
-char aug_lexer_unget(aug_lexer& lexer)
+inline char aug_lexer_unget(aug_lexer* lexer)
 {
-    lexer.input->unget();
+    lexer->input->unget();
 
-    lexer.line = lexer.prev_line;
-    lexer.col = lexer.prev_col;
+    lexer->line = lexer->prev_line;
+    lexer->col = lexer->prev_col;
 
     return aug_lexer_peek(lexer);
 }
 
-void aug_lexer_start_tracking(aug_lexer& lexer)
+inline void aug_lexer_start_tracking(aug_lexer* lexer)
 {
-    lexer.pos_start = lexer.input->tellg();
+    lexer->pos_start = lexer->input->tellg();
 }
 
-bool aug_lexer_end_tracking(aug_lexer& lexer, aug_std_string& s)
+inline bool aug_lexer_end_tracking(aug_lexer* lexer, aug_std_string& s)
 {
-    const std::fstream::iostate state = lexer.input->rdstate();
-    lexer.input->clear();
+    const std::fstream::iostate state = lexer->input->rdstate();
+    lexer->input->clear();
 
-    const std::streampos pos_end = lexer.input->tellg();
-    const std::streamoff len = (pos_end - lexer.pos_start);
+    const std::streampos pos_end = lexer->input->tellg();
+    const std::streamoff len = (pos_end - lexer->pos_start);
     
     if (len >= AUG_TOKEN_BUFFER_SIZE)
     {
-        AUG_LOG_ERROR(lexer.error_callback, "Token contains to many characters. Can not exceed %d", AUG_TOKEN_BUFFER_SIZE);
-        lexer.input->clear(state);
+        AUG_LOG_ERROR(lexer->error_callback, "Token contains to many characters. Can not exceed %d", AUG_TOKEN_BUFFER_SIZE);
+        lexer->input->clear(state);
         return false;
     }
 
-    lexer.token_buffer[0] = '\0';
-    lexer.input->seekg(lexer.pos_start);
-    lexer.input->read(lexer.token_buffer, len);
-    lexer.input->seekg(pos_end);
-    lexer.input->clear(state);
+    lexer->token_buffer[0] = '\0';
+    lexer->input->seekg(lexer->pos_start);
+    lexer->input->read(lexer->token_buffer, len);
+    lexer->input->seekg(pos_end);
+    lexer->input->clear(state);
 
-    s.assign(lexer.token_buffer, (size_t)len);
+    s.assign(lexer->token_buffer, (size_t)len);
     return true;
 }
 
-bool aug_lexer_tokenize_string(aug_lexer& lexer, aug_token& token)
+inline bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token& token)
 {
     char c = aug_lexer_get(lexer);
     if (c != '\"')
@@ -644,7 +629,7 @@ bool aug_lexer_tokenize_string(aug_lexer& lexer, aug_token& token)
     return true;
 }
 
-bool aug_lexer_tokenize_symbol(aug_lexer& lexer, aug_token& token)
+inline bool aug_lexer_tokenize_symbol(aug_lexer* lexer, aug_token& token)
 {
     aug_token_id id = AUG_TOKEN_ERR;
 
@@ -737,7 +722,7 @@ bool aug_lexer_tokenize_symbol(aug_lexer& lexer, aug_token& token)
     return true;
 }
 
-bool aug_lexer_tokenize_name(aug_lexer& lexer, aug_token& token)
+inline bool aug_lexer_tokenize_name(aug_lexer* lexer, aug_token& token)
 {
     aug_lexer_start_tracking(lexer);
 
@@ -771,7 +756,7 @@ bool aug_lexer_tokenize_name(aug_lexer& lexer, aug_token& token)
     return true;
 }
 
-bool aug_lexer_tokenize_number(aug_lexer& lexer, aug_token& token)
+bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token& token)
 {    
     aug_lexer_start_tracking(lexer);
 
@@ -864,12 +849,12 @@ bool aug_lexer_tokenize_number(aug_lexer& lexer, aug_token& token)
     return true;
 }
 
-aug_token aug_lexer_tokenize(aug_lexer& lexer)
+aug_token aug_lexer_tokenize(aug_lexer* lexer)
 {
     aug_token token;
 
     // if file is not open, or already at then end. return invalid token
-    if (!lexer.valid || lexer.input == NULL)
+    if (!lexer->valid || lexer->input == NULL)
     {
         token.id = AUG_TOKEN_NONE;
         token.detail = &aug_token_details[(int)token.id];
@@ -924,8 +909,8 @@ aug_token aug_lexer_tokenize(aug_lexer& lexer)
         return token;
     }
 
-    token.col = lexer.col;
-    token.line = lexer.line;
+    token.col = lexer->col;
+    token.line = lexer->line;
 
     switch (c)
     {
@@ -936,7 +921,7 @@ aug_token aug_lexer_tokenize(aug_lexer& lexer)
         // To prevent contention with sign as an operator, if the proceeding token is a number or name (variable)
         // treat sign as an operator, else, treat as the number's sign
         bool allow_sign = true;
-        switch(lexer.curr.id)
+        switch(lexer->curr.id)
         {
             case AUG_TOKEN_NAME:
             case AUG_TOKEN_BINARY:
@@ -971,69 +956,108 @@ aug_token aug_lexer_tokenize(aug_lexer& lexer)
     return token;
 }
 
-bool aug_lexer_move(aug_lexer& lexer)
+bool aug_lexer_move(aug_lexer* lexer)
 {
-    if (lexer.next.id == AUG_TOKEN_NONE)
-        lexer.next = aug_lexer_tokenize(lexer);        
+    if (lexer == NULL)
+        return false;
 
-    lexer.prev = lexer.curr; 
-    lexer.curr = lexer.next;
-    lexer.next = aug_lexer_tokenize(lexer);
+    if (lexer->next.id == AUG_TOKEN_NONE)
+        lexer->next = aug_lexer_tokenize(lexer);        
 
-    return lexer.curr.id != AUG_TOKEN_NONE;
+    lexer->prev = lexer->curr; 
+    lexer->curr = lexer->next;
+    lexer->next = aug_lexer_tokenize(lexer);
+
+    return lexer->curr.id != AUG_TOKEN_NONE;
 }
 
-void aug_lexer_close(aug_lexer& lexer)
+void aug_lexer_close(aug_lexer* lexer)
 {
-    if (lexer.input != NULL)
-        AUG_DELETE(lexer.input);
+    if (lexer->input != NULL)
+        AUG_DELETE(lexer->input);
 
-    aug_lexer_init(lexer, NULL);
+    AUG_DELETE(lexer);
 }
 
-bool aug_lexer_open(aug_lexer& lexer, const char* code)
+aug_lexer* aug_lexer_open(const char* code, aug_error_callback* error_callback)
 {
-    aug_lexer_close(lexer);
+    aug_lexer* lexer = AUG_NEW(aug_lexer);
+
+    lexer->valid = true;
+    lexer->error_callback = error_callback;
+    lexer->input = NULL;
+    lexer->line = 0;
+    lexer->col = 0;
+    lexer->prev_line = 0;
+    lexer->prev_col = 0;
+    lexer->pos_start = 0;
+
+    lexer->prev = aug_token();
+    lexer->curr = aug_token();
+    lexer->next = aug_token();
 
     std::istringstream* iss = AUG_NEW(std::istringstream(code, std::fstream::in));
     if (iss == NULL || !iss->good())
     {
-        AUG_LOG_ERROR(lexer.error_callback, "Lexer failed to open code");
+        AUG_LOG_ERROR(lexer->error_callback, "Lexer failed to open code");
         if(iss) 
-            delete iss;
-        return false;
+            AUG_DELETE(iss);
+        return NULL;
     }
 
-    lexer.input = iss;
-    lexer.inputname = "code";
+    lexer->input = iss;
+    lexer->inputname = "code";
 
-    return aug_lexer_move(lexer);
+    if (!aug_lexer_move(lexer))
+    {
+        aug_lexer_close(lexer);
+        return NULL;
+    }
+    return lexer;
 }
 
-bool aug_lexer_open_file(aug_lexer& lexer, const char* filename)
+aug_lexer* aug_lexer_open_file(const char* filename, aug_error_callback* error_callback)
 {
-    aug_lexer_close(lexer);
+    aug_lexer* lexer = AUG_NEW(aug_lexer);
+
+    lexer->valid = true;
+    lexer->error_callback = error_callback;
+    lexer->input = NULL;
+    lexer->line = 0;
+    lexer->col = 0;
+    lexer->prev_line = 0;
+    lexer->prev_col = 0;
+    lexer->pos_start = 0;
+
+    lexer->prev = aug_token();
+    lexer->curr = aug_token();
+    lexer->next = aug_token();
 
     std::fstream* file = AUG_NEW(std::fstream(filename, std::fstream::in));
     if (file == NULL || !file->is_open())
     {
-        AUG_LOG_ERROR(lexer.error_callback, "Lexer failed to open file %s", filename);
+        AUG_LOG_ERROR(lexer->error_callback, "Lexer failed to open file %s", filename);
         if (file)
-            delete file;
-        return false;
+            AUG_DELETE(file);
+        return NULL;
     }
 
-    lexer.input = file;
-    lexer.inputname = filename;
+    lexer->input = file;
+    lexer->inputname = filename;
 
-    return aug_lexer_move(lexer);
+    if (!aug_lexer_move(lexer))
+    {
+        aug_lexer_close(lexer);
+        return NULL;
+    }
+    return lexer;
 }
 
 // -------------------------------------- Parser / Abstract Syntax Tree ---------------------------------------// 
 #define AUG_PARSE_ERROR(lexer,  ...)\
 {\
-    AUG_LOG_ERROR(lexer.error_callback, "Syntax error %s(%d,%d)", lexer.inputname.c_str(), lexer.line+1, lexer.col+1);\
-    AUG_LOG_ERROR(lexer.error_callback, __VA_ARGS__);\
+    AUG_LOG_ERROR(lexer->error_callback, "Syntax error %s(%d,%d)", lexer->inputname.c_str(), lexer->line+1, lexer->col+1);\
+    AUG_LOG_ERROR(lexer->error_callback, __VA_ARGS__);\
 }
 
 enum aug_ast_id : uint8_t
@@ -1041,14 +1065,14 @@ enum aug_ast_id : uint8_t
     AUG_AST_ROOT,
     AUG_AST_BLOCK, 
     AUG_AST_STMT_EXPR,
-    AUG_AST_STMT_VAR,
-    AUG_AST_STMT_ASSIGN,
+    AUG_AST_STMT_DEFINE_VAR,
+    AUG_AST_STMT_ASSIGN_VAR,
     AUG_AST_STMT_IF,
     AUG_AST_STMT_IF_ELSE,
     AUG_AST_STMT_WHILE,
     AUG_AST_LITERAL, 
     AUG_AST_VARIABLE, 
-    AUG_AST_EXPR_LIST,
+    AUG_AST_LIST,
     AUG_AST_UNARY_OP, 
     AUG_AST_BINARY_OP, 
     AUG_AST_FUNC_CALL,
@@ -1065,10 +1089,10 @@ struct aug_ast
     aug_std_array<aug_ast*> children;
 };
 
-aug_ast* aug_parse_value(aug_lexer& lexer); 
-aug_ast* aug_parse_block(aug_lexer& lexer);
+aug_ast* aug_parse_value(aug_lexer* lexer); 
+aug_ast* aug_parse_block(aug_lexer* lexer);
 
-aug_ast* aug_ast_new(aug_ast_id id, const aug_token& token = aug_token())
+inline aug_ast* aug_ast_new(aug_ast_id id, const aug_token& token = aug_token())
 {
     aug_ast* node = AUG_NEW(aug_ast);
     node->id = id;
@@ -1076,7 +1100,7 @@ aug_ast* aug_ast_new(aug_ast_id id, const aug_token& token = aug_token())
     return node;
 }
 
-void aug_ast_delete(aug_ast* node)
+inline void aug_ast_delete(aug_ast* node)
 {
     if (node == NULL)
         return;
@@ -1085,7 +1109,7 @@ void aug_ast_delete(aug_ast* node)
     delete node;
 }
 
-bool aug_parse_expr_pop(aug_lexer& lexer, aug_std_array<aug_token>& op_stack, aug_std_array<aug_ast*>& expr_stack)
+inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_std_array<aug_token>& op_stack, aug_std_array<aug_ast*>& expr_stack)
 {
     aug_token next_op = op_stack.back();
     op_stack.pop_back();
@@ -1120,15 +1144,15 @@ bool aug_parse_expr_pop(aug_lexer& lexer, aug_std_array<aug_token>& op_stack, au
     return true;
 }
 
-aug_ast* aug_parse_expr(aug_lexer& lexer)
+inline aug_ast* aug_parse_expr(aug_lexer* lexer)
 {
     // Shunting yard algorithm
     aug_std_array<aug_token> op_stack;
     aug_std_array<aug_ast*> expr_stack;
     
-    while(lexer.curr.id != AUG_TOKEN_SEMICOLON)
+    while(lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
-        aug_token op = lexer.curr;
+        aug_token op = lexer->curr;
         if(op.detail->prec > 0)
         {
             // left associate by default (for right, <= becomes <)
@@ -1175,13 +1199,13 @@ aug_ast* aug_parse_expr(aug_lexer& lexer)
     return expr_stack.back();
 }
 
-aug_ast* aug_parse_funccall(aug_lexer& lexer)
+inline aug_ast* aug_parse_funccall(aug_lexer* lexer)
 {
-    aug_token name_token = lexer.curr;
+    aug_token name_token = lexer->curr;
     if (name_token.id != AUG_TOKEN_NAME)
         return NULL;
 
-    if (lexer.next.id != AUG_TOKEN_LPAREN)
+    if (lexer->next.id != AUG_TOKEN_LPAREN)
         return NULL;
 
     aug_lexer_move(lexer); // eat NAME
@@ -1192,7 +1216,7 @@ aug_ast* aug_parse_funccall(aug_lexer& lexer)
     {
         funccall->children.push_back(expr);
 
-        while (expr && lexer.curr.id == AUG_TOKEN_COMMA)
+        while (expr && lexer->curr.id == AUG_TOKEN_COMMA)
         {
             aug_lexer_move(lexer); // eat COMMA
 
@@ -1201,7 +1225,7 @@ aug_ast* aug_parse_funccall(aug_lexer& lexer)
         }
     }
 
-    if (lexer.curr.id != AUG_TOKEN_RPAREN)
+    if (lexer->curr.id != AUG_TOKEN_RPAREN)
     {
         aug_ast_delete(funccall);
         AUG_PARSE_ERROR(lexer,  "Function call missing closing parentheses");
@@ -1212,43 +1236,43 @@ aug_ast* aug_parse_funccall(aug_lexer& lexer)
     return funccall;
 }
 
-aug_ast* aug_parse_expr_list(aug_lexer& lexer)
+inline aug_ast* aug_parse_list(aug_lexer* lexer)
 {
-    aug_token name_token = lexer.curr;
+    aug_token name_token = lexer->curr;
     if (name_token.id != AUG_TOKEN_LBRACKET)
         return NULL;
 
     aug_lexer_move(lexer); // eat LBRACKET
 
-    aug_ast* expr_list = aug_ast_new(AUG_AST_EXPR_LIST, name_token);
+    aug_ast* list = aug_ast_new(AUG_AST_LIST, name_token);
     if (aug_ast* expr = aug_parse_expr(lexer))
     {
-        expr_list->children.push_back(expr);
+        list->children.push_back(expr);
 
-        while (expr && lexer.curr.id == AUG_TOKEN_COMMA)
+        while (expr && lexer->curr.id == AUG_TOKEN_COMMA)
         {
             aug_lexer_move(lexer); // eat COMMA
 
             if((expr = aug_parse_expr(lexer)))
-                expr_list->children.push_back(expr);
+                list->children.push_back(expr);
         }
     }
 
-    if (lexer.curr.id != AUG_TOKEN_RBRACKET)
+    if (lexer->curr.id != AUG_TOKEN_RBRACKET)
     {
-        aug_ast_delete(expr_list);
+        aug_ast_delete(list);
         AUG_PARSE_ERROR(lexer,  "List missing closing bracket");
         return NULL;
     }
 
     aug_lexer_move(lexer); // eat RBRACKET
-    return expr_list;
+    return list;
 }
 
-aug_ast* aug_parse_value(aug_lexer& lexer)
+inline aug_ast* aug_parse_value(aug_lexer* lexer)
 {
     aug_ast* value = NULL;
-    aug_token token = lexer.curr;
+    const aug_token token = lexer->curr;
     switch (token.id)
     {
     case AUG_TOKEN_DECIMAL:
@@ -1275,14 +1299,14 @@ aug_ast* aug_parse_value(aug_lexer& lexer)
     }
     case AUG_TOKEN_LBRACKET:
     {
-        value = aug_parse_expr_list(lexer);
+        value = aug_parse_list(lexer);
         break;
     }
     case AUG_TOKEN_LPAREN:
     {
         aug_lexer_move(lexer); // eat LPAREN
         value = aug_parse_expr(lexer);
-        if (lexer.curr.id == AUG_TOKEN_RPAREN)
+        if (lexer->curr.id == AUG_TOKEN_RPAREN)
         {
             aug_lexer_move(lexer); // eat RPAREN
         }
@@ -1299,13 +1323,13 @@ aug_ast* aug_parse_value(aug_lexer& lexer)
     return value;
 }
 
-aug_ast* aug_parse_stmt_expr(aug_lexer& lexer)
+aug_ast* aug_parse_stmt_expr(aug_lexer* lexer)
 {
     aug_ast* expr = aug_parse_expr(lexer);
     if (expr == NULL)
         return NULL;
     
-    if (lexer.curr.id != AUG_TOKEN_SEMICOLON)
+    if (lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(expr);
         AUG_PARSE_ERROR(lexer, "Missing semicolon at end of expression");
@@ -1319,14 +1343,14 @@ aug_ast* aug_parse_stmt_expr(aug_lexer& lexer)
     return stmt_expr;
 }
 
-aug_ast* aug_parse_stmt_var(aug_lexer& lexer)
+aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
 {
-    if (lexer.curr.id != AUG_TOKEN_VAR)
+    if (lexer->curr.id != AUG_TOKEN_VAR)
         return NULL;
 
     aug_lexer_move(lexer); // eat VAR
 
-    aug_token name_token = lexer.curr;
+    aug_token name_token = lexer->curr;
     if (name_token.id != AUG_TOKEN_NAME)
     {
         AUG_PARSE_ERROR(lexer, "Variable assignment expected name");
@@ -1334,15 +1358,15 @@ aug_ast* aug_parse_stmt_var(aug_lexer& lexer)
     }
     aug_lexer_move(lexer); // eat NAME
 
-    if (lexer.curr.id == AUG_TOKEN_SEMICOLON)
+    if (lexer->curr.id == AUG_TOKEN_SEMICOLON)
     {
         aug_lexer_move(lexer); // eat SEMICOLON
 
-        aug_ast* stmt_assign = aug_ast_new(AUG_AST_STMT_VAR, name_token);
-        return stmt_assign;
+        aug_ast* stmt_define = aug_ast_new(AUG_AST_STMT_DEFINE_VAR, name_token);
+        return stmt_define;
     }
 
-    if (lexer.curr.id != AUG_TOKEN_ASSIGN)
+    if (lexer->curr.id != AUG_TOKEN_ASSIGN)
     {
         AUG_PARSE_ERROR(lexer, "Variable assignment expected \"=\" or ;");
         return NULL;
@@ -1356,7 +1380,7 @@ aug_ast* aug_parse_stmt_var(aug_lexer& lexer)
         AUG_PARSE_ERROR(lexer, "Variable assignment expected expression after \"=\"");
         return NULL;
     }
-    if (lexer.curr.id != AUG_TOKEN_SEMICOLON)
+    if (lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(expr);
         AUG_PARSE_ERROR(lexer, "Variable assignment missing semicolon at end of expression");
@@ -1365,15 +1389,15 @@ aug_ast* aug_parse_stmt_var(aug_lexer& lexer)
 
     aug_lexer_move(lexer); // eat SEMICOLON
 
-    aug_ast* stmt_assign = aug_ast_new(AUG_AST_STMT_VAR, name_token);
-    stmt_assign->children.push_back(expr);
-    return stmt_assign;
+    aug_ast* stmt_define = aug_ast_new(AUG_AST_STMT_DEFINE_VAR, name_token);
+    stmt_define->children.push_back(expr);
+    return stmt_define;
 }
 
-aug_ast* aug_parse_stmt_assign(aug_lexer& lexer)
+aug_ast* aug_parse_stmt_assign_var(aug_lexer* lexer)
 {
-    aug_token name_token = lexer.curr;
-    aug_token eq_token = lexer.next;
+    aug_token name_token = lexer->curr;
+    aug_token eq_token = lexer->next;
     if (name_token.id != AUG_TOKEN_NAME || eq_token.id != AUG_TOKEN_ASSIGN)
         return NULL;
 
@@ -1387,7 +1411,7 @@ aug_ast* aug_parse_stmt_assign(aug_lexer& lexer)
         return NULL;
     }
 
-    if (lexer.curr.id != AUG_TOKEN_SEMICOLON)
+    if (lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(expr);
         AUG_PARSE_ERROR(lexer, "Missing semicolon at end of expression");
@@ -1396,14 +1420,50 @@ aug_ast* aug_parse_stmt_assign(aug_lexer& lexer)
 
     aug_lexer_move(lexer); // eat SEMICOLON
 
-    aug_ast* stmt_assign = aug_ast_new(AUG_AST_STMT_ASSIGN, name_token);
+    aug_ast* stmt_assign = aug_ast_new(AUG_AST_STMT_ASSIGN_VAR, name_token);
     stmt_assign->children.push_back(expr);
     return stmt_assign;
 }
 
-aug_ast* aug_parse_stmt_if(aug_lexer& lexer)
+aug_ast* aug_parse_stmt_if(aug_lexer* lexer);
+
+aug_ast* aug_parse_stmt_if_else(aug_lexer* lexer, aug_ast* expr, aug_ast* block)
 {
-    if (lexer.curr.id != AUG_TOKEN_IF)
+    aug_lexer_move(lexer); // eat ELSE
+
+    aug_ast* if_else_stmt = aug_ast_new(AUG_AST_STMT_IF_ELSE);
+    if_else_stmt->children.push_back(expr);
+    if_else_stmt->children.push_back(block);
+
+    // Handling else if becomes else { if ... }
+    if (lexer->curr.id == AUG_TOKEN_IF)
+    {
+        aug_ast* trailing_if_stmt = aug_parse_stmt_if(lexer);
+        if (trailing_if_stmt == NULL)
+        {
+            aug_ast_delete(if_else_stmt);
+            return NULL;
+        }
+        if_else_stmt->children.push_back(trailing_if_stmt);
+    }
+    else
+    {
+        aug_ast* else_block = aug_parse_block(lexer);
+        if (else_block == NULL)
+        {
+            aug_ast_delete(if_else_stmt);
+            AUG_PARSE_ERROR(lexer, "If Else statement missing block");
+            return NULL;
+        }
+        if_else_stmt->children.push_back(else_block);
+    }
+
+    return if_else_stmt;
+}
+
+aug_ast* aug_parse_stmt_if(aug_lexer* lexer)
+{
+    if (lexer->curr.id != AUG_TOKEN_IF)
         return NULL;
 
     aug_lexer_move(lexer); // eat IF
@@ -1424,39 +1484,8 @@ aug_ast* aug_parse_stmt_if(aug_lexer& lexer)
     }
 
     // Parse else 
-    if (lexer.curr.id == AUG_TOKEN_ELSE)
-    {
-        aug_lexer_move(lexer); // eat ELSE
-
-        aug_ast* if_else_stmt = aug_ast_new(AUG_AST_STMT_IF_ELSE);
-        if_else_stmt->children.push_back(expr);
-        if_else_stmt->children.push_back(block);
-
-        // Handling else if becomes else { if ... }
-        if (lexer.curr.id == AUG_TOKEN_IF)
-        {
-            aug_ast* trailing_if_stmt = aug_parse_stmt_if(lexer);
-            if (trailing_if_stmt == NULL)
-            {
-                aug_ast_delete(if_else_stmt);
-                return NULL;
-            }
-            if_else_stmt->children.push_back(trailing_if_stmt);
-        }
-        else
-        {
-            aug_ast* else_block = aug_parse_block(lexer);
-            if (else_block == NULL)
-            {
-                aug_ast_delete(if_else_stmt);
-                AUG_PARSE_ERROR(lexer, "If Else statement missing block");
-                return NULL;
-            }
-            if_else_stmt->children.push_back(else_block);
-        }
-
-        return if_else_stmt;
-    }
+    if (lexer->curr.id == AUG_TOKEN_ELSE)
+        return aug_parse_stmt_if_else(lexer, expr, block);
 
     aug_ast* if_stmt = aug_ast_new(AUG_AST_STMT_IF);
     if_stmt->children.push_back(expr);
@@ -1464,9 +1493,9 @@ aug_ast* aug_parse_stmt_if(aug_lexer& lexer)
     return if_stmt;
 }
 
-aug_ast* aug_parse_stmt_while(aug_lexer& lexer)
+aug_ast* aug_parse_stmt_while(aug_lexer* lexer)
 {
-    if (lexer.curr.id != AUG_TOKEN_WHILE)
+    if (lexer->curr.id != AUG_TOKEN_WHILE)
         return NULL;
 
     aug_lexer_move(lexer); // eat WHILE
@@ -1493,9 +1522,9 @@ aug_ast* aug_parse_stmt_while(aug_lexer& lexer)
     return while_stmt;
 }
 
-aug_ast* aug_parse_param_list(aug_lexer& lexer)
+inline aug_ast* aug_parse_param_list(aug_lexer* lexer)
 {
-    if (lexer.curr.id != AUG_TOKEN_LPAREN)
+    if (lexer->curr.id != AUG_TOKEN_LPAREN)
     {
         AUG_PARSE_ERROR(lexer, "Missing opening parentheses in function parameter list");
         return NULL;
@@ -1504,32 +1533,32 @@ aug_ast* aug_parse_param_list(aug_lexer& lexer)
     aug_lexer_move(lexer); // eat LPAREN
 
     aug_ast* param_list = aug_ast_new(AUG_AST_PARAM_LIST);
-    if (lexer.curr.id == AUG_TOKEN_NAME)
+    if (lexer->curr.id == AUG_TOKEN_NAME)
     {
-        aug_ast* param = aug_ast_new(AUG_AST_PARAM, lexer.curr);
+        aug_ast* param = aug_ast_new(AUG_AST_PARAM, lexer->curr);
         param_list->children.push_back(param);
 
         aug_lexer_move(lexer); // eat NAME
 
-        while (lexer.curr.id == AUG_TOKEN_COMMA)
+        while (lexer->curr.id == AUG_TOKEN_COMMA)
         {
             aug_lexer_move(lexer); // eat COMMA
 
-            if (lexer.curr.id != AUG_TOKEN_NAME)
+            if (lexer->curr.id != AUG_TOKEN_NAME)
             {
                 AUG_PARSE_ERROR(lexer, "Invalid function parameter. Expected parameter name");
                 aug_ast_delete(param_list);
                 return NULL;
             }
 
-            aug_ast* param = aug_ast_new(AUG_AST_PARAM, lexer.curr);
+            aug_ast* param = aug_ast_new(AUG_AST_PARAM, lexer->curr);
             param_list->children.push_back(param);
 
             aug_lexer_move(lexer); // eat NAME
         }
     }
 
-    if (lexer.curr.id != AUG_TOKEN_RPAREN)
+    if (lexer->curr.id != AUG_TOKEN_RPAREN)
     {
         AUG_PARSE_ERROR(lexer, "Missing closing parentheses in function parameter list");
         aug_ast_delete(param_list);
@@ -1541,20 +1570,20 @@ aug_ast* aug_parse_param_list(aug_lexer& lexer)
     return param_list;
 }
 
-aug_ast* aug_parse_stmt_func(aug_lexer& lexer)
+aug_ast* aug_parse_stmt_func(aug_lexer* lexer)
 {
-    if (lexer.curr.id != AUG_TOKEN_FUNC)
+    if (lexer->curr.id != AUG_TOKEN_FUNC)
         return NULL;
 
     aug_lexer_move(lexer); // eat FUNC
 
-    if (lexer.curr.id != AUG_TOKEN_NAME)
+    if (lexer->curr.id != AUG_TOKEN_NAME)
     {
         AUG_PARSE_ERROR(lexer, "Missing name in function definition");
         return NULL;
     }
 
-    const aug_token func_name = lexer.curr;
+    const aug_token func_name = lexer->curr;
 
     aug_lexer_move(lexer); // eat NAME
 
@@ -1576,9 +1605,9 @@ aug_ast* aug_parse_stmt_func(aug_lexer& lexer)
     return func_def;
 }
 
-aug_ast* aug_parse_stmt_return(aug_lexer& lexer)
+aug_ast* aug_parse_stmt_return(aug_lexer* lexer)
 {
-    if (lexer.curr.id != AUG_TOKEN_RETURN)
+    if (lexer->curr.id != AUG_TOKEN_RETURN)
         return NULL;
 
     aug_lexer_move(lexer); // eat RETURN
@@ -1589,7 +1618,7 @@ aug_ast* aug_parse_stmt_return(aug_lexer& lexer)
     if (expr != NULL)
         return_stmt->children.push_back(expr);
 
-    if (lexer.curr.id != AUG_TOKEN_SEMICOLON)
+    if (lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(return_stmt);
         AUG_PARSE_ERROR(lexer, "Missing semicolon at end of expression");
@@ -1601,16 +1630,16 @@ aug_ast* aug_parse_stmt_return(aug_lexer& lexer)
     return return_stmt;
 }
 
-aug_ast* aug_parse_stmt(aug_lexer& lexer)
+inline aug_ast* aug_parse_stmt(aug_lexer* lexer)
 {
     //TODO: assignment, funcdef etc..
     // Default, epxression parsing. 
     aug_ast* stmt = NULL;
 
-    switch (lexer.curr.id)
+    switch (lexer->curr.id)
     {
     case AUG_TOKEN_NAME:
-        stmt = aug_parse_stmt_assign(lexer);
+        stmt = aug_parse_stmt_assign_var(lexer);
         if(!stmt)
             stmt = aug_parse_stmt_expr(lexer);
         break;
@@ -1621,7 +1650,7 @@ aug_ast* aug_parse_stmt(aug_lexer& lexer)
         stmt = aug_parse_stmt_while(lexer);
         break;
     case AUG_TOKEN_VAR:
-        stmt = aug_parse_stmt_var(lexer);
+        stmt = aug_parse_stmt_define_var(lexer);
         break;
     case AUG_TOKEN_FUNC:
         stmt = aug_parse_stmt_func(lexer);
@@ -1637,9 +1666,9 @@ aug_ast* aug_parse_stmt(aug_lexer& lexer)
     return stmt;
 }
 
-aug_ast* aug_parse_block(aug_lexer& lexer)
+aug_ast* aug_parse_block(aug_lexer* lexer)
 {
-    if (lexer.curr.id != AUG_TOKEN_LBRACE)
+    if (lexer->curr.id != AUG_TOKEN_LBRACE)
     {
         AUG_PARSE_ERROR(lexer, "Block missing opening \"{\"");
         return NULL;
@@ -1650,7 +1679,7 @@ aug_ast* aug_parse_block(aug_lexer& lexer)
     while(aug_ast* stmt = aug_parse_stmt(lexer))
         block->children.push_back(stmt);
 
-    if (lexer.curr.id != AUG_TOKEN_RBRACE)
+    if (lexer->curr.id != AUG_TOKEN_RBRACE)
     {
         AUG_PARSE_ERROR(lexer, "Block missing closing \"}\"");
         aug_ast_delete(block);
@@ -1661,7 +1690,7 @@ aug_ast* aug_parse_block(aug_lexer& lexer)
     return block;
 }
 
-aug_ast* aug_parse_root(aug_lexer& lexer)
+aug_ast* aug_parse_root(aug_lexer* lexer)
 {
     aug_ast* root = aug_ast_new(AUG_AST_ROOT);
     while (aug_ast* stmt = aug_parse_stmt(lexer))
@@ -1677,9 +1706,8 @@ aug_ast* aug_parse_root(aug_lexer& lexer)
 
 aug_ast* aug_parse(aug_environment& env, const char* code)
 {
-    aug_lexer lexer;
-    aug_lexer_init(lexer, env.error_callback);
-    if(!aug_lexer_open(lexer, code))
+    aug_lexer* lexer = aug_lexer_open(code, env.error_callback);
+    if(lexer == NULL)
         return NULL;
 
     aug_ast* root = aug_parse_root(lexer);
@@ -1689,9 +1717,8 @@ aug_ast* aug_parse(aug_environment& env, const char* code)
 
 aug_ast* aug_parse_file(aug_environment& env, const char* filename)
 {
-    aug_lexer lexer;
-    aug_lexer_init(lexer, env.error_callback);
-    if(!aug_lexer_open_file(lexer, filename))
+    aug_lexer* lexer = aug_lexer_open_file(filename, env.error_callback);
+    if (lexer == NULL)
         return NULL;
 
     aug_ast* root = aug_parse_root(lexer);
@@ -2998,6 +3025,614 @@ bool aug_pass_semantic_check(const aug_ast* node)
     return true;
 }
 // -------------------------------------- Transformations ---------------------------------------// 
+void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir);
+
+void aug_ast_to_ir_root(aug_environment& env, const aug_ast* node, aug_ir& ir)
+{
+    if (node == NULL || !ir.valid)
+        return;
+
+    const aug_token& token = node->token;
+    const aug_std_array<aug_ast*>& children = node->children;
+
+    aug_ir_push_frame(ir, 0); // push a global frame
+
+    for (aug_ast* stmt : children)
+        aug_ast_to_ir(env, stmt, ir);
+
+    // Restore stack
+    const aug_ir_operand delta = aug_ir_operand_from_int(aug_ir_local_offset(ir));
+    aug_ir_add_operation(ir, AUG_OPCODE_DEC_STACK, delta);
+    aug_ir_add_operation(ir, AUG_OPCODE_EXIT);
+
+    aug_ir_pop_frame(ir); // pop global frame
+}
+
+void aug_ast_to_ir_literal(aug_environment& env, const aug_ast* node, aug_ir& ir)
+{
+    if (node == NULL || !ir.valid)
+        return;
+
+    const aug_token& token = node->token;
+    const aug_std_array<aug_ast*>& children = node->children;
+
+    switch (token.id)
+    {
+    case AUG_TOKEN_DECIMAL:
+    {
+        const int data = strtol(token.data.c_str(), NULL, 10);
+        const aug_ir_operand& operand = aug_ir_operand_from_int(data);
+        aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
+        break;
+    }
+    case AUG_TOKEN_HEXIDECIMAL:
+    {
+        const unsigned int data = strtoul(token.data.c_str(), NULL, 16);
+        const aug_ir_operand& operand = aug_ir_operand_from_int(data);
+        aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
+        break;
+    }
+    case AUG_TOKEN_BINARY:
+    {
+        const unsigned int data = strtoul(token.data.c_str(), NULL, 2);
+        const aug_ir_operand& operand = aug_ir_operand_from_int(data);
+        aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
+        break;
+    }
+    case AUG_TOKEN_FLOAT:
+    {
+        const float data = strtof(token.data.c_str(), NULL);
+        const aug_ir_operand& operand = aug_ir_operand_from_float(data);
+        aug_ir_add_operation(ir, AUG_OPCODE_PUSH_FLOAT, operand);
+        break;
+    }
+    case AUG_TOKEN_STRING:
+    {
+        const aug_ir_operand& operand = aug_ir_operand_from_str(token.data.c_str());
+        aug_ir_add_operation(ir, AUG_OPCODE_PUSH_STRING, operand);
+        break;
+    }
+    case AUG_TOKEN_TRUE:
+    {
+        const aug_ir_operand& operand = aug_ir_operand_from_bool(true);
+        aug_ir_add_operation(ir, AUG_OPCODE_PUSH_BOOL, operand);
+        break;
+    }
+    case AUG_TOKEN_FALSE:
+    {
+        const aug_ir_operand& operand = aug_ir_operand_from_bool(false);
+        aug_ir_add_operation(ir, AUG_OPCODE_PUSH_BOOL, operand);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+void aug_ast_to_ir_var(aug_environment& env, const aug_ast* node, aug_ir& ir)
+{
+    if (node == NULL || !ir.valid)
+        return;
+
+    const aug_token& token = node->token;
+    const aug_std_array<aug_ast*>& children = node->children;
+
+    const aug_symbol& symbol = aug_ir_symbol_relative(ir, token.data);
+    if (symbol.type == AUG_SYM_NONE)
+    {
+        ir.valid = false;
+        AUG_LOG_ERROR(env.error_callback, "Variable %s not defined in current block", token.data.c_str());
+        return;
+    }
+
+    if (symbol.type == AUG_SYM_FUNC)
+    {
+        ir.valid = false;
+        AUG_LOG_ERROR(env.error_callback, "Function %s can not be used as a variable", token.data.c_str());
+        return;
+    }
+
+    // TODO: determine if variable is local or global
+    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_LOCAL, address_operand);
+}
+
+void aug_ast_to_ir_unnop(aug_environment& env, const aug_ast* node, aug_ir& ir)
+{
+    if (node == NULL || !ir.valid)
+        return;
+
+    const aug_token& token = node->token;
+    const aug_std_array<aug_ast*>& children = node->children;
+
+    assert(children.size() == 1); // token [0]
+
+    aug_ast_to_ir(env, children[0], ir);
+
+    switch (token.id)
+    {
+    case AUG_TOKEN_NOT: aug_ir_add_operation(ir, AUG_OPCODE_NOT); break;
+    default: break;
+    }
+}
+
+
+void aug_ast_to_ir_binop(aug_environment& env, const aug_ast* node, aug_ir& ir)
+{
+    if (node == NULL || !ir.valid)
+        return;
+
+    const aug_token& token = node->token;
+    const aug_std_array<aug_ast*>& children = node->children;
+
+    assert(children.size() == 2); // [0] token [1]
+
+    aug_ast_to_ir(env, children[0], ir); // LHS
+    aug_ast_to_ir(env, children[1], ir); // RHS
+
+    switch (token.id)
+    {
+    case AUG_TOKEN_ADD:    aug_ir_add_operation(ir, AUG_OPCODE_ADD); break;
+    case AUG_TOKEN_SUB:    aug_ir_add_operation(ir, AUG_OPCODE_SUB); break;
+    case AUG_TOKEN_MUL:    aug_ir_add_operation(ir, AUG_OPCODE_MUL); break;
+    case AUG_TOKEN_DIV:    aug_ir_add_operation(ir, AUG_OPCODE_DIV); break;
+    case AUG_TOKEN_MOD:    aug_ir_add_operation(ir, AUG_OPCODE_MOD); break;
+    case AUG_TOKEN_POW:    aug_ir_add_operation(ir, AUG_OPCODE_POW); break;
+    case AUG_TOKEN_AND:    aug_ir_add_operation(ir, AUG_OPCODE_AND); break;
+    case AUG_TOKEN_OR:     aug_ir_add_operation(ir, AUG_OPCODE_OR); break;
+    case AUG_TOKEN_LT:     aug_ir_add_operation(ir, AUG_OPCODE_LT);  break;
+    case AUG_TOKEN_LT_EQ:  aug_ir_add_operation(ir, AUG_OPCODE_LTE); break;
+    case AUG_TOKEN_GT:     aug_ir_add_operation(ir, AUG_OPCODE_GT);  break;
+    case AUG_TOKEN_GT_EQ:  aug_ir_add_operation(ir, AUG_OPCODE_GTE); break;
+    case AUG_TOKEN_EQ:     aug_ir_add_operation(ir, AUG_OPCODE_EQ);  break;
+    case AUG_TOKEN_NOT_EQ: aug_ir_add_operation(ir, AUG_OPCODE_NEQ); break;
+    case AUG_TOKEN_APPROX_EQ: aug_ir_add_operation(ir, AUG_OPCODE_APPROXEQ); break;
+    case AUG_TOKEN_ADD_EQ:
+    {
+        if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+        {
+            ir.valid = false;
+            AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+            break;
+        }
+
+        const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+        const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+        aug_ir_add_operation(ir, AUG_OPCODE_ADD);
+        aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+        break;
+    }
+    case AUG_TOKEN_SUB_EQ:
+    {
+        if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+        {
+            ir.valid = false;
+            AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+            break;
+        }
+
+        const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+        const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+        aug_ir_add_operation(ir, AUG_OPCODE_SUB);
+        aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+        break;
+    }
+    case AUG_TOKEN_MUL_EQ:
+    {
+        if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+        {
+            ir.valid = false;
+            AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+            break;
+        }
+
+        const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+        const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+        aug_ir_add_operation(ir, AUG_OPCODE_MUL);
+        aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+        break;
+    }
+    case AUG_TOKEN_DIV_EQ:
+    {
+        if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+        {
+            ir.valid = false;
+            AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+            break;
+        }
+
+        const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+        const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+        aug_ir_add_operation(ir, AUG_OPCODE_DIV);
+        aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+        break;
+    }
+    case AUG_TOKEN_MOD_EQ:
+    {
+        if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+        {
+            ir.valid = false;
+            AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+            break;
+        }
+
+        const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+        const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+        aug_ir_add_operation(ir, AUG_OPCODE_MOD);
+        aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+        break;
+    }
+    case AUG_TOKEN_POW_EQ:
+    {
+        if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+        {
+            ir.valid = false;
+            AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+            break;
+        }
+
+        const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+        const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+        aug_ir_add_operation(ir, AUG_OPCODE_POW);
+        aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+        break;
+    }
+    default: break;
+    }
+}
+
+void aug_ast_to_ir_stmt_expr(aug_environment& env, const aug_ast* node, aug_ir& ir)
+{
+    if (node == NULL || !ir.valid)
+    return;
+
+    const aug_token& token = node->token;
+    const aug_std_array<aug_ast*>& children = node->children;
+    if (children.size() == 1)
+    {
+        aug_ast_to_ir(env, children[0], ir);
+
+        // discard the top if a non-assignment binop
+        bool discard = true;
+        if (children[0] && children[0]->id == AUG_AST_BINARY_OP)
+        {
+            switch (children[0]->token.id)
+            {
+            case AUG_TOKEN_ADD_EQ:
+            case AUG_TOKEN_SUB_EQ:
+            case AUG_TOKEN_DIV_EQ:
+            case AUG_TOKEN_MUL_EQ:
+            case AUG_TOKEN_MOD_EQ:
+            case AUG_TOKEN_POW_EQ:
+                discard = false;
+                break;
+            default:
+                break;
+            }
+        }
+        if (discard)
+            aug_ir_add_operation(ir, AUG_OPCODE_POP);
+    }
+}
+
+// Control flow related IR generation
+void aug_ast_to_ir_control(aug_environment& env, const aug_ast* node, aug_ir& ir)
+{
+    if (node == NULL || !ir.valid)
+        return;
+
+    const aug_token& token = node->token;
+    const aug_std_array<aug_ast*>& children = node->children;
+    switch (node->id)
+    {
+    case AUG_AST_STMT_IF:
+    {
+        assert(children.size() == 2); //if ([0]) {[1]}
+
+        const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
+
+        // Evaluate expression. 
+        aug_ast_to_ir(env, children[0], ir);
+
+        //Jump to end if false
+        const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
+
+        // True block
+        aug_ir_push_scope(ir);
+        aug_ast_to_ir(env, children[1], ir);
+        aug_ir_pop_scope(ir);
+
+        const size_t end_block_addr = ir.bytecode_offset;
+
+        // Fixup stubbed block offsets
+        aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
+        end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
+
+        break;
+    }
+    case AUG_AST_STMT_IF_ELSE:
+    {
+        assert(children.size() == 3); //if ([0]) {[1]} else {[2]}
+
+        const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
+
+        // Evaluate expression. 
+        aug_ast_to_ir(env, children[0], ir);
+
+        //Jump to else if false
+        const size_t else_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
+
+        // True block
+        aug_ir_push_scope(ir);
+        aug_ast_to_ir(env, children[1], ir);
+        aug_ir_pop_scope(ir);
+
+        //Jump to end after true
+        const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP, stub_operand);
+        const size_t else_block_addr = ir.bytecode_offset;
+
+        // Else block
+        aug_ir_push_scope(ir);
+        aug_ast_to_ir(env, children[2], ir);
+        aug_ir_pop_scope(ir);
+
+        // Tag end address
+        const size_t end_block_addr = ir.bytecode_offset;
+
+        // Fixup stubbed block offsets
+        aug_ir_operation& else_block_jmp_operation = aug_ir_get_operation(ir, else_block_jmp);
+        else_block_jmp_operation.operand = aug_ir_operand_from_int(else_block_addr);
+
+        aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
+        end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
+
+        break;
+    }
+    case AUG_AST_STMT_WHILE:
+    {
+        assert(children.size() == 2); //while ([0]) {[1]}
+
+        const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
+
+        const aug_ir_operand& begin_block_operand = aug_ir_operand_from_int(ir.bytecode_offset);
+
+        // Evaluate expression. 
+        aug_ast_to_ir(env, children[0], ir);
+
+        //Jump to end if false
+        const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
+
+        // Loop block
+        aug_ir_push_scope(ir);
+        aug_ast_to_ir(env, children[1], ir);
+        aug_ir_pop_scope(ir);
+
+        // Jump back to beginning, expr evaluation 
+        aug_ir_add_operation(ir, AUG_OPCODE_JUMP, begin_block_operand);
+
+        // Tag end address
+        const size_t end_block_addr = ir.bytecode_offset;
+
+        // Fixup stubbed block offsets
+        aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
+        end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
+
+        break;
+    }
+    }
+}
+
+// Function related IR generation
+void aug_ast_to_ir_func(aug_environment& env, const aug_ast* node, aug_ir& ir)
+{
+    if (node == NULL || !ir.valid)
+        return;
+
+    const aug_token& token = node->token;
+    const aug_std_array<aug_ast*>& children = node->children;
+
+    switch (node->id)
+    {
+    case AUG_AST_FUNC_CALL:
+    {
+        const char* func_name = token.data.c_str();
+        const int arg_count = children.size();
+        const aug_symbol& symbol = aug_ir_get_symbol(ir, func_name);
+
+        if (symbol.type == AUG_SYM_VAR)
+        {
+            ir.valid = false;
+            AUG_LOG_ERROR(env.error_callback, "Can not call variable %s as a function", func_name);
+            break;
+        }
+
+        // If the symbol is a user defined function.
+        if (symbol.type == AUG_SYM_FUNC)
+        {
+            if (symbol.argc != arg_count)
+            {
+                ir.valid = false;
+                AUG_LOG_ERROR(env.error_callback, "Function Call %s passed %d arguments, expected %d", func_name, arg_count, symbol.argc);
+            }
+            else
+            {
+                // offset to account for the pushed base
+                aug_ir_add_operation(ir, AUG_OPCODE_PUSH_BASE);
+                size_t push_return_addr = aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, aug_ir_operand_from_int(0));
+
+                for (const aug_ast* arg : children)
+                    aug_ast_to_ir(env, arg, ir);
+
+                const aug_ir_operand& func_addr = aug_ir_operand_from_int(symbol.offset); // func addr
+                aug_ir_add_operation(ir, AUG_OPCODE_CALL, func_addr);
+
+                // fixup the return address to after the call
+                aug_ir_get_operation(ir, push_return_addr).operand = aug_ir_operand_from_int(ir.bytecode_offset);
+            }
+            break;
+        }
+
+        // Check if the symbol is a registered function
+        int func_index = -1;
+        for (int i = 0; i < (int)env.external_function_names.size(); ++i)
+        {
+            if (env.external_function_names[i] == func_name)
+            {
+                func_index = i;
+                break;
+            }
+        }
+
+        if (func_index == -1)
+        {
+            ir.valid = false;
+            AUG_LOG_ERROR(env.error_callback, "Function %s not defined", func_name);
+            break;
+        }
+        if (env.external_functions[func_index] == nullptr)
+        {
+            ir.valid = false;
+            AUG_LOG_ERROR(env.error_callback, "External Function %s was not properly registered.", func_name);
+            break;
+        }
+
+        for (int i = arg_count - 1; i >= 0; --i)
+            aug_ast_to_ir(env, children[i], ir);
+
+        const aug_ir_operand& func_index_operand = aug_ir_operand_from_int(func_index);
+        aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, func_index_operand);
+
+        const aug_ir_operand& arg_count_operand = aug_ir_operand_from_int(arg_count);
+        aug_ir_add_operation(ir, AUG_OPCODE_CALL_EXT, arg_count_operand);
+        break;
+    }
+    case AUG_AST_RETURN:
+    {
+        const aug_ir_operand& offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
+        if (children.size() == 1) //return [0];
+        {
+            aug_ast_to_ir(env, children[0], ir);
+            aug_ir_add_operation(ir, AUG_OPCODE_RETURN, offset);
+        }
+        else
+        {
+            aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
+            aug_ir_add_operation(ir, AUG_OPCODE_RETURN, offset);
+        }
+        break;
+    }
+    case AUG_AST_PARAM:
+    {
+        aug_ir_set_var(ir, token.data);
+        break;
+    }
+    case AUG_AST_PARAM_LIST:
+    {
+        // start stack offset at beginning of parameter (this will be nagative relative to the current frame)
+        for (const aug_ast* param : children)
+            aug_ast_to_ir(env, param, ir);
+        break;
+    }
+    case AUG_AST_FUNC_DEF:
+    {
+        assert(children.size() == 2); //func token [0] {[1]};
+
+        // Jump over the func def
+        const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
+        const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP, stub_operand);
+
+        const char* func_name = token.data.c_str();
+
+        aug_ast* params = children[0];
+        assert(params && params->id == AUG_AST_PARAM_LIST);
+        const int param_count = params->children.size();
+
+        if (!aug_ir_set_func(ir, func_name, param_count))
+        {
+            ir.valid = false;
+            AUG_LOG_ERROR(env.error_callback, "Function %s already defined", func_name);
+            break;
+        }
+
+        // Parameter frame
+        aug_ir_push_scope(ir);
+        aug_ast_to_ir(env, children[0], ir);
+
+        // Function block frame
+        aug_ir_push_frame(ir, param_count);
+        aug_ast_to_ir(env, children[1], ir);
+
+        // Ensure there is a return
+        if (ir.operations.at(ir.operations.size() - 1).opcode != AUG_OPCODE_RETURN)
+        {
+            const aug_ir_operand& offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
+            aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
+            aug_ir_add_operation(ir, AUG_OPCODE_RETURN, offset);
+        }
+
+        aug_ir_pop_frame(ir);
+        aug_ir_pop_scope(ir);
+
+        const size_t end_block_addr = ir.bytecode_offset;
+
+        // fixup jump operand
+        aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
+        end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
+
+        break;
+    }
+    }
+}
+
+void aug_ast_to_ir_assign(aug_environment& env, const aug_ast* node, aug_ir& ir)
+{
+    if (node == NULL || !ir.valid)
+        return;
+
+    const aug_token& token = node->token;
+    const aug_std_array<aug_ast*>& children = node->children;
+
+    if (children.size() == 1) // token = [0]
+        aug_ast_to_ir(env, children[0], ir);
+
+    const aug_symbol& symbol = aug_ir_symbol_relative(ir, token.data);
+    if (symbol.type == AUG_SYM_NONE)
+    {
+        aug_ir_set_var(ir, token.data);
+        return;
+    }
+    else if (symbol.type == AUG_SYM_FUNC)
+    {
+        ir.valid = false;
+        AUG_LOG_ERROR(env.error_callback, "Can not assign function %s as a variable", token.data.c_str());
+        return;
+    }
+
+    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+}
+
+void aug_ast_to_ir_define(aug_environment& env, const aug_ast* node, aug_ir& ir)
+{
+    if (node == NULL || !ir.valid)
+        return;
+
+    const aug_token& token = node->token;
+    const aug_std_array<aug_ast*>& children = node->children;
+
+    if (children.size() == 1) // token = [0]
+        aug_ast_to_ir(env, children[0], ir);
+
+    const aug_symbol symbol = aug_ir_get_symbol_local(ir, token.data);
+    if (symbol.offset != AUG_OPCODE_INVALID)
+    {
+        ir.valid = false;
+        AUG_LOG_ERROR(env.error_callback, "Variable %s already defined in block", token.data.c_str());
+        return;
+    }
+
+    aug_ir_set_var(ir, token.data);
+}
 
 void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
 {
@@ -3010,21 +3645,8 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
     switch(node->id)
     {
         case AUG_AST_ROOT:
-        {
-            aug_ir_push_frame(ir, 0); // push a global frame
-
-            for (aug_ast* stmt : children)
-                aug_ast_to_ir(env, stmt, ir);
-
-            // Restore stack
-            const aug_ir_operand delta = aug_ir_operand_from_int(aug_ir_local_offset(ir));
-            aug_ir_add_operation(ir, AUG_OPCODE_DEC_STACK, delta);
-            aug_ir_add_operation(ir, AUG_OPCODE_EXIT);
-
-            aug_ir_pop_frame(ir); // pop global block
-
+            aug_ast_to_ir_root(env, node, ir);
             break;
-        }
         case AUG_AST_BLOCK: 
         {
             for (aug_ast* stmt : children)
@@ -3032,534 +3654,48 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             break;
         }
         case AUG_AST_LITERAL:
-        {
-            switch(token.id)
-            {
-                case AUG_TOKEN_DECIMAL:
-                {
-                    const int data = strtol(token.data.c_str(), NULL, 10);
-                    const aug_ir_operand& operand = aug_ir_operand_from_int(data);
-                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
-                    break;
-                }
-                case AUG_TOKEN_HEXIDECIMAL:
-                {
-                    const unsigned int data = strtoul(token.data.c_str(), NULL, 16);
-                    const aug_ir_operand& operand = aug_ir_operand_from_int(data);
-                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
-                    break;
-                }
-                case AUG_TOKEN_BINARY:
-                {
-                    const unsigned int data = strtoul(token.data.c_str(), NULL, 2);
-                    const aug_ir_operand& operand = aug_ir_operand_from_int(data);
-                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
-                    break;
-                }
-                case AUG_TOKEN_FLOAT:       
-                {
-                    const float data = strtof(token.data.c_str(), NULL);
-                    const aug_ir_operand& operand = aug_ir_operand_from_float(data);
-                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_FLOAT, operand);
-                    break;
-                }
-                case AUG_TOKEN_STRING:      
-                {
-                    const aug_ir_operand& operand = aug_ir_operand_from_str(token.data.c_str());
-                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_STRING, operand);
-                    break;
-                }
-                case AUG_TOKEN_TRUE:
-                {
-                    const aug_ir_operand& operand = aug_ir_operand_from_bool(true);
-                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_BOOL, operand);
-                    break;
-                }
-                case AUG_TOKEN_FALSE:
-                {
-                    const aug_ir_operand& operand = aug_ir_operand_from_bool(false);
-                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_BOOL, operand);
-                    break;
-                }
-                default: 
-                break;
-            }
+            aug_ast_to_ir_literal(env, node, ir);
             break;
-        }
         case AUG_AST_VARIABLE:
-        {
-            const aug_symbol& symbol = aug_ir_symbol_relative(ir, token.data);
-            if (symbol.type == AUG_SYM_NONE)
-            {
-                ir.valid = false;
-                AUG_LOG_ERROR(env.error_callback, "Variable %s not defined in current block", token.data.c_str());
-                break;
-            }
-
-            if (symbol.type == AUG_SYM_FUNC)
-            {
-                ir.valid = false;
-                AUG_LOG_ERROR(env.error_callback, "Function %s can not be used as a variable", token.data.c_str());
-                break;
-            }
-
-            // TODO: determine if variable is local or global
-            const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-            aug_ir_add_operation(ir, AUG_OPCODE_PUSH_LOCAL, address_operand);
+            aug_ast_to_ir_var(env, node, ir);
             break;
-        }
         case AUG_AST_UNARY_OP:
-        {
-            assert(children.size() == 1); // token [0]
-
-            aug_ast_to_ir(env, children[0], ir);
-
-            switch(token.id)
-            {
-                case AUG_TOKEN_NOT: aug_ir_add_operation(ir, AUG_OPCODE_NOT); break;
-                default: break;
-            }
+            aug_ast_to_ir_unnop(env, node, ir);
             break;
-        }
         case AUG_AST_BINARY_OP:
-        {
-            assert(children.size() == 2); // [0] token [1]
-
-            aug_ast_to_ir(env, children[0], ir); // LHS
-            aug_ast_to_ir(env, children[1], ir); // RHS
-
-            switch(token.id)
-            {
-                case AUG_TOKEN_ADD:    aug_ir_add_operation(ir, AUG_OPCODE_ADD); break;
-                case AUG_TOKEN_SUB:    aug_ir_add_operation(ir, AUG_OPCODE_SUB); break;
-                case AUG_TOKEN_MUL:    aug_ir_add_operation(ir, AUG_OPCODE_MUL); break;
-                case AUG_TOKEN_DIV:    aug_ir_add_operation(ir, AUG_OPCODE_DIV); break;
-                case AUG_TOKEN_MOD:    aug_ir_add_operation(ir, AUG_OPCODE_MOD); break;
-                case AUG_TOKEN_POW:    aug_ir_add_operation(ir, AUG_OPCODE_POW); break;
-                case AUG_TOKEN_AND:    aug_ir_add_operation(ir, AUG_OPCODE_AND); break;
-                case AUG_TOKEN_OR:     aug_ir_add_operation(ir, AUG_OPCODE_OR); break;
-                case AUG_TOKEN_LT:     aug_ir_add_operation(ir, AUG_OPCODE_LT);  break;
-                case AUG_TOKEN_LT_EQ:  aug_ir_add_operation(ir, AUG_OPCODE_LTE); break;
-                case AUG_TOKEN_GT:     aug_ir_add_operation(ir, AUG_OPCODE_GT);  break;
-                case AUG_TOKEN_GT_EQ:  aug_ir_add_operation(ir, AUG_OPCODE_GTE); break;
-                case AUG_TOKEN_EQ:     aug_ir_add_operation(ir, AUG_OPCODE_EQ);  break;
-                case AUG_TOKEN_NOT_EQ: aug_ir_add_operation(ir, AUG_OPCODE_NEQ); break;
-                case AUG_TOKEN_APPROX_EQ: aug_ir_add_operation(ir, AUG_OPCODE_APPROXEQ); break;
-                case AUG_TOKEN_ADD_EQ:
-                {
-                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-                    {
-                        ir.valid = false;
-                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
-                        break;
-                    }
-
-                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-                    aug_ir_add_operation(ir, AUG_OPCODE_ADD);
-                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
-                    break;
-                }
-                case AUG_TOKEN_SUB_EQ:
-                {
-                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-                    {
-                        ir.valid = false;
-                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
-                        break;
-                    }
-
-                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-                    aug_ir_add_operation(ir, AUG_OPCODE_SUB);
-                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
-                    break;
-                }
-                case AUG_TOKEN_MUL_EQ:
-                {
-                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-                    {
-                        ir.valid = false;
-                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
-                        break;
-                    }
-
-                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-                    aug_ir_add_operation(ir, AUG_OPCODE_MUL);
-                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
-                    break;
-                }
-                case AUG_TOKEN_DIV_EQ:
-                {
-                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-                    {
-                        ir.valid = false;
-                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
-                        break;
-                    }
-
-                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-                    aug_ir_add_operation(ir, AUG_OPCODE_DIV);
-                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
-                    break;
-                }
-                case AUG_TOKEN_MOD_EQ:
-                {
-                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-                    {
-                        ir.valid = false;
-                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
-                        break;
-                    }
-
-                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-                    aug_ir_add_operation(ir, AUG_OPCODE_MOD);
-                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
-                    break;
-                }
-                case AUG_TOKEN_POW_EQ:
-                {
-                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-                    {
-                        ir.valid = false;
-                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
-                        break;
-                    }
-
-                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-                    aug_ir_add_operation(ir, AUG_OPCODE_POW);
-                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
-                    break;
-                }
-                default: break;
-            }
+            aug_ast_to_ir_binop(env, node, ir);
             break;
-        }
-        case AUG_AST_STMT_EXPR:
+        case AUG_AST_LIST:
         {
-            if (children.size() == 1)
-            {
-                aug_ast_to_ir(env, children[0], ir);
-             
-                // discard the top if a non-assignment binop
-                bool discard = true;
-                if (children[0] && children[0]->id == AUG_AST_BINARY_OP)
-                {
-                    switch (children[0]->token.id)
-                    {
-                    case AUG_TOKEN_ADD_EQ:
-                    case AUG_TOKEN_SUB_EQ:
-                    case AUG_TOKEN_DIV_EQ:
-                    case AUG_TOKEN_MUL_EQ:
-                    case AUG_TOKEN_MOD_EQ:
-                    case AUG_TOKEN_POW_EQ:
-                        discard = false;
-                        break;
-                    default: 
-                        break;
-                    }
-                }
-                if(discard)
-                    aug_ir_add_operation(ir, AUG_OPCODE_POP);
-            }
-            break;
-        }
-        case AUG_AST_EXPR_LIST:
-        {            
             const int expr_count = children.size();
-            for(int i = expr_count - 1; i >= 0; --i) 
+            for (int i = expr_count - 1; i >= 0; --i)
                 aug_ast_to_ir(env, children[i], ir);
 
             const aug_ir_operand& count_operand = aug_ir_operand_from_int(expr_count);
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_LIST, count_operand);
             break;
         }
-        case AUG_AST_STMT_ASSIGN:
-        {
-            if (children.size() == 1) // token = [0]
-                aug_ast_to_ir(env, children[0], ir);
-
-            const aug_symbol& symbol = aug_ir_symbol_relative(ir, token.data);
-            if (symbol.type == AUG_SYM_NONE)
-            {
-                aug_ir_set_var(ir, token.data);
-                break;
-            }
-            else if (symbol.type == AUG_SYM_FUNC)
-            {
-                ir.valid = false;
-                AUG_LOG_ERROR(env.error_callback, "Can not assign function %s as a variable", token.data.c_str());
-                break;
-            }
-
-            const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-            aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
-
+        case AUG_AST_STMT_EXPR:
+            aug_ast_to_ir_stmt_expr(env, node, ir);
             break;
-        }
-        case AUG_AST_STMT_VAR:
-        {
-            if (children.size() == 1) // token = [0]
-                aug_ast_to_ir(env, children[0], ir);
-
-            const aug_symbol symbol = aug_ir_get_symbol_local(ir, token.data);
-            if (symbol.offset != AUG_OPCODE_INVALID)
-            {
-                ir.valid = false;
-                AUG_LOG_ERROR(env.error_callback, "Variable %s already defined", token.data.c_str());
-                break;
-            }
-            
-            aug_ir_set_var(ir, token.data);
-
+        case AUG_AST_STMT_ASSIGN_VAR:
+            aug_ast_to_ir_assign(env, node, ir);
             break;
-        }
+        case AUG_AST_STMT_DEFINE_VAR:
+            aug_ast_to_ir_define(env, node, ir);
+            break;
         case AUG_AST_STMT_IF:
-        {
-            assert(children.size() == 2); //if ([0]) {[1]}
-
-            const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
-
-            // Evaluate expression. 
-            aug_ast_to_ir(env, children[0], ir);
-
-            //Jump to end if false
-            const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
-
-            // True block
-            aug_ir_push_scope(ir);
-            aug_ast_to_ir(env, children[1], ir);
-            aug_ir_pop_scope(ir);
-
-            const size_t end_block_addr = ir.bytecode_offset;
-
-            // Fixup stubbed block offsets
-            aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
-            end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
-     
-            break;
-        }
         case AUG_AST_STMT_IF_ELSE:
-        {
-            assert(children.size() == 3); //if ([0]) {[1]} else {[2]}
-
-            const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
-
-            // Evaluate expression. 
-            aug_ast_to_ir(env, children[0], ir);
-
-            //Jump to else if false
-            const size_t else_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
-
-            // True block
-            aug_ir_push_scope(ir);
-            aug_ast_to_ir(env, children[1], ir);
-            aug_ir_pop_scope(ir);
-                
-            //Jump to end after true
-            const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP, stub_operand);
-            const size_t else_block_addr = ir.bytecode_offset;
-
-            // Else block
-            aug_ir_push_scope(ir);
-            aug_ast_to_ir(env, children[2], ir);
-            aug_ir_pop_scope(ir);
-
-            // Tag end address
-            const size_t end_block_addr = ir.bytecode_offset;
-
-            // Fixup stubbed block offsets
-            aug_ir_operation& else_block_jmp_operation = aug_ir_get_operation(ir, else_block_jmp);
-            else_block_jmp_operation.operand = aug_ir_operand_from_int(else_block_addr);
-
-            aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
-            end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
-            
-            break;
-        }
         case AUG_AST_STMT_WHILE:
-        {
-            assert(children.size() == 2); //while ([0]) {[1]}
-
-            const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
-
-            const aug_ir_operand& begin_block_operand = aug_ir_operand_from_int(ir.bytecode_offset);
-
-            // Evaluate expression. 
-            aug_ast_to_ir(env, children[0], ir);
-
-            //Jump to end if false
-            const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
-
-            // Loop block
-            aug_ir_push_scope(ir);
-            aug_ast_to_ir(env, children[1], ir);
-            aug_ir_pop_scope(ir);
-
-            // Jump back to beginning, expr evaluation 
-            aug_ir_add_operation(ir, AUG_OPCODE_JUMP, begin_block_operand);
-
-            // Tag end address
-            const size_t end_block_addr = ir.bytecode_offset;
-
-            // Fixup stubbed block offsets
-            aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
-            end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
-            
+            aug_ast_to_ir_control(env, node, ir);
             break;
-        }
         case AUG_AST_FUNC_CALL:
-        {
-            const char* func_name = token.data.c_str();
-            const int arg_count = children.size();
-            const aug_symbol& symbol = aug_ir_get_symbol(ir, func_name);
-
-            if (symbol.type == AUG_SYM_VAR)
-            {
-                ir.valid = false;
-                AUG_LOG_ERROR(env.error_callback, "Can not call variable %s as a function", func_name);
-                break;
-            }
-
-            // If the symbol is a user defined function.
-            if (symbol.type == AUG_SYM_FUNC)
-            {
-                if(symbol.argc != arg_count)
-                {
-                    ir.valid = false;
-                    AUG_LOG_ERROR(env.error_callback, "Function Call %s passed %d arguments, expected %d", func_name, arg_count, symbol.argc);
-                }
-                else
-                {
-                    // offset to account for the pushed base
-                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_BASE);
-                    size_t push_return_addr = aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, aug_ir_operand_from_int(0));
-
-                    for (const aug_ast* arg : children)
-                        aug_ast_to_ir(env, arg, ir);
-
-                    const aug_ir_operand& func_addr = aug_ir_operand_from_int(symbol.offset); // func addr
-                    aug_ir_add_operation(ir, AUG_OPCODE_CALL, func_addr);
-
-                    // fixup the return address to after the call
-                    aug_ir_get_operation(ir, push_return_addr).operand = aug_ir_operand_from_int(ir.bytecode_offset);
-                }
-                break;
-            }
-
-            // Check if the symbol is a registered function
-            int func_index = -1;
-            for (int i = 0; i < (int)env.external_function_names.size(); ++i)
-            {
-                if (env.external_function_names[i] == func_name)
-                {
-                    func_index = i;
-                    break;
-                }
-            }
-
-            if (func_index == -1)
-            {
-                ir.valid = false;
-                AUG_LOG_ERROR(env.error_callback, "Function %s not defined", func_name);
-                break;
-            }
-            if (env.external_functions[func_index] == nullptr)
-            {
-                ir.valid = false;
-                AUG_LOG_ERROR(env.error_callback, "External Function %s was not properly registered.", func_name);
-                break;
-            }
-
-            for(int i = arg_count - 1; i >= 0; --i) 
-                aug_ast_to_ir(env, children[i], ir);
-
-            const aug_ir_operand& func_index_operand = aug_ir_operand_from_int(func_index);
-            aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, func_index_operand);
-
-            const aug_ir_operand& arg_count_operand = aug_ir_operand_from_int(arg_count);
-            aug_ir_add_operation(ir, AUG_OPCODE_CALL_EXT, arg_count_operand);
-            break;
-        }
         case AUG_AST_RETURN:
-        {
-            const aug_ir_operand& offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
-            if(children.size() == 1) //return [0];
-            {
-                aug_ast_to_ir(env, children[0], ir);
-                aug_ir_add_operation(ir, AUG_OPCODE_RETURN, offset);
-            }
-            else
-            {
-                aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
-                aug_ir_add_operation(ir, AUG_OPCODE_RETURN, offset);
-            }
-            break;
-        }
         case AUG_AST_PARAM:
-        {
-            aug_ir_set_var(ir, token.data);
-            break;
-        }
         case AUG_AST_PARAM_LIST:
-        {                
-            // start stack offset at beginning of parameter (this will be nagative relative to the current frame)
-            for (const aug_ast* param : children)
-                aug_ast_to_ir(env, param, ir);
-            break;
-        }
         case AUG_AST_FUNC_DEF:
-        {
-            assert(children.size() == 2); //func token [0] {[1]};
-
-            // Jump over the func def
-            const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
-            const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP, stub_operand);
-
-            const char* func_name = token.data.c_str();
-
-            aug_ast* params = children[0];
-            assert( params && params->id == AUG_AST_PARAM_LIST);
-            const int param_count = params->children.size();
-
-            if (!aug_ir_set_func(ir, func_name, param_count))
-            {
-                ir.valid = false;
-                AUG_LOG_ERROR(env.error_callback, "Function %s already defined", func_name);
-                break;
-            }
-
-            // Parameter frame
-            aug_ir_push_scope(ir);
-            aug_ast_to_ir(env, children[0], ir);
-
-            // Function block frame
-            aug_ir_push_frame(ir, param_count);
-            aug_ast_to_ir(env, children[1], ir);
-
-            // Ensure there is a return
-            if (ir.operations.at(ir.operations.size() - 1).opcode != AUG_OPCODE_RETURN)
-            {
-                const aug_ir_operand& offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
-                aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
-                aug_ir_add_operation(ir, AUG_OPCODE_RETURN, offset);
-            }
-
-            aug_ir_pop_frame(ir);
-            aug_ir_pop_scope(ir);
-
-            const size_t end_block_addr = ir.bytecode_offset;
-
-            // fixup jump operand
-            aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
-            end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
-
+            aug_ast_to_ir_func(env, node, ir);
             break;
-        }
         default:
             assert(0);
             break;
@@ -3688,7 +3824,6 @@ void aug_evaluate(aug_environment& env, const char* code)
     // Load bytecode into VM
     aug_script script;
     bool success = aug_compile_script(env, root, script);
-
     // Cleanup 
     aug_ast_delete(root);
 

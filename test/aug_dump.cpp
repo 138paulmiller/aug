@@ -7,14 +7,12 @@ void dump_lexer(const char* filename)
 {
 	printf("Tokens \n");
 
-	aug_lexer lexer;
-	aug_lexer_init(lexer, nullptr);
-	aug_lexer_open_file(lexer, filename);
-	while (aug_lexer_move(lexer) && lexer.curr.id != AUG_TOKEN_END)
+	aug_lexer* lexer = aug_lexer_open_file(filename, NULL);
+	while (lexer && aug_lexer_move(lexer) && lexer->curr.id != AUG_TOKEN_END)
 	{
-		//printf("\tPREV: %s (%s)%d:%d\n", lexer.prev.detail->label, lexer.prev.data.c_str(), lexer.prev.line, lexer.prev.col);
-		printf("\tCURR: %s (%s) %d:%d\n", lexer.curr.detail->label, lexer.curr.data.c_str(), lexer.curr.line, lexer.curr.col);
-		//printf("\tNEXT: %s (%s)%d:%d\n", lexer.next.detail->label, lexer.next.data.c_str(), lexer.next.line, lexer.next.col);
+		//printf("\tPREV: %s (%s)%d:%d\n", lexer->prev.detail->label, lexer->prev.data.c_str(), lexer->prev.line, lexer->prev.col);
+		printf("\tCURR: %s (%s) %d:%d\n", lexer->curr.detail->label, lexer->curr.data.c_str(), lexer->curr.line, lexer->curr.col);
+		//printf("\tNEXT: %s (%s)%d:%d\n", lexer->next.detail->label, lexer->next.data.c_str(), lexer->next.line, lexer->next.col);
 		printf("\n");
 	}
 	aug_lexer_close(lexer);
@@ -57,12 +55,12 @@ void dump_ast_tree(aug_ast* node, std::string prefix, bool is_leaf)
 			for (size_t i = 0; i < children.size(); ++i)
 				dump_ast_tree(children[i], prefix, i == children.size()-1);
 			break;
-		case AUG_AST_STMT_VAR:
+		case AUG_AST_STMT_DEFINE_VAR:
 			assert(children.size()==1);
-			printf("VAR:%s\n", token.data.c_str());
+			printf("DEFINE:%s\n", token.data.c_str());
 			dump_ast_tree(children[0], prefix, true);
 			break;
-		case AUG_AST_STMT_ASSIGN:
+		case AUG_AST_STMT_ASSIGN_VAR:
 			assert(children.size()==1);
 			printf("ASSIGN:%s\n", token.data.c_str());
 			dump_ast_tree(children[0], prefix, true);
@@ -72,14 +70,16 @@ void dump_ast_tree(aug_ast* node, std::string prefix, bool is_leaf)
 			dump_ast_tree(children[0], prefix, true);
 			break;
 		case AUG_AST_STMT_IF:
-			printf("IF:%s\n", token.data.c_str());
-			dump_ast_tree(children[0], prefix, true);
+			printf("IF\n");
+			dump_ast_tree(children[0], prefix, false);
+			dump_ast_tree(children[1], prefix, true);
 			break;
 		case AUG_AST_STMT_IF_ELSE:
-			printf("IF:%s\n", token.data.c_str());
+			printf("IF\n");
 			dump_ast_tree(children[0], prefix, false);
-			printf("ELSE:%s\n", token.data.c_str());
 			dump_ast_tree(children[1], prefix, true);
+			printf("ELSE\n");
+			dump_ast_tree(children[2], prefix, true);
 			break;
 		case AUG_AST_STMT_WHILE:
 			printf("WHILE\n");
@@ -118,7 +118,7 @@ void dump_ast_tree(aug_ast* node, std::string prefix, bool is_leaf)
 			if(children.size() == 1)
 			dump_ast_tree(children[0], prefix, true);
 			break;
-		case AUG_AST_EXPR_LIST:
+		case AUG_AST_LIST:
 			printf("LIST\n");
 			for (size_t i = 0; i < children.size(); ++i)
 				dump_ast_tree(children[i], prefix, i == children.size() - 1);

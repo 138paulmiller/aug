@@ -6,7 +6,7 @@
 void aug_dump_file(aug_environment env, const char* filename);
 
 struct aug_tester;
-typedef void(aug_tester_func)();
+typedef void(aug_tester_func)(aug_environment&);
 
 struct aug_tester
 {
@@ -15,33 +15,45 @@ struct aug_tester
 	int verbose = 0;
 	bool dump;
 	std::string filename;
-
-	aug_environment env;
 	
-	static aug_tester& get()
-	{ 
-		static aug_tester tester;
-		return tester;
+
+private:
+	static aug_tester* s_tester;
+public:
+
+	static void startup()
+	{
+		s_tester = new aug_tester();
 	}
 
-	void begin(aug_environment test_env, const char* file)
+	static void shutdown()
 	{
-		env = test_env;
+		delete s_tester;
+		s_tester = NULL;
+	}
+
+	static aug_tester& get()
+	{ 
+		return *s_tester;
+	}
+
+	void begin(const char* file)
+	{
 		filename = file;
 		passed = 0;
 		total = 0;
-
-		if (dump)
-			aug_dump_file(env, file);
 
 		if (verbose)
 			printf("[TEST]\t%s\n", filename.c_str());
 	}
 
-	void run(aug_tester_func* func = nullptr)
+	void run(aug_environment& env, aug_tester_func* func = nullptr)
 	{
+		if (dump)
+			aug_dump_file(env, filename.c_str());
+		 
 		if (func != nullptr)
-			func();
+			func(env);
 		else
 			aug_execute(env, filename.c_str());
 	}
@@ -72,6 +84,7 @@ struct aug_tester
 	}
 };
 
+aug_tester* aug_tester::s_tester;
 
 std::string to_string(const aug_value& value)
 {
@@ -222,17 +235,17 @@ aug_value expect(const aug_std_array<aug_value>& args)
 	return aug_none();
 }
 
-void aug_test_native()
+void aug_test_native(aug_environment& env)
 {
 	aug_script script;
-	aug_compile(aug_tester::get().env, script, aug_tester::get().filename.c_str());
+	aug_compile(env, script, aug_tester::get().filename.c_str());
 
 	{	
 		aug_std_array<aug_value> args;
 		args.push_back(aug_from_int(5));
 		//args.push_back(aug_from_int(30));
 
-		aug_value value = aug_call(aug_tester::get().env, script, "fibonacci", args);
+		aug_value value = aug_call(env, script, "fibonacci", args);
 		
 		bool success = value.i == 5;
 		//bool success = value.i == 832040;
@@ -244,7 +257,7 @@ void aug_test_native()
 		aug_std_array<aug_value> args;
 		args.push_back(aug_from_int(n));
 
-		aug_value value = aug_call(aug_tester::get().env, script, "count", args);
+		aug_value value = aug_call(env, script, "count", args);
 		
 		bool success = value.i == n;
 		const std::string message = "count = " + to_string(value);
@@ -252,18 +265,16 @@ void aug_test_native()
 	}
 }
 
-aug_environment aug_test_env()
+
+int aug_test(int argc, char** argv)
 {
 	aug_environment env;
 	aug_startup(env, nullptr);
 	aug_register(env, "print", print);
 	aug_register(env, "expect", expect);
 	aug_register(env, "sum", sum);
-	return env;
-}
 
-int aug_test(int argc, char** argv)
-{
+	aug_tester::startup();
 	for(int i = 1; i < argc; ++i)
 	{
 		if (argv[i] && strcmp(argv[i], "--verbose") == 0)
@@ -281,8 +292,8 @@ int aug_test(int argc, char** argv)
 				printf("aug_test: --exec parameter expected filename!");
 				break;
 			}
-			aug_tester::get().begin(aug_test_env(), argv[i]);
-			aug_tester::get().run();
+			aug_tester::get().begin(argv[i]);
+			aug_tester::get().run(env);
 			aug_tester::get().end();
 		}
 		else if (argv[i] && strcmp(argv[i], "--test_native") == 0)
@@ -293,8 +304,8 @@ int aug_test(int argc, char** argv)
 				break;
 			}
 
-			aug_tester::get().begin(aug_test_env(), argv[i]);
-			aug_tester::get().run(aug_test_native);
+			aug_tester::get().begin(argv[i]);
+			aug_tester::get().run(env, aug_test_native);
 			aug_tester::get().end();
 		}
 		else if (argv[i] && strcmp(argv[i], "--test_all") == 0)
@@ -309,45 +320,14 @@ int aug_test(int argc, char** argv)
 			{
 				const char* arg = argv[i++];
 
-				aug_tester::get().begin(aug_test_env(), arg);
-				aug_tester::get().run();
+				aug_tester::get().begin(arg);
+				aug_tester::get().run(env);
 				aug_tester::get().end();
 			}
 		}
 	}
+	aug_tester::shutdown();
 
+	aug_shutdown(env);
 	return 0;
 }
-
-#ifdef  _WIN32
-
-#include "windows.h"
-#define _CRTDBG_MAP_ALLOC //to get more details
-
-struct win32_memorycheck
-{
-	_CrtMemState start_memstate;
-
-	win32_memorycheck()
-	{
-		_CrtMemCheckpoint(&start_memstate); //take a snapshot
-	}
-
-	~win32_memorycheck()
-	{
-		_CrtMemState end_memstate, diff_memstate;
-		_CrtMemCheckpoint(&end_memstate); //take a snapshot 
-		if (_CrtMemDifference(&diff_memstate, &start_memstate, &end_memstate)) // if there is a difference
-		{
-			printf("-----------------------  !!! MEMORY LEAK !!! ----------------------- ");
-			OutputDebugString(L"-----------_CrtMemDumpStatistics ---------");
-			_CrtMemDumpStatistics(&diff_memstate);
-			OutputDebugString(L"-----------_CrtMemDumpAllObjectsSince ---------");
-			_CrtMemDumpAllObjectsSince(&start_memstate);
-			OutputDebugString(L"-----------_CrtDumpMemoryLeaks ---------");
-			_CrtDumpMemoryLeaks();
-		}
-	}
-} memcheck;
-
-#endif //_WIN32
