@@ -2906,7 +2906,10 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
                 //vm.stack_index = vm.stack_index - delta;
 
                 aug_value* ret_addr = aug_vm_pop(vm);
-                vm.instruction = vm.bytecode + ret_addr->i;
+                if (ret_addr->i == AUG_OPCODE_INVALID)
+                    vm.instruction = NULL;
+                else
+                    vm.instruction = vm.bytecode + ret_addr->i;
                 aug_vm_free(ret_addr);
 
                 aug_value* ret_base = aug_vm_pop(vm);
@@ -3717,7 +3720,6 @@ bool aug_compile(aug_environment& env, aug_script& script, const char* filename)
     return script.valid;
 }
 
-// TODO: Currently an issue when returning from function calls that are within scripts that have "global" stmts
 aug_value aug_call(aug_environment& env, aug_script& script, const char* func_name, const aug_std_array<aug_value>& args)
 {
     aug_value ret_value = aug_none();
@@ -3758,7 +3760,7 @@ aug_value aug_call(aug_environment& env, aug_script& script, const char* func_na
     // push return address
     aug_value* return_address = aug_vm_push(vm);
     return_address->type = AUG_INT;
-    return_address->i = 0;
+    return_address->i = AUG_OPCODE_INVALID;
 
     // Jump to function call
     vm.instruction = vm.bytecode + symbol.offset;
