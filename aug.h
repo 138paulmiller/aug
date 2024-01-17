@@ -290,7 +290,7 @@ struct aug_environment
     aug_error_callback* error_callback;
 
     // The virtual machine instance
-    aug_vm vm;
+    aug_vm* vm;
 };
 
 void aug_startup(aug_environment& env, aug_error_callback* error_callback);
@@ -380,7 +380,7 @@ struct aug_token_detail
     AUG_TOKEN(RBRACKET,       0, 0, 0, NULL)       \
     AUG_TOKEN(LBRACE,         0, 0, 0, NULL)       \
     AUG_TOKEN(RBRACE,         0, 0, 0, NULL)       \
-    /* Operators - Arithmetic */                       \
+    /* Operators - Arithmetic */                   \
     AUG_TOKEN(ADD,            2, 2, 0, NULL)       \
     AUG_TOKEN(ADD_EQ,         1, 2, 0, NULL)       \
     AUG_TOKEN(SUB,            2, 2, 0, NULL)       \
@@ -393,9 +393,9 @@ struct aug_token_detail
     AUG_TOKEN(POW_EQ,         1, 2, 0, NULL)       \
     AUG_TOKEN(MOD,            3, 2, 0, NULL)       \
     AUG_TOKEN(MOD_EQ,         1, 2, 0, NULL)       \
-    AUG_TOKEN(AND,            1, 2, 0, "and")         \
-    AUG_TOKEN(OR,             1, 2, 0, "or")          \
-    /* Operators - Boolean */                          \
+    AUG_TOKEN(AND,            1, 2, 0, "and")      \
+    AUG_TOKEN(OR,             1, 2, 0, "or")       \
+    /* Operators - Boolean */                      \
     AUG_TOKEN(EQ,             1, 2, 0, NULL)       \
     AUG_TOKEN(LT,             2, 2, 0, NULL)       \
     AUG_TOKEN(GT,             2, 2, 0, NULL)       \
@@ -404,25 +404,25 @@ struct aug_token_detail
     AUG_TOKEN(NOT,            3, 1, 0, NULL)       \
     AUG_TOKEN(NOT_EQ,         2, 2, 0, NULL)       \
     AUG_TOKEN(APPROX_EQ,      1, 2, 0, NULL)       \
-    /* Literals */                                     \
+    /* Literals */                                 \
     AUG_TOKEN(DECIMAL,        0, 0, 1, NULL)       \
     AUG_TOKEN(HEXIDECIMAL,    0, 0, 1, NULL)       \
     AUG_TOKEN(BINARY,         0, 0, 1, NULL)       \
     AUG_TOKEN(FLOAT,          0, 0, 1, NULL)       \
     AUG_TOKEN(STRING,         0, 0, 1, NULL)       \
-    /* Misc */                                         \
+    /* Misc */                                     \
     AUG_TOKEN(NAME,           0, 0, 1, NULL)       \
     AUG_TOKEN(ASSIGN,         0, 0, 0, NULL)       \
-    /* Keywords */                                     \
-    AUG_TOKEN(IF,             0, 0, 0, "if")          \
-    AUG_TOKEN(ELSE,           0, 0, 0, "else")        \
-    AUG_TOKEN(IN,             0, 0, 0, "in")          \
-    AUG_TOKEN(FOR,            0, 0, 0, "for")         \
-    AUG_TOKEN(WHILE,          0, 0, 0, "while")       \
-    AUG_TOKEN(VAR,            0, 0, 0, "var")         \
-    AUG_TOKEN(FUNC,           0, 0, 0, "func")        \
-    AUG_TOKEN(RETURN,         0, 0, 0, "return")      \
-    AUG_TOKEN(TRUE,           0, 0, 0, "true")        \
+    /* Keywords */                                 \
+    AUG_TOKEN(IF,             0, 0, 0, "if")       \
+    AUG_TOKEN(ELSE,           0, 0, 0, "else")     \
+    AUG_TOKEN(IN,             0, 0, 0, "in")       \
+    AUG_TOKEN(FOR,            0, 0, 0, "for")      \
+    AUG_TOKEN(WHILE,          0, 0, 0, "while")    \
+    AUG_TOKEN(VAR,            0, 0, 0, "var")      \
+    AUG_TOKEN(FUNC,           0, 0, 0, "func")     \
+    AUG_TOKEN(RETURN,         0, 0, 0, "return")   \
+    AUG_TOKEN(TRUE,           0, 0, 0, "true")     \
     AUG_TOKEN(FALSE,          0, 0, 0, "false")
 
 // Token identifier. 
@@ -2707,8 +2707,8 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             }
             case AUG_OPCODE_ADD:
             {
-                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* rhs = aug_vm_pop(vm);
+                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);    
                 if (!aug_add(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "+");
@@ -2716,8 +2716,8 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             }
             case AUG_OPCODE_SUB:
             {
-                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* rhs = aug_vm_pop(vm);
+                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);    
                 if (!aug_sub(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "-");
@@ -2725,8 +2725,8 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             }
             case AUG_OPCODE_MUL:
             {
-                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* rhs = aug_vm_pop(vm);
+                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);    
                 if (!aug_mul(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "*");
@@ -2734,8 +2734,8 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             }
             case AUG_OPCODE_DIV:
             {
-                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* rhs = aug_vm_pop(vm);
+                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);    
                 if(!aug_div(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "/");
@@ -2743,8 +2743,8 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             }
             case AUG_OPCODE_POW:
             {
-                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* rhs = aug_vm_pop(vm);
+                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if (!aug_pow(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "^");
@@ -2752,8 +2752,8 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             }
             case AUG_OPCODE_MOD:
             {
-                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* rhs = aug_vm_pop(vm);
+                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if (!aug_mod(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "%%");
@@ -2769,8 +2769,8 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             }
             case AUG_OPCODE_AND:
             {
-                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* rhs = aug_vm_pop(vm);
+                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if (!aug_set_bool(target, aug_to_bool(lhs) && aug_to_bool(rhs)))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "&");
@@ -2778,8 +2778,8 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             }
             case AUG_OPCODE_OR:
             {
-                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* rhs = aug_vm_pop(vm);
+                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if (!aug_set_bool(target, aug_to_bool(lhs) || aug_to_bool(rhs)))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "|");
@@ -2787,8 +2787,8 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             }
             case AUG_OPCODE_LT:
             {
-                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* rhs = aug_vm_pop(vm);
+                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if (!aug_lt(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "<");
@@ -2796,8 +2796,8 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             }
             case AUG_OPCODE_LTE:
             {
-                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* rhs = aug_vm_pop(vm);
+                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if (!aug_lte(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "<=");
@@ -2805,8 +2805,8 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             }
             case AUG_OPCODE_GT:
             {
-                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* rhs = aug_vm_pop(vm);
+                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if (!aug_gt(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, ">");
@@ -2814,8 +2814,8 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             }
             case AUG_OPCODE_GTE:
             {
-                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* rhs = aug_vm_pop(vm);
+                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if (!aug_gte(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, ">=");
@@ -2823,8 +2823,8 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             }
             case AUG_OPCODE_EQ:
             {
-                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* rhs = aug_vm_pop(vm);
+                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if (!aug_eq(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "==");
@@ -2832,8 +2832,8 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             }
             case AUG_OPCODE_NEQ:
             {
-                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* rhs = aug_vm_pop(vm);
+                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if (!aug_neq(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "!=");
@@ -2841,8 +2841,8 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             }
             case AUG_OPCODE_APPROXEQ:
             {
-                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* rhs = aug_vm_pop(vm);
+                aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if (!aug_approxeq(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "~=");
@@ -3122,8 +3122,8 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
         {
             assert(children.size() == 2); // [0] token [1]
 
-            aug_ast_to_ir(env, children[1], ir); // RHS
             aug_ast_to_ir(env, children[0], ir); // LHS
+            aug_ast_to_ir(env, children[1], ir); // RHS
 
             switch(token.id)
             {
@@ -3142,6 +3142,96 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
                 case AUG_TOKEN_EQ:     aug_ir_add_operation(ir, AUG_OPCODE_EQ);  break;
                 case AUG_TOKEN_NOT_EQ: aug_ir_add_operation(ir, AUG_OPCODE_NEQ); break;
                 case AUG_TOKEN_APPROX_EQ: aug_ir_add_operation(ir, AUG_OPCODE_APPROXEQ); break;
+                case AUG_TOKEN_ADD_EQ:
+                {
+                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+                    {
+                        ir.valid = false;
+                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        break;
+                    }
+
+                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+                    aug_ir_add_operation(ir, AUG_OPCODE_ADD);
+                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    break;
+                }
+                case AUG_TOKEN_SUB_EQ:
+                {
+                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+                    {
+                        ir.valid = false;
+                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        break;
+                    }
+
+                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+                    aug_ir_add_operation(ir, AUG_OPCODE_SUB);
+                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    break;
+                }
+                case AUG_TOKEN_MUL_EQ:
+                {
+                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+                    {
+                        ir.valid = false;
+                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        break;
+                    }
+
+                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+                    aug_ir_add_operation(ir, AUG_OPCODE_MUL);
+                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    break;
+                }
+                case AUG_TOKEN_DIV_EQ:
+                {
+                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+                    {
+                        ir.valid = false;
+                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        break;
+                    }
+
+                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+                    aug_ir_add_operation(ir, AUG_OPCODE_DIV);
+                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    break;
+                }
+                case AUG_TOKEN_MOD_EQ:
+                {
+                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+                    {
+                        ir.valid = false;
+                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        break;
+                    }
+
+                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+                    aug_ir_add_operation(ir, AUG_OPCODE_MOD);
+                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    break;
+                }
+                case AUG_TOKEN_POW_EQ:
+                {
+                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+                    {
+                        ir.valid = false;
+                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        break;
+                    }
+
+                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+                    aug_ir_add_operation(ir, AUG_OPCODE_POW);
+                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    break;
+                }
                 default: break;
             }
             break;
@@ -3151,8 +3241,27 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             if (children.size() == 1)
             {
                 aug_ast_to_ir(env, children[0], ir);
-                // discard the top
-                aug_ir_add_operation(ir, AUG_OPCODE_POP);
+             
+                // discard the top if a non-assignment binop
+                bool discard = true;
+                if (children[0] && children[0]->id == AUG_AST_BINARY_OP)
+                {
+                    switch (children[0]->token.id)
+                    {
+                    case AUG_TOKEN_ADD_EQ:
+                    case AUG_TOKEN_SUB_EQ:
+                    case AUG_TOKEN_DIV_EQ:
+                    case AUG_TOKEN_MUL_EQ:
+                    case AUG_TOKEN_MOD_EQ:
+                    case AUG_TOKEN_POW_EQ:
+                        discard = false;
+                        break;
+                    default: 
+                        break;
+                    }
+                }
+                if(discard)
+                    aug_ir_add_operation(ir, AUG_OPCODE_POP);
             }
             break;
         }
@@ -3511,11 +3620,13 @@ bool aug_compile_script(aug_environment& env, aug_ast* root, aug_script& script)
 
 void aug_startup(aug_environment& env, aug_error_callback* error_callback)
 {
+    env.vm = AUG_NEW(aug_vm);
     env.error_callback = error_callback;
 }
 
 void aug_shutdown(aug_environment& env)
 {
+    AUG_DELETE(env.vm);
     env.error_callback = NULL;
     env.external_functions.clear();
     env.external_function_names.clear();
@@ -3555,7 +3666,10 @@ void aug_execute(aug_environment& env, const char* filename)
     if (!success)
         return;
 
-    aug_vm& vm = env.vm;
+    if (env.vm == NULL)
+        return;
+
+    aug_vm& vm = *env.vm;
     aug_vm_startup(vm, env.error_callback, script);
     aug_vm_execute(vm, env);
     aug_vm_shutdown(vm);
@@ -3578,7 +3692,10 @@ void aug_evaluate(aug_environment& env, const char* code)
     if (!success)
         return;
 
-    aug_vm& vm = env.vm;
+    if (env.vm == NULL)
+        return;
+
+    aug_vm& vm = *env.vm;
     aug_vm_startup(vm, env.error_callback, script);
     aug_vm_execute(vm, env);
     aug_vm_shutdown(vm);
@@ -3600,6 +3717,7 @@ bool aug_compile(aug_environment& env, aug_script& script, const char* filename)
     return script.valid;
 }
 
+// TODO: Currently an issue when returning from function calls that are within scripts that have "global" stmts
 aug_value aug_call(aug_environment& env, aug_script& script, const char* func_name, const aug_std_array<aug_value>& args)
 {
     aug_value ret_value = aug_none();
@@ -3625,7 +3743,10 @@ aug_value aug_call(aug_environment& env, aug_script& script, const char* func_na
     }
 
     // Setup the VM
-    aug_vm& vm = env.vm;
+    if (env.vm == NULL)
+        return ret_value;
+
+    aug_vm& vm = *env.vm;
     aug_vm_startup(vm, env.error_callback, script);
 
     // Since the call operation is implicit, setup calling frame manually 

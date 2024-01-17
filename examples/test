@@ -1,1 +1,19 @@
-expect(1 <  2.0 == true,  "1 <  2.0 = ", 1 <  2.0 );
+
+var a = 1;
+a += 1;
+expect( a == 2, " a += 1 = ", a);
+
+a -= -1;
+expect( a == 3, " a -= 3 = ", a);
+
+a *= 2;
+expect( a == 6, " a *= 2 = ", a);
+
+a /= 2;
+expect( a ~= 3, " a /= 2 = ", a);
+
+a ^= 2;
+expect( a == 9, " a ^= 3 = ", a);
+
+a %= 2
+expect( a == 1, " a %= 2 = ", a);
