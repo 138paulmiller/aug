@@ -131,9 +131,6 @@ SOFTWARE. */
 #define AUG_COMMENT_SYMBOL '#'
 #endif//AUG_COMMENT_SYMBOL 
 
-#ifndef AUG_LOG_PRELUDE
-#define AUG_LOG_PRELUDE "[AUG]"
-#endif//AUG_LOG_PRELUDE 
 
 #include <string>
 #include <vector>
@@ -331,27 +328,28 @@ aug_value aug_from_string(const char* data);
 #include <iostream>
 #include <sstream>
 
-#ifdef AUG_LOG_VERBOSE
-    #ifdef WIN32
-        #define AUG_LOG_TRACE() fprintf(stderr, "[%s:%d]", __FUNCTION__, __LINE__);
-    #else
-        #define AUG_LOG_TRACE() fprintf(stderr, "[%s:%d]", __func__, __LINE__);
-    #endif  
-#else 
-    #define AUG_LOG_TRACE()   
+#ifndef AUG_LOG_COLUNM
+#define AUG_LOG_COLUNM 45
 #endif
+
+#ifdef AUG_LOG_VERBOSE
+#define AUG_LOG_PRELUDE(...)      \
+    fprintf(stderr, "[aug]\t"); \
+    fprintf(stderr, __VA_ARGS__); \
+    fprintf(stderr, "\n"); 
+#else 
+    #define AUG_LOG_PRELUDE(...) 
+#endif
+
+
+
 
 #define AUG_LOG_ERROR(error_callback, ...)             \
 {                                                      \
-    AUG_LOG_TRACE()                                    \
-    fprintf(stderr, AUG_LOG_PRELUDE "Error: ");        \
-    fprintf(stderr, __VA_ARGS__);                      \
-    fprintf(stderr, "\n");                             \
-                                                                            \
-    char buffer[4096];                                                      \
-    int len = snprintf(buffer, sizeof(buffer), AUG_LOG_PRELUDE "Error: ");  \
-    len = snprintf(buffer + len, sizeof(buffer) - len, __VA_ARGS__);        \
-    if(error_callback) error_callback(buffer);                              \
+    AUG_LOG_PRELUDE(__VA_ARGS__)                       \
+    char buffer[4096];                                 \
+    snprintf(buffer, sizeof(buffer), __VA_ARGS__);     \
+    if(error_callback) error_callback(buffer);         \
 }
 
 // -------------------------------------- Lexer  ---------------------------------------// 
@@ -455,6 +453,14 @@ struct aug_token
     int col;
 };
 
+struct aug_pos
+{
+    size_t filepos;
+    size_t linepos;
+    int line;
+    int col;
+};
+
 // Lexer state
 struct aug_lexer
 {
@@ -466,37 +472,114 @@ struct aug_lexer
     aug_token next;
 
     std::istream* input = NULL;
-    aug_std_string inputname;
+    aug_std_string input_source;
+    std::streampos track_pos;
 
-    int line, col;
-    int prev_line, prev_col;
-    std::streampos pos_start;
+    int pos_buffer_index;
+    aug_pos pos_buffer[4];
 
     char token_buffer[AUG_TOKEN_BUFFER_SIZE];
 };
 
-#define AUG_LEXER_ERROR(lexer, token, ...)                   \
-{                                                            \
-    lexer->valid = false;                                     \
-    token.id = AUG_TOKEN_ERR;                                \
-    AUG_LOG_ERROR(lexer->error_callback, "%s(%d,%d):",        \
-        lexer->inputname.c_str(), lexer->line+1, lexer->col+1); \
-    AUG_LOG_ERROR(lexer->error_callback, __VA_ARGS__);        \
+#define AUG_LEXER_ERROR(lexer, token, ...)                      \
+{                                                               \
+    lexer->valid = false;                                       \
+    token.id = AUG_TOKEN_ERR;                                   \
+    aug_error_hint(lexer);                                      \
+    AUG_LOG_ERROR(lexer->error_callback, "%s(%d,%d):",          \
+        lexer->input_source.c_str(),                            \
+        aug_lexer_pos(lexer)->line+ 1,                          \
+        aug_lexer_pos(lexer)->col + 1);                         \
+    AUG_LOG_ERROR(lexer->error_callback, __VA_ARGS__);          \
+}
+
+aug_pos* aug_lexer_pos(aug_lexer* lexer)
+{
+    return &lexer->pos_buffer[lexer->pos_buffer_index];
+}
+
+aug_pos* aug_lexer_prev_pos(aug_lexer* lexer)
+{
+    lexer->pos_buffer_index--;
+    if(lexer->pos_buffer_index < 0)
+        lexer->pos_buffer_index = (sizeof(lexer->pos_buffer)/ sizeof(lexer->pos_buffer[0])) - 1;
+    return aug_lexer_pos(lexer);
+}
+
+aug_pos* aug_lexer_next_pos(aug_lexer* lexer)
+{
+    lexer->pos_buffer_index = (lexer->pos_buffer_index + 1) % (sizeof(lexer->pos_buffer) / sizeof(lexer->pos_buffer[0]));
+    return aug_lexer_pos(lexer);
+}
+
+inline char aug_error_hint(aug_lexer* lexer)
+{
+    // save state
+    const std::fstream::iostate saved_state = lexer->input->rdstate();
+    lexer->input->clear();
+
+    const std::streampos saved_pos = lexer->input->tellg();
+
+    aug_pos* pos = aug_lexer_prev_pos(lexer);
+
+    // go to line
+    lexer->input->seekg(pos->linepos);
+    
+    char buffer[4096];
+    int n = 0;
+
+    char c = lexer->input->get();
+    // skip leading whitespace
+    while (isspace(c))
+        c = lexer->input->get();
+    
+    while (c != EOF && c != '\n' && n < sizeof(buffer)/ sizeof(buffer[0])-1)
+    {
+        buffer[n++] = c;
+        c = lexer->input->get();
+    }
+    buffer[n] = '\0';
+    
+    AUG_LOG_ERROR(lexer->error_callback, "Syntax error %s(%d,%d):%s",
+        lexer->input_source.c_str(), pos->line + 1, pos->col + 1);
+    
+    AUG_LOG_ERROR(lexer->error_callback, "%s", buffer);
+
+    // Draw arrow to the error
+    for (int i = 0; i < pos->col; ++i)
+    {
+        buffer[i] = ' ';
+    }
+
+    buffer[pos->col] = '^';
+    buffer[n] = '\0';
+    AUG_LOG_ERROR(lexer->error_callback, "%s", buffer);
+
+    // restore state
+    aug_lexer_next_pos(lexer);
+
+    // restore state
+    lexer->input->seekg(saved_pos);
+    lexer->input->clear(saved_state);
 }
 
 inline char aug_lexer_get(aug_lexer* lexer)
 {
     const char c = lexer->input->get();
     
-    lexer->prev_line = lexer->line;
-    lexer->prev_col = lexer->col;
+    aug_pos* pos = aug_lexer_pos(lexer);
+    aug_pos* next_pos = aug_lexer_next_pos(lexer);
 
-    ++lexer->col;
+    next_pos->line = pos->line;
+    next_pos->col = pos->col + 1;
+    next_pos->linepos = pos->linepos;
+    next_pos->filepos = lexer->input->tellg();
 
     if (c == '\n')
     {
-        ++lexer->line;
-        lexer->col = 0;
+        next_pos->col = pos->line + 1;
+        next_pos->line = pos->line;
+        next_pos->linepos = lexer->input->tellg();
     }
     return c;
 }
@@ -506,19 +589,18 @@ inline char aug_lexer_peek(aug_lexer* lexer)
     return lexer->input->peek();
 }
 
-inline char aug_lexer_unget(aug_lexer* lexer)
+char aug_lexer_unget(aug_lexer* lexer)
 {
     lexer->input->unget();
 
-    lexer->line = lexer->prev_line;
-    lexer->col = lexer->prev_col;
+    aug_lexer_prev_pos(lexer);
 
     return aug_lexer_peek(lexer);
 }
 
 inline void aug_lexer_start_tracking(aug_lexer* lexer)
 {
-    lexer->pos_start = lexer->input->tellg();
+    lexer->track_pos = lexer->input->tellg();
 }
 
 inline bool aug_lexer_end_tracking(aug_lexer* lexer, aug_std_string& s)
@@ -527,7 +609,7 @@ inline bool aug_lexer_end_tracking(aug_lexer* lexer, aug_std_string& s)
     lexer->input->clear();
 
     const std::streampos pos_end = lexer->input->tellg();
-    const std::streamoff len = (pos_end - lexer->pos_start);
+    const std::streamoff len = (pos_end - lexer->track_pos);
     
     if (len >= AUG_TOKEN_BUFFER_SIZE)
     {
@@ -537,7 +619,7 @@ inline bool aug_lexer_end_tracking(aug_lexer* lexer, aug_std_string& s)
     }
 
     lexer->token_buffer[0] = '\0';
-    lexer->input->seekg(lexer->pos_start);
+    lexer->input->seekg(lexer->track_pos);
     lexer->input->read(lexer->token_buffer, len);
     lexer->input->seekg(pos_end);
     lexer->input->clear(state);
@@ -909,8 +991,9 @@ aug_token aug_lexer_tokenize(aug_lexer* lexer)
         return token;
     }
 
-    token.col = lexer->col;
-    token.line = lexer->line;
+    aug_pos* pos = aug_lexer_pos(lexer);
+    token.col = pos->col;
+    token.line = pos->line;
 
     switch (c)
     {
@@ -986,11 +1069,8 @@ aug_lexer* aug_lexer_open(const char* code, aug_error_callback* error_callback)
     lexer->valid = true;
     lexer->error_callback = error_callback;
     lexer->input = NULL;
-    lexer->line = 0;
-    lexer->col = 0;
-    lexer->prev_line = 0;
-    lexer->prev_col = 0;
-    lexer->pos_start = 0;
+    lexer->pos_buffer_index = 0;
+    lexer->track_pos = 0;
 
     lexer->prev = aug_token();
     lexer->curr = aug_token();
@@ -1006,7 +1086,12 @@ aug_lexer* aug_lexer_open(const char* code, aug_error_callback* error_callback)
     }
 
     lexer->input = iss;
-    lexer->inputname = "code";
+    lexer->input_source = code;
+
+    aug_pos* pos = aug_lexer_pos(lexer);
+    pos->col = 0;
+    pos->line = 0;
+    pos->filepos = pos->linepos = lexer->input->tellg();
 
     if (!aug_lexer_move(lexer))
     {
@@ -1023,11 +1108,8 @@ aug_lexer* aug_lexer_open_file(const char* filename, aug_error_callback* error_c
     lexer->valid = true;
     lexer->error_callback = error_callback;
     lexer->input = NULL;
-    lexer->line = 0;
-    lexer->col = 0;
-    lexer->prev_line = 0;
-    lexer->prev_col = 0;
-    lexer->pos_start = 0;
+    lexer->pos_buffer_index = 0;
+    lexer->track_pos = 0;
 
     lexer->prev = aug_token();
     lexer->curr = aug_token();
@@ -1043,7 +1125,12 @@ aug_lexer* aug_lexer_open_file(const char* filename, aug_error_callback* error_c
     }
 
     lexer->input = file;
-    lexer->inputname = filename;
+    lexer->input_source = filename;
+
+    aug_pos* pos = aug_lexer_pos(lexer);
+    pos->col = 0;
+    pos->line = 0;
+    pos->filepos = pos->linepos = lexer->input->tellg();
 
     if (!aug_lexer_move(lexer))
     {
@@ -1054,10 +1141,12 @@ aug_lexer* aug_lexer_open_file(const char* filename, aug_error_callback* error_c
 }
 
 // -------------------------------------- Parser / Abstract Syntax Tree ---------------------------------------// 
-#define AUG_PARSE_ERROR(lexer,  ...)\
-{\
-    AUG_LOG_ERROR(lexer->error_callback, "Syntax error %s(%d,%d)", lexer->inputname.c_str(), lexer->line+1, lexer->col+1);\
-    AUG_LOG_ERROR(lexer->error_callback, __VA_ARGS__);\
+#define AUG_PARSE_ERROR(lexer,  ...)                                \
+if (lexer->valid)                                                   \
+{                                                                   \
+    lexer->valid = false;                                           \
+    aug_error_hint(lexer);                                          \
+    AUG_LOG_ERROR(lexer->error_callback, __VA_ARGS__);              \
 }
 
 enum aug_ast_id : uint8_t
