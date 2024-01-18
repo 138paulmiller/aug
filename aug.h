@@ -342,14 +342,17 @@ aug_value aug_from_string(const char* data);
 #endif
 
 
+// TODO: make thread safe
+static char log_buffer[4096];
 
-
-#define AUG_LOG_ERROR(error_callback, ...)             \
-{                                                      \
-    AUG_LOG_PRELUDE(__VA_ARGS__)                       \
-    char buffer[4096];                                 \
-    snprintf(buffer, sizeof(buffer), __VA_ARGS__);     \
-    if(error_callback) error_callback(buffer);         \
+#define AUG_LOG_ERROR(error_callback, ...)                      \
+{                                                               \
+    AUG_LOG_PRELUDE(__VA_ARGS__)                                \
+    if(error_callback)                                          \
+    {                                                           \
+        snprintf(log_buffer, sizeof(log_buffer), __VA_ARGS__);  \
+         error_callback(log_buffer);                            \
+    }                                                           \
 }
 
 // -------------------------------------- Lexer  ---------------------------------------// 
@@ -512,7 +515,7 @@ aug_pos* aug_lexer_next_pos(aug_lexer* lexer)
     return aug_lexer_pos(lexer);
 }
 
-inline char aug_error_hint(aug_lexer* lexer)
+inline void aug_error_hint(aug_lexer* lexer)
 {
     // save state
     const std::fstream::iostate saved_state = lexer->input->rdstate();
@@ -533,14 +536,14 @@ inline char aug_error_hint(aug_lexer* lexer)
     while (isspace(c))
         c = lexer->input->get();
     
-    while (c != EOF && c != '\n' && n < sizeof(buffer)/ sizeof(buffer[0])-1)
+    while (c != EOF && c != '\n' && n < (int)(sizeof(buffer)/ sizeof(buffer[0])-1))
     {
         buffer[n++] = c;
         c = lexer->input->get();
     }
     buffer[n] = '\0';
     
-    AUG_LOG_ERROR(lexer->error_callback, "Syntax error %s(%d,%d):%s",
+    AUG_LOG_ERROR(lexer->error_callback, "Syntax error %s (%d,%d) ",
         lexer->input_source.c_str(), pos->line + 1, pos->col + 1);
     
     AUG_LOG_ERROR(lexer->error_callback, "%s", buffer);
@@ -3114,618 +3117,10 @@ bool aug_pass_semantic_check(const aug_ast* node)
     return true;
 }
 // -------------------------------------- Transformations ---------------------------------------// 
-void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir);
-
-void aug_ast_to_ir_root(aug_environment& env, const aug_ast* node, aug_ir& ir)
-{
-    if (node == NULL || !ir.valid)
-        return;
-
-    const aug_token& token = node->token;
-    const aug_std_array<aug_ast*>& children = node->children;
-
-    aug_ir_push_frame(ir, 0); // push a global frame
-
-    for (aug_ast* stmt : children)
-        aug_ast_to_ir(env, stmt, ir);
-
-    // Restore stack
-    const aug_ir_operand delta = aug_ir_operand_from_int(aug_ir_local_offset(ir));
-    aug_ir_add_operation(ir, AUG_OPCODE_DEC_STACK, delta);
-    aug_ir_add_operation(ir, AUG_OPCODE_EXIT);
-
-    aug_ir_pop_frame(ir); // pop global frame
-}
-
-void aug_ast_to_ir_literal(aug_environment& env, const aug_ast* node, aug_ir& ir)
-{
-    if (node == NULL || !ir.valid)
-        return;
-
-    const aug_token& token = node->token;
-    const aug_std_array<aug_ast*>& children = node->children;
-
-    switch (token.id)
-    {
-    case AUG_TOKEN_DECIMAL:
-    {
-        const int data = strtol(token.data.c_str(), NULL, 10);
-        const aug_ir_operand& operand = aug_ir_operand_from_int(data);
-        aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
-        break;
-    }
-    case AUG_TOKEN_HEXIDECIMAL:
-    {
-        const unsigned int data = strtoul(token.data.c_str(), NULL, 16);
-        const aug_ir_operand& operand = aug_ir_operand_from_int(data);
-        aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
-        break;
-    }
-    case AUG_TOKEN_BINARY:
-    {
-        const unsigned int data = strtoul(token.data.c_str(), NULL, 2);
-        const aug_ir_operand& operand = aug_ir_operand_from_int(data);
-        aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
-        break;
-    }
-    case AUG_TOKEN_FLOAT:
-    {
-        const float data = strtof(token.data.c_str(), NULL);
-        const aug_ir_operand& operand = aug_ir_operand_from_float(data);
-        aug_ir_add_operation(ir, AUG_OPCODE_PUSH_FLOAT, operand);
-        break;
-    }
-    case AUG_TOKEN_STRING:
-    {
-        const aug_ir_operand& operand = aug_ir_operand_from_str(token.data.c_str());
-        aug_ir_add_operation(ir, AUG_OPCODE_PUSH_STRING, operand);
-        break;
-    }
-    case AUG_TOKEN_TRUE:
-    {
-        const aug_ir_operand& operand = aug_ir_operand_from_bool(true);
-        aug_ir_add_operation(ir, AUG_OPCODE_PUSH_BOOL, operand);
-        break;
-    }
-    case AUG_TOKEN_FALSE:
-    {
-        const aug_ir_operand& operand = aug_ir_operand_from_bool(false);
-        aug_ir_add_operation(ir, AUG_OPCODE_PUSH_BOOL, operand);
-        break;
-    }
-    default:
-        break;
-    }
-}
-
-void aug_ast_to_ir_var(aug_environment& env, const aug_ast* node, aug_ir& ir)
-{
-    if (node == NULL || !ir.valid)
-        return;
-
-    const aug_token& token = node->token;
-    const aug_std_array<aug_ast*>& children = node->children;
-
-    const aug_symbol& symbol = aug_ir_symbol_relative(ir, token.data);
-    if (symbol.type == AUG_SYM_NONE)
-    {
-        ir.valid = false;
-        AUG_LOG_ERROR(env.error_callback, "Variable %s not defined in current block", token.data.c_str());
-        return;
-    }
-
-    if (symbol.type == AUG_SYM_FUNC)
-    {
-        ir.valid = false;
-        AUG_LOG_ERROR(env.error_callback, "Function %s can not be used as a variable", token.data.c_str());
-        return;
-    }
-
-    // TODO: determine if variable is local or global
-    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_LOCAL, address_operand);
-}
-
-void aug_ast_to_ir_unnop(aug_environment& env, const aug_ast* node, aug_ir& ir)
-{
-    if (node == NULL || !ir.valid)
-        return;
-
-    const aug_token& token = node->token;
-    const aug_std_array<aug_ast*>& children = node->children;
-
-    assert(children.size() == 1); // token [0]
-
-    aug_ast_to_ir(env, children[0], ir);
-
-    switch (token.id)
-    {
-    case AUG_TOKEN_NOT: aug_ir_add_operation(ir, AUG_OPCODE_NOT); break;
-    default: break;
-    }
-}
-
-
-void aug_ast_to_ir_binop(aug_environment& env, const aug_ast* node, aug_ir& ir)
-{
-    if (node == NULL || !ir.valid)
-        return;
-
-    const aug_token& token = node->token;
-    const aug_std_array<aug_ast*>& children = node->children;
-
-    assert(children.size() == 2); // [0] token [1]
-
-    aug_ast_to_ir(env, children[0], ir); // LHS
-    aug_ast_to_ir(env, children[1], ir); // RHS
-
-    switch (token.id)
-    {
-    case AUG_TOKEN_ADD:    aug_ir_add_operation(ir, AUG_OPCODE_ADD); break;
-    case AUG_TOKEN_SUB:    aug_ir_add_operation(ir, AUG_OPCODE_SUB); break;
-    case AUG_TOKEN_MUL:    aug_ir_add_operation(ir, AUG_OPCODE_MUL); break;
-    case AUG_TOKEN_DIV:    aug_ir_add_operation(ir, AUG_OPCODE_DIV); break;
-    case AUG_TOKEN_MOD:    aug_ir_add_operation(ir, AUG_OPCODE_MOD); break;
-    case AUG_TOKEN_POW:    aug_ir_add_operation(ir, AUG_OPCODE_POW); break;
-    case AUG_TOKEN_AND:    aug_ir_add_operation(ir, AUG_OPCODE_AND); break;
-    case AUG_TOKEN_OR:     aug_ir_add_operation(ir, AUG_OPCODE_OR); break;
-    case AUG_TOKEN_LT:     aug_ir_add_operation(ir, AUG_OPCODE_LT);  break;
-    case AUG_TOKEN_LT_EQ:  aug_ir_add_operation(ir, AUG_OPCODE_LTE); break;
-    case AUG_TOKEN_GT:     aug_ir_add_operation(ir, AUG_OPCODE_GT);  break;
-    case AUG_TOKEN_GT_EQ:  aug_ir_add_operation(ir, AUG_OPCODE_GTE); break;
-    case AUG_TOKEN_EQ:     aug_ir_add_operation(ir, AUG_OPCODE_EQ);  break;
-    case AUG_TOKEN_NOT_EQ: aug_ir_add_operation(ir, AUG_OPCODE_NEQ); break;
-    case AUG_TOKEN_APPROX_EQ: aug_ir_add_operation(ir, AUG_OPCODE_APPROXEQ); break;
-    case AUG_TOKEN_ADD_EQ:
-    {
-        if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-        {
-            ir.valid = false;
-            AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
-            break;
-        }
-
-        const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-        const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-        aug_ir_add_operation(ir, AUG_OPCODE_ADD);
-        aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
-        break;
-    }
-    case AUG_TOKEN_SUB_EQ:
-    {
-        if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-        {
-            ir.valid = false;
-            AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
-            break;
-        }
-
-        const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-        const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-        aug_ir_add_operation(ir, AUG_OPCODE_SUB);
-        aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
-        break;
-    }
-    case AUG_TOKEN_MUL_EQ:
-    {
-        if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-        {
-            ir.valid = false;
-            AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
-            break;
-        }
-
-        const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-        const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-        aug_ir_add_operation(ir, AUG_OPCODE_MUL);
-        aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
-        break;
-    }
-    case AUG_TOKEN_DIV_EQ:
-    {
-        if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-        {
-            ir.valid = false;
-            AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
-            break;
-        }
-
-        const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-        const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-        aug_ir_add_operation(ir, AUG_OPCODE_DIV);
-        aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
-        break;
-    }
-    case AUG_TOKEN_MOD_EQ:
-    {
-        if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-        {
-            ir.valid = false;
-            AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
-            break;
-        }
-
-        const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-        const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-        aug_ir_add_operation(ir, AUG_OPCODE_MOD);
-        aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
-        break;
-    }
-    case AUG_TOKEN_POW_EQ:
-    {
-        if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-        {
-            ir.valid = false;
-            AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
-            break;
-        }
-
-        const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-        const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-        aug_ir_add_operation(ir, AUG_OPCODE_POW);
-        aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
-        break;
-    }
-    default: break;
-    }
-}
-
-void aug_ast_to_ir_stmt_expr(aug_environment& env, const aug_ast* node, aug_ir& ir)
-{
-    if (node == NULL || !ir.valid)
-    return;
-
-    const aug_token& token = node->token;
-    const aug_std_array<aug_ast*>& children = node->children;
-    if (children.size() == 1)
-    {
-        aug_ast_to_ir(env, children[0], ir);
-
-        // discard the top if a non-assignment binop
-        bool discard = true;
-        if (children[0] && children[0]->id == AUG_AST_BINARY_OP)
-        {
-            switch (children[0]->token.id)
-            {
-            case AUG_TOKEN_ADD_EQ:
-            case AUG_TOKEN_SUB_EQ:
-            case AUG_TOKEN_DIV_EQ:
-            case AUG_TOKEN_MUL_EQ:
-            case AUG_TOKEN_MOD_EQ:
-            case AUG_TOKEN_POW_EQ:
-                discard = false;
-                break;
-            default:
-                break;
-            }
-        }
-        if (discard)
-            aug_ir_add_operation(ir, AUG_OPCODE_POP);
-    }
-}
-
-// Control flow related IR generation
-void aug_ast_to_ir_control(aug_environment& env, const aug_ast* node, aug_ir& ir)
-{
-    if (node == NULL || !ir.valid)
-        return;
-
-    const aug_token& token = node->token;
-    const aug_std_array<aug_ast*>& children = node->children;
-    switch (node->id)
-    {
-    case AUG_AST_STMT_IF:
-    {
-        assert(children.size() == 2); //if ([0]) {[1]}
-
-        const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
-
-        // Evaluate expression. 
-        aug_ast_to_ir(env, children[0], ir);
-
-        //Jump to end if false
-        const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
-
-        // True block
-        aug_ir_push_scope(ir);
-        aug_ast_to_ir(env, children[1], ir);
-        aug_ir_pop_scope(ir);
-
-        const size_t end_block_addr = ir.bytecode_offset;
-
-        // Fixup stubbed block offsets
-        aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
-        end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
-
-        break;
-    }
-    case AUG_AST_STMT_IF_ELSE:
-    {
-        assert(children.size() == 3); //if ([0]) {[1]} else {[2]}
-
-        const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
-
-        // Evaluate expression. 
-        aug_ast_to_ir(env, children[0], ir);
-
-        //Jump to else if false
-        const size_t else_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
-
-        // True block
-        aug_ir_push_scope(ir);
-        aug_ast_to_ir(env, children[1], ir);
-        aug_ir_pop_scope(ir);
-
-        //Jump to end after true
-        const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP, stub_operand);
-        const size_t else_block_addr = ir.bytecode_offset;
-
-        // Else block
-        aug_ir_push_scope(ir);
-        aug_ast_to_ir(env, children[2], ir);
-        aug_ir_pop_scope(ir);
-
-        // Tag end address
-        const size_t end_block_addr = ir.bytecode_offset;
-
-        // Fixup stubbed block offsets
-        aug_ir_operation& else_block_jmp_operation = aug_ir_get_operation(ir, else_block_jmp);
-        else_block_jmp_operation.operand = aug_ir_operand_from_int(else_block_addr);
-
-        aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
-        end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
-
-        break;
-    }
-    case AUG_AST_STMT_WHILE:
-    {
-        assert(children.size() == 2); //while ([0]) {[1]}
-
-        const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
-
-        const aug_ir_operand& begin_block_operand = aug_ir_operand_from_int(ir.bytecode_offset);
-
-        // Evaluate expression. 
-        aug_ast_to_ir(env, children[0], ir);
-
-        //Jump to end if false
-        const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
-
-        // Loop block
-        aug_ir_push_scope(ir);
-        aug_ast_to_ir(env, children[1], ir);
-        aug_ir_pop_scope(ir);
-
-        // Jump back to beginning, expr evaluation 
-        aug_ir_add_operation(ir, AUG_OPCODE_JUMP, begin_block_operand);
-
-        // Tag end address
-        const size_t end_block_addr = ir.bytecode_offset;
-
-        // Fixup stubbed block offsets
-        aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
-        end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
-
-        break;
-    }
-    }
-}
-
-// Function related IR generation
-void aug_ast_to_ir_func(aug_environment& env, const aug_ast* node, aug_ir& ir)
-{
-    if (node == NULL || !ir.valid)
-        return;
-
-    const aug_token& token = node->token;
-    const aug_std_array<aug_ast*>& children = node->children;
-
-    switch (node->id)
-    {
-    case AUG_AST_FUNC_CALL:
-    {
-        const char* func_name = token.data.c_str();
-        const int arg_count = children.size();
-        const aug_symbol& symbol = aug_ir_get_symbol(ir, func_name);
-
-        if (symbol.type == AUG_SYM_VAR)
-        {
-            ir.valid = false;
-            AUG_LOG_ERROR(env.error_callback, "Can not call variable %s as a function", func_name);
-            break;
-        }
-
-        // If the symbol is a user defined function.
-        if (symbol.type == AUG_SYM_FUNC)
-        {
-            if (symbol.argc != arg_count)
-            {
-                ir.valid = false;
-                AUG_LOG_ERROR(env.error_callback, "Function Call %s passed %d arguments, expected %d", func_name, arg_count, symbol.argc);
-            }
-            else
-            {
-                // offset to account for the pushed base
-                aug_ir_add_operation(ir, AUG_OPCODE_PUSH_BASE);
-                size_t push_return_addr = aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, aug_ir_operand_from_int(0));
-
-                for (const aug_ast* arg : children)
-                    aug_ast_to_ir(env, arg, ir);
-
-                const aug_ir_operand& func_addr = aug_ir_operand_from_int(symbol.offset); // func addr
-                aug_ir_add_operation(ir, AUG_OPCODE_CALL, func_addr);
-
-                // fixup the return address to after the call
-                aug_ir_get_operation(ir, push_return_addr).operand = aug_ir_operand_from_int(ir.bytecode_offset);
-            }
-            break;
-        }
-
-        // Check if the symbol is a registered function
-        int func_index = -1;
-        for (int i = 0; i < (int)env.external_function_names.size(); ++i)
-        {
-            if (env.external_function_names[i] == func_name)
-            {
-                func_index = i;
-                break;
-            }
-        }
-
-        if (func_index == -1)
-        {
-            ir.valid = false;
-            AUG_LOG_ERROR(env.error_callback, "Function %s not defined", func_name);
-            break;
-        }
-        if (env.external_functions[func_index] == nullptr)
-        {
-            ir.valid = false;
-            AUG_LOG_ERROR(env.error_callback, "External Function %s was not properly registered.", func_name);
-            break;
-        }
-
-        for (int i = arg_count - 1; i >= 0; --i)
-            aug_ast_to_ir(env, children[i], ir);
-
-        const aug_ir_operand& func_index_operand = aug_ir_operand_from_int(func_index);
-        aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, func_index_operand);
-
-        const aug_ir_operand& arg_count_operand = aug_ir_operand_from_int(arg_count);
-        aug_ir_add_operation(ir, AUG_OPCODE_CALL_EXT, arg_count_operand);
-        break;
-    }
-    case AUG_AST_RETURN:
-    {
-        const aug_ir_operand& offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
-        if (children.size() == 1) //return [0];
-        {
-            aug_ast_to_ir(env, children[0], ir);
-            aug_ir_add_operation(ir, AUG_OPCODE_RETURN, offset);
-        }
-        else
-        {
-            aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
-            aug_ir_add_operation(ir, AUG_OPCODE_RETURN, offset);
-        }
-        break;
-    }
-    case AUG_AST_PARAM:
-    {
-        aug_ir_set_var(ir, token.data);
-        break;
-    }
-    case AUG_AST_PARAM_LIST:
-    {
-        // start stack offset at beginning of parameter (this will be nagative relative to the current frame)
-        for (const aug_ast* param : children)
-            aug_ast_to_ir(env, param, ir);
-        break;
-    }
-    case AUG_AST_FUNC_DEF:
-    {
-        assert(children.size() == 2); //func token [0] {[1]};
-
-        // Jump over the func def
-        const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
-        const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP, stub_operand);
-
-        const char* func_name = token.data.c_str();
-
-        aug_ast* params = children[0];
-        assert(params && params->id == AUG_AST_PARAM_LIST);
-        const int param_count = params->children.size();
-
-        if (!aug_ir_set_func(ir, func_name, param_count))
-        {
-            ir.valid = false;
-            AUG_LOG_ERROR(env.error_callback, "Function %s already defined", func_name);
-            break;
-        }
-
-        // Parameter frame
-        aug_ir_push_scope(ir);
-        aug_ast_to_ir(env, children[0], ir);
-
-        // Function block frame
-        aug_ir_push_frame(ir, param_count);
-        aug_ast_to_ir(env, children[1], ir);
-
-        // Ensure there is a return
-        if (ir.operations.at(ir.operations.size() - 1).opcode != AUG_OPCODE_RETURN)
-        {
-            const aug_ir_operand& offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
-            aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
-            aug_ir_add_operation(ir, AUG_OPCODE_RETURN, offset);
-        }
-
-        aug_ir_pop_frame(ir);
-        aug_ir_pop_scope(ir);
-
-        const size_t end_block_addr = ir.bytecode_offset;
-
-        // fixup jump operand
-        aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
-        end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
-
-        break;
-    }
-    }
-}
-
-void aug_ast_to_ir_assign(aug_environment& env, const aug_ast* node, aug_ir& ir)
-{
-    if (node == NULL || !ir.valid)
-        return;
-
-    const aug_token& token = node->token;
-    const aug_std_array<aug_ast*>& children = node->children;
-
-    if (children.size() == 1) // token = [0]
-        aug_ast_to_ir(env, children[0], ir);
-
-    const aug_symbol& symbol = aug_ir_symbol_relative(ir, token.data);
-    if (symbol.type == AUG_SYM_NONE)
-    {
-        aug_ir_set_var(ir, token.data);
-        return;
-    }
-    else if (symbol.type == AUG_SYM_FUNC)
-    {
-        ir.valid = false;
-        AUG_LOG_ERROR(env.error_callback, "Can not assign function %s as a variable", token.data.c_str());
-        return;
-    }
-
-    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
-}
-
-void aug_ast_to_ir_define(aug_environment& env, const aug_ast* node, aug_ir& ir)
-{
-    if (node == NULL || !ir.valid)
-        return;
-
-    const aug_token& token = node->token;
-    const aug_std_array<aug_ast*>& children = node->children;
-
-    if (children.size() == 1) // token = [0]
-        aug_ast_to_ir(env, children[0], ir);
-
-    const aug_symbol symbol = aug_ir_get_symbol_local(ir, token.data);
-    if (symbol.offset != AUG_OPCODE_INVALID)
-    {
-        ir.valid = false;
-        AUG_LOG_ERROR(env.error_callback, "Variable %s already defined in block", token.data.c_str());
-        return;
-    }
-
-    aug_ir_set_var(ir, token.data);
-}
 
 void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
 {
-    if(node == NULL|| !ir.valid)
+    if(node == NULL || !ir.valid)
         return;
 
     const aug_token& token = node->token;
@@ -3734,8 +3129,22 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
     switch(node->id)
     {
         case AUG_AST_ROOT:
-            aug_ast_to_ir_root(env, node, ir);
+        {
+            const aug_std_array<aug_ast*>& children = node->children;
+
+            aug_ir_push_frame(ir, 0); // push a global frame
+
+            for (aug_ast* stmt : children)
+                aug_ast_to_ir(env, stmt, ir);
+
+            // Restore stack
+            const aug_ir_operand delta = aug_ir_operand_from_int(aug_ir_local_offset(ir));
+            aug_ir_add_operation(ir, AUG_OPCODE_DEC_STACK, delta);
+            aug_ir_add_operation(ir, AUG_OPCODE_EXIT);
+
+            aug_ir_pop_frame(ir); // pop global frame
             break;
+        }
         case AUG_AST_BLOCK: 
         {
             for (aug_ast* stmt : children)
@@ -3743,17 +3152,219 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             break;
         }
         case AUG_AST_LITERAL:
-            aug_ast_to_ir_literal(env, node, ir);
+        {
+            const aug_token& token = node->token;
+            switch (token.id)
+            {
+                case AUG_TOKEN_DECIMAL:
+                {
+                    const int data = strtol(token.data.c_str(), NULL, 10);
+                    const aug_ir_operand& operand = aug_ir_operand_from_int(data);
+                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
+                    break;
+                }
+                case AUG_TOKEN_HEXIDECIMAL:
+                {
+                    const unsigned int data = strtoul(token.data.c_str(), NULL, 16);
+                    const aug_ir_operand& operand = aug_ir_operand_from_int(data);
+                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
+                    break;
+                }
+                case AUG_TOKEN_BINARY:
+                {
+                    const unsigned int data = strtoul(token.data.c_str(), NULL, 2);
+                    const aug_ir_operand& operand = aug_ir_operand_from_int(data);
+                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
+                    break;
+                }
+                case AUG_TOKEN_FLOAT:
+                {
+                    const float data = strtof(token.data.c_str(), NULL);
+                    const aug_ir_operand& operand = aug_ir_operand_from_float(data);
+                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_FLOAT, operand);
+                    break;
+                }
+                case AUG_TOKEN_STRING:
+                {
+                    const aug_ir_operand& operand = aug_ir_operand_from_str(token.data.c_str());
+                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_STRING, operand);
+                    break;
+                }
+                case AUG_TOKEN_TRUE:
+                {
+                    const aug_ir_operand& operand = aug_ir_operand_from_bool(true);
+                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_BOOL, operand);
+                    break;
+                }
+                case AUG_TOKEN_FALSE:
+                {
+                    const aug_ir_operand& operand = aug_ir_operand_from_bool(false);
+                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_BOOL, operand);
+                    break;
+                }
+                default:
+                    assert(0);
+                    break;
+            }
             break;
+        }
         case AUG_AST_VARIABLE:
-            aug_ast_to_ir_var(env, node, ir);
+        {
+            const aug_symbol& symbol = aug_ir_symbol_relative(ir, token.data);
+            if (symbol.type == AUG_SYM_NONE)
+            {
+                ir.valid = false;
+                AUG_LOG_ERROR(env.error_callback, "Variable %s not defined in current block", token.data.c_str());
+                return;
+            }
+
+            if (symbol.type == AUG_SYM_FUNC)
+            {
+                ir.valid = false;
+                AUG_LOG_ERROR(env.error_callback, "Function %s can not be used as a variable", token.data.c_str());
+                return;
+            }
+
+            // TODO: determine if variable is local or global
+            const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+            aug_ir_add_operation(ir, AUG_OPCODE_PUSH_LOCAL, address_operand);
             break;
+        }
         case AUG_AST_UNARY_OP:
-            aug_ast_to_ir_unnop(env, node, ir);
+        {
+            assert(children.size() == 1); // token [0]
+
+            aug_ast_to_ir(env, children[0], ir);
+
+            switch (token.id)
+            {
+            case AUG_TOKEN_NOT: aug_ir_add_operation(ir, AUG_OPCODE_NOT); break;
+            default:
+                assert(0);
+                break;
+            }
             break;
+        }
         case AUG_AST_BINARY_OP:
-            aug_ast_to_ir_binop(env, node, ir);
+        {
+            assert(children.size() == 2); // [0] token [1]
+
+            aug_ast_to_ir(env, children[0], ir); // LHS
+            aug_ast_to_ir(env, children[1], ir); // RHS
+
+            switch (token.id)
+            {
+                case AUG_TOKEN_ADD:    aug_ir_add_operation(ir, AUG_OPCODE_ADD); break;
+                case AUG_TOKEN_SUB:    aug_ir_add_operation(ir, AUG_OPCODE_SUB); break;
+                case AUG_TOKEN_MUL:    aug_ir_add_operation(ir, AUG_OPCODE_MUL); break;
+                case AUG_TOKEN_DIV:    aug_ir_add_operation(ir, AUG_OPCODE_DIV); break;
+                case AUG_TOKEN_MOD:    aug_ir_add_operation(ir, AUG_OPCODE_MOD); break;
+                case AUG_TOKEN_POW:    aug_ir_add_operation(ir, AUG_OPCODE_POW); break;
+                case AUG_TOKEN_AND:    aug_ir_add_operation(ir, AUG_OPCODE_AND); break;
+                case AUG_TOKEN_OR:     aug_ir_add_operation(ir, AUG_OPCODE_OR); break;
+                case AUG_TOKEN_LT:     aug_ir_add_operation(ir, AUG_OPCODE_LT);  break;
+                case AUG_TOKEN_LT_EQ:  aug_ir_add_operation(ir, AUG_OPCODE_LTE); break;
+                case AUG_TOKEN_GT:     aug_ir_add_operation(ir, AUG_OPCODE_GT);  break;
+                case AUG_TOKEN_GT_EQ:  aug_ir_add_operation(ir, AUG_OPCODE_GTE); break;
+                case AUG_TOKEN_EQ:     aug_ir_add_operation(ir, AUG_OPCODE_EQ);  break;
+                case AUG_TOKEN_NOT_EQ: aug_ir_add_operation(ir, AUG_OPCODE_NEQ); break;
+                case AUG_TOKEN_APPROX_EQ: aug_ir_add_operation(ir, AUG_OPCODE_APPROXEQ); break;
+                case AUG_TOKEN_ADD_EQ:
+                {
+                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+                    {
+                        ir.valid = false;
+                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        break;
+                    }
+
+                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+                    aug_ir_add_operation(ir, AUG_OPCODE_ADD);
+                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    break;
+                }
+                case AUG_TOKEN_SUB_EQ:
+                {
+                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+                    {
+                        ir.valid = false;
+                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        break;
+                    }
+
+                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+                    aug_ir_add_operation(ir, AUG_OPCODE_SUB);
+                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    break;
+                }
+                case AUG_TOKEN_MUL_EQ:
+                {
+                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+                    {
+                        ir.valid = false;
+                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        break;
+                    }
+
+                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+                    aug_ir_add_operation(ir, AUG_OPCODE_MUL);
+                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    break;
+                }
+                case AUG_TOKEN_DIV_EQ:
+                {
+                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+                    {
+                        ir.valid = false;
+                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        break;
+                    }
+
+                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+                    aug_ir_add_operation(ir, AUG_OPCODE_DIV);
+                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    break;
+                }
+                case AUG_TOKEN_MOD_EQ:
+                {
+                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+                    {
+                        ir.valid = false;
+                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        break;
+                    }
+
+                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+                    aug_ir_add_operation(ir, AUG_OPCODE_MOD);
+                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    break;
+                }
+                case AUG_TOKEN_POW_EQ:
+                {
+                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
+                    {
+                        ir.valid = false;
+                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        break;
+                    }
+
+                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+                    aug_ir_add_operation(ir, AUG_OPCODE_POW);
+                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    break;
+                }
+                default:
+                    assert(0);
+                    break;
+            }
             break;
+        }
         case AUG_AST_LIST:
         {
             const int expr_count = children.size();
@@ -3765,26 +3376,314 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             break;
         }
         case AUG_AST_STMT_EXPR:
-            aug_ast_to_ir_stmt_expr(env, node, ir);
+        {
+            if (children.size() == 1)
+            {
+                aug_ast_to_ir(env, children[0], ir);
+
+                // discard the top if a non-assignment binop
+                bool discard = true;
+                if (children[0] && children[0]->id == AUG_AST_BINARY_OP)
+                {
+                    switch (children[0]->token.id)
+                    {
+                    case AUG_TOKEN_ADD_EQ:
+                    case AUG_TOKEN_SUB_EQ:
+                    case AUG_TOKEN_DIV_EQ:
+                    case AUG_TOKEN_MUL_EQ:
+                    case AUG_TOKEN_MOD_EQ:
+                    case AUG_TOKEN_POW_EQ:
+                        discard = false;
+                        break;
+                    default: break;
+                    }
+                }
+                if (discard)
+                    aug_ir_add_operation(ir, AUG_OPCODE_POP);
+            }
             break;
+        }
         case AUG_AST_STMT_ASSIGN_VAR:
-            aug_ast_to_ir_assign(env, node, ir);
+        {
+            if (children.size() == 1) // token = [0]
+                aug_ast_to_ir(env, children[0], ir);
+
+            const aug_symbol& symbol = aug_ir_symbol_relative(ir, token.data);
+            if (symbol.type == AUG_SYM_NONE)
+            {
+                aug_ir_set_var(ir, token.data);
+                return;
+            }
+            else if (symbol.type == AUG_SYM_FUNC)
+            {
+                ir.valid = false;
+                AUG_LOG_ERROR(env.error_callback, "Can not assign function %s as a variable", token.data.c_str());
+                return;
+            }
+
+            const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+            aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
             break;
+        }
         case AUG_AST_STMT_DEFINE_VAR:
-            aug_ast_to_ir_define(env, node, ir);
+        {
+            if (children.size() == 1) // token = [0]
+                aug_ast_to_ir(env, children[0], ir);
+
+            const aug_symbol symbol = aug_ir_get_symbol_local(ir, token.data);
+            if (symbol.offset != AUG_OPCODE_INVALID)
+            {
+                ir.valid = false;
+                AUG_LOG_ERROR(env.error_callback, "Variable %s already defined in block", token.data.c_str());
+                return;
+            }
+
+            aug_ir_set_var(ir, token.data);
+        
             break;
+        }
         case AUG_AST_STMT_IF:
+        {
+            assert(children.size() == 2); //if ([0]) {[1]}
+
+            const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
+
+            // Evaluate expression. 
+            aug_ast_to_ir(env, children[0], ir);
+
+            //Jump to end if false
+            const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
+
+            // True block
+            aug_ir_push_scope(ir);
+            aug_ast_to_ir(env, children[1], ir);
+            aug_ir_pop_scope(ir);
+
+            const size_t end_block_addr = ir.bytecode_offset;
+
+            // Fixup stubbed block offsets
+            aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
+            end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
+
+            break;
+        }
         case AUG_AST_STMT_IF_ELSE:
+        {
+            assert(children.size() == 3); //if ([0]) {[1]} else {[2]}
+
+            const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
+
+            // Evaluate expression. 
+            aug_ast_to_ir(env, children[0], ir);
+
+            //Jump to else if false
+            const size_t else_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
+
+            // True block
+            aug_ir_push_scope(ir);
+            aug_ast_to_ir(env, children[1], ir);
+            aug_ir_pop_scope(ir);
+
+            //Jump to end after true
+            const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP, stub_operand);
+            const size_t else_block_addr = ir.bytecode_offset;
+
+            // Else block
+            aug_ir_push_scope(ir);
+            aug_ast_to_ir(env, children[2], ir);
+            aug_ir_pop_scope(ir);
+
+            // Tag end address
+            const size_t end_block_addr = ir.bytecode_offset;
+
+            // Fixup stubbed block offsets
+            aug_ir_operation& else_block_jmp_operation = aug_ir_get_operation(ir, else_block_jmp);
+            else_block_jmp_operation.operand = aug_ir_operand_from_int(else_block_addr);
+
+            aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
+            end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
+
+            break;
+        }
         case AUG_AST_STMT_WHILE:
-            aug_ast_to_ir_control(env, node, ir);
+        {
+            assert(children.size() == 2); //while ([0]) {[1]}
+
+            const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
+
+            const aug_ir_operand& begin_block_operand = aug_ir_operand_from_int(ir.bytecode_offset);
+
+            // Evaluate expression. 
+            aug_ast_to_ir(env, children[0], ir);
+
+            //Jump to end if false
+            const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
+
+            // Loop block
+            aug_ir_push_scope(ir);
+            aug_ast_to_ir(env, children[1], ir);
+            aug_ir_pop_scope(ir);
+
+            // Jump back to beginning, expr evaluation 
+            aug_ir_add_operation(ir, AUG_OPCODE_JUMP, begin_block_operand);
+
+            // Tag end address
+            const size_t end_block_addr = ir.bytecode_offset;
+
+            // Fixup stubbed block offsets
+            aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
+            end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
+
             break;
+        }
         case AUG_AST_FUNC_CALL:
-        case AUG_AST_RETURN:
-        case AUG_AST_PARAM:
-        case AUG_AST_PARAM_LIST:
-        case AUG_AST_FUNC_DEF:
-            aug_ast_to_ir_func(env, node, ir);
+        {
+            const char* func_name = token.data.c_str();
+            const int arg_count = children.size();
+            const aug_symbol& symbol = aug_ir_get_symbol(ir, func_name);
+
+            if (symbol.type == AUG_SYM_VAR)
+            {
+                ir.valid = false;
+                AUG_LOG_ERROR(env.error_callback, "Can not call variable %s as a function", func_name);
+                break;
+            }
+
+            // If the symbol is a user defined function.
+            if (symbol.type == AUG_SYM_FUNC)
+            {
+                if (symbol.argc != arg_count)
+                {
+                    ir.valid = false;
+                    AUG_LOG_ERROR(env.error_callback, "Function Call %s passed %d arguments, expected %d", func_name, arg_count, symbol.argc);
+                }
+                else
+                {
+                    // offset to account for the pushed base
+                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_BASE);
+                    size_t push_return_addr = aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, aug_ir_operand_from_int(0));
+
+                    for (const aug_ast* arg : children)
+                        aug_ast_to_ir(env, arg, ir);
+
+                    const aug_ir_operand& func_addr = aug_ir_operand_from_int(symbol.offset); // func addr
+                    aug_ir_add_operation(ir, AUG_OPCODE_CALL, func_addr);
+
+                    // fixup the return address to after the call
+                    aug_ir_get_operation(ir, push_return_addr).operand = aug_ir_operand_from_int(ir.bytecode_offset);
+                }
+                break;
+            }
+
+            // Check if the symbol is a registered function
+            int func_index = -1;
+            for (int i = 0; i < (int)env.external_function_names.size(); ++i)
+            {
+                if (env.external_function_names[i] == func_name)
+                {
+                    func_index = i;
+                    break;
+                }
+            }
+
+            if (func_index == -1)
+            {
+                ir.valid = false;
+                AUG_LOG_ERROR(env.error_callback, "Function %s not defined", func_name);
+                break;
+            }
+            if (env.external_functions[func_index] == nullptr)
+            {
+                ir.valid = false;
+                AUG_LOG_ERROR(env.error_callback, "External Function %s was not properly registered.", func_name);
+                break;
+            }
+
+            for (int i = arg_count - 1; i >= 0; --i)
+                aug_ast_to_ir(env, children[i], ir);
+
+            const aug_ir_operand& func_index_operand = aug_ir_operand_from_int(func_index);
+            aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, func_index_operand);
+
+            const aug_ir_operand& arg_count_operand = aug_ir_operand_from_int(arg_count);
+            aug_ir_add_operation(ir, AUG_OPCODE_CALL_EXT, arg_count_operand);
             break;
+        }
+        case AUG_AST_RETURN:
+        {
+            const aug_ir_operand& offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
+            if (children.size() == 1) //return [0];
+            {
+                aug_ast_to_ir(env, children[0], ir);
+                aug_ir_add_operation(ir, AUG_OPCODE_RETURN, offset);
+            }
+            else
+            {
+                aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
+                aug_ir_add_operation(ir, AUG_OPCODE_RETURN, offset);
+            }
+            break;
+        }
+        case AUG_AST_PARAM:
+        {
+            aug_ir_set_var(ir, token.data);
+            break;
+        }
+        case AUG_AST_PARAM_LIST:
+        {
+            // start stack offset at beginning of parameter (this will be nagative relative to the current frame)
+            for (const aug_ast* param : children)
+                aug_ast_to_ir(env, param, ir);
+            break;
+        }
+        case AUG_AST_FUNC_DEF:
+        {
+            assert(children.size() == 2); //func token [0] {[1]};
+
+            // Jump over the func def
+            const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
+            const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP, stub_operand);
+
+            const char* func_name = token.data.c_str();
+
+            aug_ast* params = children[0];
+            assert(params && params->id == AUG_AST_PARAM_LIST);
+            const int param_count = params->children.size();
+
+            if (!aug_ir_set_func(ir, func_name, param_count))
+            {
+                ir.valid = false;
+                AUG_LOG_ERROR(env.error_callback, "Function %s already defined", func_name);
+                break;
+            }
+
+            // Parameter frame
+            aug_ir_push_scope(ir);
+            aug_ast_to_ir(env, children[0], ir);
+
+            // Function block frame
+            aug_ir_push_frame(ir, param_count);
+            aug_ast_to_ir(env, children[1], ir);
+
+            // Ensure there is a return
+            if (ir.operations.at(ir.operations.size() - 1).opcode != AUG_OPCODE_RETURN)
+            {
+                const aug_ir_operand& offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
+                aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
+                aug_ir_add_operation(ir, AUG_OPCODE_RETURN, offset);
+            }
+
+            aug_ir_pop_frame(ir);
+            aug_ir_pop_scope(ir);
+
+            const size_t end_block_addr = ir.bytecode_offset;
+
+            // fixup jump operand
+            aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
+            end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
+
+            break;
+        }
         default:
             assert(0);
             break;

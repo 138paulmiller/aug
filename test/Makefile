@@ -5,6 +5,7 @@ SRC = $(wildcard *.cpp)
 CC = g++
 CFLAGS = -Wall -O3
 LIBS = -I../ -std=c++11
+LD =
 
 all: $(OUT_DIR) $(TARGET)
 	echo "Done"
@@ -16,4 +17,4 @@ $(OUT_DIR):
 	mkdir $(OUT_DIR)
 
 $(TARGET): $(SRC)
-	$(CC) -o $@ $^ $(CFLAGS) $(LIBS)
+	$(CC) $(LD) -o $@ $^ $(CFLAGS) $(LIBS)
