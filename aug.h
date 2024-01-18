@@ -554,7 +554,7 @@ inline void aug_input_error_hint(aug_input* input, const aug_pos* pos)
     }
     buffer[n] = '\0';
 
-    AUG_LOG_ERROR(input->error_callback, "Syntax error %s (%d,%d) ",
+    AUG_LOG_ERROR(input->error_callback, "Error %s:(%d,%d) ",
         input->filename.c_str(), pos->line + 1, pos->col + 1);
 
     AUG_LOG_ERROR(input->error_callback, "%s", buffer);
