@@ -265,11 +265,15 @@ void aug_test_native(aug_environment& env)
 	}
 }
 
+void aug_error(const char* msg)
+{
+	fprintf(stderr, "[ERROR]%s\t\n", msg);
+}
 
 int aug_test(int argc, char** argv)
 {
 	aug_environment env;
-	aug_startup(env, nullptr);
+	aug_startup(env, aug_error);
 	aug_register(env, "print", print);
 	aug_register(env, "expect", expect);
 	aug_register(env, "sum", sum);

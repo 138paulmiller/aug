@@ -319,31 +319,29 @@ aug_value aug_from_string(const char* data);
 
 // --------------------------------------- Input/Logging ---------------------------------------//
 
-#ifndef AUG_LOG_COLUNM
-#define AUG_LOG_COLUNM 45
-#endif
+void aug_log_error_internal(aug_error_callback* error_callback, const char* format, ...)
+{
+    // TODO: make thread safe
+    static char log_buffer[4096];
 
-#ifdef AUG_LOG_VERBOSE
-#define AUG_LOG_PRELUDE(...)      \
-    fprintf(stderr, "[aug]\t"); \
-    fprintf(stderr, __VA_ARGS__); \
-    fprintf(stderr, "\n"); 
-#else 
-    #define AUG_LOG_PRELUDE(...) 
-#endif
-
-// TODO: make thread safe
-static char log_buffer[4096];
-
-#define AUG_LOG_ERROR(error_callback, ...)                      \
-{                                                               \
-    AUG_LOG_PRELUDE(__VA_ARGS__)                                \
-    if(error_callback)                                          \
-    {                                                           \
-        snprintf(log_buffer, sizeof(log_buffer), __VA_ARGS__);  \
-         error_callback(log_buffer);                            \
-    }                                                           \
+    va_list args;
+    va_start(args, format);
+    if (error_callback)
+    {
+        vsnprintf(log_buffer, sizeof(log_buffer), format, args);
+        error_callback(log_buffer);
+    }
+    else
+    {
+#if defined(AUG_LOG_VERBOSE)
+        vprintf(format, args);
+#endif //defined(AUG_LOG_VERBOSE)
+    }
+    va_end(args);
 }
+
+#define AUG_LOG_ERROR(error_callback, ...)\
+    aug_log_error_internal(error_callback, __VA_ARGS__);
 
 #define AUG_INPUT_ERROR_AT(input, pos, ...)\
 if (input->valid)                          \
