@@ -76,29 +76,30 @@ SOFTWARE. */
         stmt_func_def := FUNC NAME ( params ) block 
 
     Todo: 
+    - Syntax - Implement for loops
     - VM - Serialize Bytecode to external file. Execute compiled bytecode from file
     - VM - Serialize debug map to file. Link from bytecode to source file. 
     - VM - Print Stack trace on error. Link back to source file if running uncompiled bytecode
     - Native - Support return value in function callbacks
     - Semantic Pass - resolve IR pass any potential naming, field,  or return issues     
     - Convert to C 
-    - Reimplement primary data structures, expose custom allocator/deallocator in environment
-    - Reference Count objects to ensure unused are freed correctly
-    - PUshing string literals should not create copy. Create a flag to determine if in memory bytes
-
-    Issues:
-    - Maximum recursion depth in recursive descent parser and IR generation. Should rewrite both such that they use a Job queue.
-        Example. For IR generation, push child job and invalidate child, push parent back onto queue. If child is invalidate, add operations. This will ensure order is preserved.
+    -   Reimplement primary data structures, expose custom allocator/deallocator in environment
+    - Pushing string literals should not create copy. Create a flag to determine if in memory bytes
 */
 
 #ifndef __AUG_HEADER__
 #define __AUG_HEADER__
 
+// Max size of the virtual machine stack
 #ifndef AUG_STACK_SIZE
 #define AUG_STACK_SIZE (1024 * 128)
 #endif//AUG_STACK_SIZE
 
-// Max number of characters per name
+#ifndef AUG_APPROX_THRESHOLD
+#define AUG_APPROX_THRESHOLD 0.0000001
+#endif//AUG_APPROX_THRESHOLD 
+
+// Max number of characters per symbol name
 #ifndef AUG_TOKEN_BUFFER_SIZE
 #define AUG_TOKEN_BUFFER_SIZE 32
 #endif//AUG_TOKEN_BUFFER_SIZE
@@ -118,18 +119,6 @@ SOFTWARE. */
 #ifndef AUG_DELETE_ARRAY
 #define AUG_DELETE_ARRAY(ptr) delete [] ptr
 #endif//AUG_DELETE_ARRAY
-
-#ifndef AUG_VM_APPROX_THRESHOLD
-#define AUG_VM_APPROX_THRESHOLD 0.0000001
-#endif//AUG_VM_APPROX_THRESHOLD 
-
-#ifndef AUG_OPERAND_LEN
-#define AUG_OPERAND_LEN 8
-#endif//AUG_OPERAND_LEN 
-
-#ifndef AUG_COMMENT_SYMBOL
-#define AUG_COMMENT_SYMBOL '#'
-#endif//AUG_COMMENT_SYMBOL 
 
 
 #include <string>
@@ -328,6 +317,8 @@ aug_value aug_from_string(const char* data);
 #include <iostream>
 #include <sstream>
 
+// --------------------------------------- Input/Logging ---------------------------------------//
+
 #ifndef AUG_LOG_COLUNM
 #define AUG_LOG_COLUNM 45
 #endif
@@ -340,7 +331,6 @@ aug_value aug_from_string(const char* data);
 #else 
     #define AUG_LOG_PRELUDE(...) 
 #endif
-
 
 // TODO: make thread safe
 static char log_buffer[4096];
@@ -355,6 +345,236 @@ static char log_buffer[4096];
     }                                                           \
 }
 
+#define AUG_INPUT_ERROR_AT(input, pos, ...)\
+if (input->valid)                          \
+{                                          \
+    input->valid = false;                  \
+    aug_input_error_hint(input, pos);      \
+    AUG_LOG_ERROR(input->error_callback,   \
+        __VA_ARGS__);                      \
+}
+
+#define AUG_INPUT_ERROR(input, ...) \
+    AUG_INPUT_ERROR_AT(input,       \
+        aug_input_prev_pos(input),  \
+        __VA_ARGS__);
+
+
+struct aug_pos
+{
+    size_t filepos;
+    size_t linepos;
+    int line;
+    int col;
+};
+
+struct aug_input
+{
+    bool is_file; // True if input source is a file. If false, file is string stream and filename is raw source code
+    std::istream* file;
+    aug_std_string filename;
+    aug_error_callback* error_callback;
+    bool valid;
+
+    std::streampos track_pos;
+    int pos_buffer_index;
+    aug_pos pos_buffer[4];
+
+    char token_buffer[AUG_TOKEN_BUFFER_SIZE];
+};
+
+inline aug_pos* aug_input_pos(aug_input* input)
+{
+    return &input->pos_buffer[input->pos_buffer_index];
+}
+
+inline aug_pos* aug_input_prev_pos(aug_input* input)
+{
+    assert(input != NULL);
+    input->pos_buffer_index--;
+    if (input->pos_buffer_index < 0)
+        input->pos_buffer_index = (sizeof(input->pos_buffer) / sizeof(input->pos_buffer[0])) - 1;
+    return aug_input_pos(input);
+}
+
+inline aug_pos* aug_input_next_pos(aug_input* input)
+{
+    assert(input != NULL);
+    input->pos_buffer_index = (input->pos_buffer_index + 1) % (sizeof(input->pos_buffer) / sizeof(input->pos_buffer[0]));
+    return aug_input_pos(input);
+}
+
+aug_input* aug_input_open(const char* filename_or_code, aug_error_callback* error_callback, bool is_file)
+{
+    std::istream* stream = NULL;
+    if (is_file)
+    {
+        std::fstream* file = AUG_NEW(std::fstream(filename_or_code, std::fstream::in));
+        if (file == NULL || !file->is_open())
+        {
+            AUG_LOG_ERROR(error_callback, "Input failed to open file %s", filename_or_code);
+            if (file)
+                AUG_DELETE(file);
+            return NULL;
+        }
+        stream = file;
+    }
+    else
+    {
+        std::stringstream* iss = AUG_NEW(std::stringstream(filename_or_code, std::fstream::in));
+        if (iss == NULL)
+        {
+            AUG_LOG_ERROR(error_callback, "Input failed to read code %s", filename_or_code);
+            return NULL;
+        }
+        stream = iss;
+    }
+
+    aug_input* input = AUG_NEW(aug_input);
+    input->valid = true;
+    input->error_callback = error_callback;
+    input->is_file = is_file;
+    input->file = stream;
+    input->filename = filename_or_code;
+    input->pos_buffer_index = 0;
+    input->track_pos = 0;
+
+    aug_pos* pos = aug_input_pos(input);
+    pos->col = 0;
+    pos->line = 0;
+    pos->filepos = pos->linepos = (size_t)input->file->tellg();
+
+    return input;
+}
+
+void aug_input_close(aug_input* input)
+{
+    if (input->file != NULL)
+        AUG_DELETE(input->file);
+
+    AUG_DELETE(input);
+}
+
+inline char aug_input_get(aug_input* input)
+{
+    if (input == NULL || input->file == NULL)
+        return -1;
+
+    const char c = input->file->get();
+
+    aug_pos* pos = aug_input_pos(input);
+    aug_pos* next_pos = aug_input_next_pos(input);
+
+    next_pos->line = pos->line;
+    next_pos->col = pos->col + 1;
+    next_pos->linepos = pos->linepos;
+    next_pos->filepos = (size_t)input->file->tellg();
+
+    if (c == '\n')
+    {
+        next_pos->col = pos->line + 1;
+        next_pos->line = pos->line;
+        next_pos->linepos = (size_t)input->file->tellg();
+    }
+    return c;
+}
+
+inline char aug_input_peek(aug_input* input)
+{
+    assert(input != NULL && input->file != NULL);
+    return input->file->peek();
+}
+
+inline char aug_input_unget(aug_input* input)
+{
+    assert(input != NULL && input->file != NULL);
+    input->file->unget();
+
+    aug_input_prev_pos(input);
+
+    return aug_input_peek(input);
+}
+
+inline void aug_input_start_tracking(aug_input* input)
+{
+    assert(input != NULL && input->file != NULL);
+    input->track_pos = input->file->tellg();
+}
+
+inline bool aug_input_end_tracking(aug_input* input, aug_std_string& s)
+{
+    assert(input != NULL && input->file != NULL);
+    const std::fstream::iostate state = input->file->rdstate();
+    input->file->clear();
+
+    const std::streampos pos_end = input->file->tellg();
+    const std::streamoff len = (pos_end - input->track_pos);
+
+    if (len >= AUG_TOKEN_BUFFER_SIZE)
+    {
+        AUG_LOG_ERROR(input->error_callback, "Token contains to many characters. Can not exceed %d", AUG_TOKEN_BUFFER_SIZE);
+        input->file->clear(state);
+        return false;
+    }
+
+    input->token_buffer[0] = '\0';
+    input->file->seekg(input->track_pos);
+    input->file->read(input->token_buffer, len);
+    input->file->seekg(pos_end);
+    input->file->clear(state);
+
+    s.assign(input->token_buffer, (size_t)len);
+    return true;
+}
+
+inline void aug_input_error_hint(aug_input* input, const aug_pos* pos)
+{
+    assert(input != NULL && input->file != NULL);
+    
+    // save state
+    const std::fstream::iostate state = input->file->rdstate();
+    input->file->clear();
+    const std::streampos curr_pos = input->file->tellg();
+
+    // go to line
+    input->file->seekg(pos->linepos);
+
+    char buffer[4096];
+    int n = 0;
+
+    char c = input->file->get();
+    // skip leading whitespace
+    while (isspace(c))
+        c = input->file->get();
+
+    while (c != EOF && c != '\n' && n < (int)(sizeof(buffer) / sizeof(buffer[0]) - 1))
+    {
+        buffer[n++] = c;
+        c = input->file->get();
+    }
+    buffer[n] = '\0';
+
+    AUG_LOG_ERROR(input->error_callback, "Syntax error %s (%d,%d) ",
+        input->filename.c_str(), pos->line + 1, pos->col + 1);
+
+    AUG_LOG_ERROR(input->error_callback, "%s", buffer);
+
+    // Draw arrow to the error if within buffer
+    if (pos->col < n-1)
+    {
+        for (int i = 0; i < pos->col; ++i)
+            buffer[i] = ' ';
+        buffer[pos->col] = '^';
+        buffer[pos->col+1] = '\0';
+    }
+
+    AUG_LOG_ERROR(input->error_callback, "%s", buffer);
+
+    // restore state
+    input->file->seekg(curr_pos);
+    input->file->clear(state);
+}
+
 // -------------------------------------- Lexer  ---------------------------------------// 
 // Static token details
 struct aug_token_detail
@@ -366,12 +586,11 @@ struct aug_token_detail
     const char* keyword;  // if non-null, the token must match the provided keyword
 };
 
-#define AUG_TOKEN_LIST                                \
-    /* State */                                        \
+#define AUG_TOKEN_LIST                             \
+    /* State */                                    \
     AUG_TOKEN(NONE,           0, 0, 0, NULL)       \
-    AUG_TOKEN(ERR,	          0, 0, 0, NULL)        \
     AUG_TOKEN(END,            0, 0, 0, NULL)       \
-    /* Symbols */			                           \
+    /* Symbols */			                       \
     AUG_TOKEN(DOT,            0, 0, 0, NULL)       \
     AUG_TOKEN(COMMA,          0, 0, 0, NULL)       \
     AUG_TOKEN(COLON,          0, 0, 0, NULL)       \
@@ -452,211 +671,65 @@ struct aug_token
     aug_token_id id;
     const aug_token_detail* detail; 
     aug_std_string data;
-    int line;
-    int col;
-};
-
-struct aug_pos
-{
-    size_t filepos;
-    size_t linepos;
-    int line;
-    int col;
+    aug_pos pos;
 };
 
 // Lexer state
 struct aug_lexer
 {
-    bool valid;
-    aug_error_callback* error_callback;
+    aug_input* input;
 
     aug_token prev;
     aug_token curr;
     aug_token next;
 
-    std::istream* input = NULL;
-    aug_std_string input_source;
-    std::streampos track_pos;
-
-    int pos_buffer_index;
-    aug_pos pos_buffer[4];
-
-    char token_buffer[AUG_TOKEN_BUFFER_SIZE];
+    char comment_symbol;
 };
 
-#define AUG_LEXER_ERROR(lexer, token, ...)                      \
-{                                                               \
-    lexer->valid = false;                                       \
-    token.id = AUG_TOKEN_ERR;                                   \
-    aug_error_hint(lexer);                                      \
-    AUG_LOG_ERROR(lexer->error_callback, "%s(%d,%d):",          \
-        lexer->input_source.c_str(),                            \
-        aug_lexer_pos(lexer)->line+ 1,                          \
-        aug_lexer_pos(lexer)->col + 1);                         \
-    AUG_LOG_ERROR(lexer->error_callback, __VA_ARGS__);          \
+aug_lexer* aug_lexer_new(aug_input* input)
+{
+    aug_lexer* lexer = AUG_NEW(aug_lexer);
+    lexer->input = input;
+    lexer->comment_symbol = '#';
+
+    lexer->prev = aug_token();
+    lexer->curr = aug_token();
+    lexer->next = aug_token();
+
+    return lexer;
 }
 
-aug_pos* aug_lexer_pos(aug_lexer* lexer)
+void aug_lexer_delete(aug_lexer* lexer)
 {
-    return &lexer->pos_buffer[lexer->pos_buffer_index];
-}
-
-aug_pos* aug_lexer_prev_pos(aug_lexer* lexer)
-{
-    lexer->pos_buffer_index--;
-    if(lexer->pos_buffer_index < 0)
-        lexer->pos_buffer_index = (sizeof(lexer->pos_buffer)/ sizeof(lexer->pos_buffer[0])) - 1;
-    return aug_lexer_pos(lexer);
-}
-
-aug_pos* aug_lexer_next_pos(aug_lexer* lexer)
-{
-    lexer->pos_buffer_index = (lexer->pos_buffer_index + 1) % (sizeof(lexer->pos_buffer) / sizeof(lexer->pos_buffer[0]));
-    return aug_lexer_pos(lexer);
-}
-
-inline void aug_error_hint(aug_lexer* lexer)
-{
-    // save state
-    const std::fstream::iostate saved_state = lexer->input->rdstate();
-    lexer->input->clear();
-
-    const std::streampos saved_pos = lexer->input->tellg();
-
-    aug_pos* pos = aug_lexer_prev_pos(lexer);
-
-    // go to line
-    lexer->input->seekg(pos->linepos);
-    
-    char buffer[4096];
-    int n = 0;
-
-    char c = lexer->input->get();
-    // skip leading whitespace
-    while (isspace(c))
-        c = lexer->input->get();
-    
-    while (c != EOF && c != '\n' && n < (int)(sizeof(buffer)/ sizeof(buffer[0])-1))
-    {
-        buffer[n++] = c;
-        c = lexer->input->get();
-    }
-    buffer[n] = '\0';
-    
-    AUG_LOG_ERROR(lexer->error_callback, "Syntax error %s (%d,%d) ",
-        lexer->input_source.c_str(), pos->line + 1, pos->col + 1);
-    
-    AUG_LOG_ERROR(lexer->error_callback, "%s", buffer);
-
-    // Draw arrow to the error
-    for (int i = 0; i < pos->col; ++i)
-    {
-        buffer[i] = ' ';
-    }
-
-    buffer[pos->col] = '^';
-    buffer[n] = '\0';
-    AUG_LOG_ERROR(lexer->error_callback, "%s", buffer);
-
-    // restore state
-    aug_lexer_next_pos(lexer);
-
-    // restore state
-    lexer->input->seekg(saved_pos);
-    lexer->input->clear(saved_state);
-}
-
-inline char aug_lexer_get(aug_lexer* lexer)
-{
-    const char c = lexer->input->get();
-    
-    aug_pos* pos = aug_lexer_pos(lexer);
-    aug_pos* next_pos = aug_lexer_next_pos(lexer);
-
-    next_pos->line = pos->line;
-    next_pos->col = pos->col + 1;
-    next_pos->linepos = pos->linepos;
-    next_pos->filepos = lexer->input->tellg();
-
-    if (c == '\n')
-    {
-        next_pos->col = pos->line + 1;
-        next_pos->line = pos->line;
-        next_pos->linepos = lexer->input->tellg();
-    }
-    return c;
-}
-
-inline char aug_lexer_peek(aug_lexer* lexer)
-{
-    return lexer->input->peek();
-}
-
-char aug_lexer_unget(aug_lexer* lexer)
-{
-    lexer->input->unget();
-
-    aug_lexer_prev_pos(lexer);
-
-    return aug_lexer_peek(lexer);
-}
-
-inline void aug_lexer_start_tracking(aug_lexer* lexer)
-{
-    lexer->track_pos = lexer->input->tellg();
-}
-
-inline bool aug_lexer_end_tracking(aug_lexer* lexer, aug_std_string& s)
-{
-    const std::fstream::iostate state = lexer->input->rdstate();
-    lexer->input->clear();
-
-    const std::streampos pos_end = lexer->input->tellg();
-    const std::streamoff len = (pos_end - lexer->track_pos);
-    
-    if (len >= AUG_TOKEN_BUFFER_SIZE)
-    {
-        AUG_LOG_ERROR(lexer->error_callback, "Token contains to many characters. Can not exceed %d", AUG_TOKEN_BUFFER_SIZE);
-        lexer->input->clear(state);
-        return false;
-    }
-
-    lexer->token_buffer[0] = '\0';
-    lexer->input->seekg(lexer->track_pos);
-    lexer->input->read(lexer->token_buffer, len);
-    lexer->input->seekg(pos_end);
-    lexer->input->clear(state);
-
-    s.assign(lexer->token_buffer, (size_t)len);
-    return true;
+    AUG_DELETE(lexer);
 }
 
 inline bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token& token)
 {
-    char c = aug_lexer_get(lexer);
+    char c = aug_input_get(lexer->input);
     if (c != '\"')
     {
-        aug_lexer_unget(lexer);
+        aug_input_unget(lexer->input);
         return false;
     }
 
     token.id = AUG_TOKEN_STRING;
     token.data.clear();
 
-    c = aug_lexer_get(lexer);
+    c = aug_input_get(lexer->input);
 
     while (c != '\"')
     {
         if (c == EOF)
         {
-            AUG_LEXER_ERROR(lexer, token, "string literal missing closing \"");
+            AUG_INPUT_ERROR(lexer->input, "string literal missing closing \"");
             return false;
         }
 
         if (c == '\\')
         {
             // handle escaped chars
-            c = aug_lexer_get(lexer);
+            c = aug_input_get(lexer->input);
             switch (c)
             {
             case '\'': 
@@ -693,12 +766,12 @@ inline bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token& token)
                 token.data.push_back(0x0B);
                 break;
             default:
-                AUG_LEXER_ERROR(lexer, token, "invalid escape character \\%c", c);
+                AUG_INPUT_ERROR(lexer->input, "invalid escape character \\%c", c);
                 while (c != '\"')
                 {
                     if (c == EOF)
                         break;
-                    c = aug_lexer_get(lexer);
+                    c = aug_input_get(lexer->input);
                 }
                 return false;
             }
@@ -708,7 +781,7 @@ inline bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token& token)
             token.data.push_back(c);
         }
 
-        c = aug_lexer_get(lexer);
+        c = aug_input_get(lexer->input);
     }
 
     return true;
@@ -716,9 +789,9 @@ inline bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token& token)
 
 inline bool aug_lexer_tokenize_symbol(aug_lexer* lexer, aug_token& token)
 {
-    aug_token_id id = AUG_TOKEN_ERR;
+    aug_token_id id = AUG_TOKEN_NONE;
 
-    char c = aug_lexer_get(lexer);
+    char c = aug_input_get(lexer->input);
     switch (c)
     {
     case '.': id = AUG_TOKEN_DOT;       break;
@@ -732,74 +805,74 @@ inline bool aug_lexer_tokenize_symbol(aug_lexer* lexer, aug_token& token)
     case '{': id = AUG_TOKEN_LBRACE;    break;
     case '}': id = AUG_TOKEN_RBRACE;    break;
     case '+':
-        if (aug_lexer_peek(lexer) == '=' && aug_lexer_get(lexer))
+        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_ADD_EQ;
         else
             id = AUG_TOKEN_ADD;
         break;
     case '-':
-        if (aug_lexer_peek(lexer) == '=' && aug_lexer_get(lexer))
+        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_SUB_EQ;
         else
             id = AUG_TOKEN_SUB;
         break;
     case '*':
-        if (aug_lexer_peek(lexer) == '=' && aug_lexer_get(lexer))
+        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_MUL_EQ;
         else
             id = AUG_TOKEN_MUL;
         break;
     case '/':
-        if (aug_lexer_peek(lexer) == '=' && aug_lexer_get(lexer))
+        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_DIV_EQ;
         else
             id = AUG_TOKEN_DIV;
         break;
     case '^':
-        if (aug_lexer_peek(lexer) == '=' && aug_lexer_get(lexer))
+        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_POW_EQ;
         else
             id = AUG_TOKEN_POW;
         break;
     case '%':
-        if (aug_lexer_peek(lexer) == '=' && aug_lexer_get(lexer))
+        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_MOD_EQ;
         else
             id = AUG_TOKEN_MOD;
         break;
     case '<':
-        if (aug_lexer_peek(lexer) == '=' && aug_lexer_get(lexer))
+        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_LT_EQ;
         else
             id = AUG_TOKEN_LT;
         break;
     case '>':
-        if (aug_lexer_peek(lexer) == '=' && aug_lexer_get(lexer))
+        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_GT_EQ;
         else
             id = AUG_TOKEN_GT;
         break;
     case '=':
-        if (aug_lexer_peek(lexer) == '=' && aug_lexer_get(lexer))
+        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_EQ;
         else
             id = AUG_TOKEN_ASSIGN;
         break;
     case '!':
-        if (aug_lexer_peek(lexer) == '=' && aug_lexer_get(lexer))
+        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_NOT_EQ;
         else
             id = AUG_TOKEN_NOT;
         break;
     case '~':
-        if (aug_lexer_peek(lexer) == '=' && aug_lexer_get(lexer))
+        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_APPROX_EQ;
         break;
     }
 
-    if (id == AUG_TOKEN_ERR)
+    if (id == AUG_TOKEN_NONE)
     {
-        aug_lexer_unget(lexer);
+        aug_input_unget(lexer->input);
         return false;
     }
 
@@ -809,20 +882,20 @@ inline bool aug_lexer_tokenize_symbol(aug_lexer* lexer, aug_token& token)
 
 inline bool aug_lexer_tokenize_name(aug_lexer* lexer, aug_token& token)
 {
-    aug_lexer_start_tracking(lexer);
+    aug_input_start_tracking(lexer->input);
 
-    char c = aug_lexer_get(lexer);
+    char c = aug_input_get(lexer->input);
     if (c != '_' && !isalpha(c))
     {
-        aug_lexer_unget(lexer);
+        aug_input_unget(lexer->input);
         return false;
     }
     
     while (c == '_' || isalnum(c))
-        c = aug_lexer_get(lexer);
-    aug_lexer_unget(lexer);
+        c = aug_input_get(lexer->input);
+    aug_input_unget(lexer->input);
 
-    if (!aug_lexer_end_tracking(lexer, token.data))
+    if (!aug_input_end_tracking(lexer->input, token.data))
         return false;
 
     token.id = AUG_TOKEN_NAME;
@@ -843,60 +916,60 @@ inline bool aug_lexer_tokenize_name(aug_lexer* lexer, aug_token& token)
 
 bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token& token)
 {    
-    aug_lexer_start_tracking(lexer);
+    aug_input_start_tracking(lexer->input);
 
-    char c = aug_lexer_get(lexer);
+    char c = aug_input_get(lexer->input);
     if (c != '.' && !isdigit(c) && c != '+' && c != '-')
     {
-        aug_lexer_unget(lexer);
+        aug_input_unget(lexer->input);
         return false;
     } 
 
-    aug_token_id id = AUG_TOKEN_ERR;
+    aug_token_id id = AUG_TOKEN_NONE;
 
-    if (c == '0' && aug_lexer_peek(lexer) == 'x')
+    if (c == '0' && aug_input_peek(lexer->input) == 'x')
     {
         id = AUG_TOKEN_HEXIDECIMAL;
 
-        c = aug_lexer_get(lexer); //eat 'x'
-        c = aug_lexer_get(lexer);
+        c = aug_input_get(lexer->input); //eat 'x'
+        c = aug_input_get(lexer->input);
 
         while (isalnum(c))
         {
             if (!isdigit(c) && !((c >='a' && c <= 'f') || (c >= 'A' && c <= 'F')))
-                id = AUG_TOKEN_ERR;
+                id = AUG_TOKEN_NONE;
 
-            c = aug_lexer_get(lexer);
+            c = aug_input_get(lexer->input);
         }
-        aug_lexer_unget(lexer);
+        aug_input_unget(lexer->input);
     }
-    else if (c == '0' && aug_lexer_peek(lexer) == 'b')
+    else if (c == '0' && aug_input_peek(lexer->input) == 'b')
     {
         id = AUG_TOKEN_BINARY;
 
-        c = aug_lexer_get(lexer); // eat 'b'
-        c = aug_lexer_get(lexer);
+        c = aug_input_get(lexer->input); // eat 'b'
+        c = aug_input_get(lexer->input);
 
         while (isdigit(c))
         {
             if(c != '0' && c != '1')
-                id = AUG_TOKEN_ERR;
+                id = AUG_TOKEN_NONE;
 
-            c = aug_lexer_get(lexer);
+            c = aug_input_get(lexer->input);
         }
-        aug_lexer_unget(lexer);
+        aug_input_unget(lexer->input);
     }
     else
     {
         if (c == '+' || c == '-')
         {
-            c = aug_lexer_peek(lexer);
+            c = aug_input_peek(lexer->input);
             if (c != '.' && !isdigit(c))
             {
-                aug_lexer_unget(lexer);
+                aug_input_unget(lexer->input);
                 return false;
             }
-            c = aug_lexer_get(lexer);
+            c = aug_input_get(lexer->input);
         }
 
         if (c == '.')
@@ -910,26 +983,27 @@ bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token& token)
             if (c == '.')
             {
                 if (dot)
-                    id = AUG_TOKEN_ERR;
+                    id = AUG_TOKEN_NONE;
                 else
                     id = AUG_TOKEN_FLOAT;
 
                 dot = true;
             }
-            c = aug_lexer_get(lexer);
+            c = aug_input_get(lexer->input);
         }
-        aug_lexer_unget(lexer);
+        aug_input_unget(lexer->input);
     }
 
-    if(id == AUG_TOKEN_ERR)
+    token.id = id;
+
+    if(id == AUG_TOKEN_NONE)
     {
-        AUG_LEXER_ERROR(lexer, token, "invalid numeric format %s", token.data.c_str());
+        AUG_INPUT_ERROR(lexer->input, "invalid numeric format %s", token.data.c_str());
         return false;
     }
     
-    if (!aug_lexer_end_tracking(lexer, token.data))
+    if (!aug_input_end_tracking(lexer->input, token.data))
         return false;
-    token.id = id;
 
     return true;
 }
@@ -939,40 +1013,40 @@ aug_token aug_lexer_tokenize(aug_lexer* lexer)
     aug_token token;
 
     // if file is not open, or already at then end. return invalid token
-    if (!lexer->valid || lexer->input == NULL)
+    if (lexer->input == NULL || !lexer->input->valid)
     {
         token.id = AUG_TOKEN_NONE;
         token.detail = &aug_token_details[(int)token.id];
         return token;
     }
 
-    if (aug_lexer_peek(lexer) == EOF)
+    if (aug_input_peek(lexer->input) == EOF)
     {
         token.id = AUG_TOKEN_END;
         token.detail = &aug_token_details[(int)token.id];
         return token;
     }
 
-    char c = aug_lexer_peek(lexer);
+    char c = aug_input_peek(lexer->input);
 
     // skip whitespace
     if (isspace(c))
     {
         while (isspace(c))
-            c = aug_lexer_get(lexer);
-        aug_lexer_unget(lexer);
+            c = aug_input_get(lexer->input);
+        aug_input_unget(lexer->input);
     }
 
     // skip comments
-    while(c == AUG_COMMENT_SYMBOL)
+    while(c == lexer->comment_symbol)
     {        
         while (c != EOF)
         {
-            c = aug_lexer_get(lexer);
+            c = aug_input_get(lexer->input);
 
             if (c == '\n')
             {
-                c = aug_lexer_peek(lexer);
+                c = aug_input_peek(lexer->input);
                 break;
             }
         }
@@ -981,8 +1055,8 @@ aug_token aug_lexer_tokenize(aug_lexer* lexer)
         if (isspace(c))
         {
             while (isspace(c))
-                c = aug_lexer_get(lexer);
-            aug_lexer_unget(lexer);
+                c = aug_input_get(lexer->input);
+            aug_input_unget(lexer->input);
         }
     }
 
@@ -994,9 +1068,7 @@ aug_token aug_lexer_tokenize(aug_lexer* lexer)
         return token;
     }
 
-    aug_pos* pos = aug_lexer_pos(lexer);
-    token.col = pos->col;
-    token.line = pos->line;
+    token.pos = *aug_input_pos(lexer->input);
 
     switch (c)
     {
@@ -1034,7 +1106,7 @@ aug_token aug_lexer_tokenize(aug_lexer* lexer)
         if (aug_lexer_tokenize_number(lexer, token))
             break;
 
-        AUG_LEXER_ERROR(lexer, token, "invalid character %c", c);
+        AUG_INPUT_ERROR(lexer->input, "invalid character %c", c);
         break;
     }
 
@@ -1057,100 +1129,16 @@ bool aug_lexer_move(aug_lexer* lexer)
     return lexer->curr.id != AUG_TOKEN_NONE;
 }
 
-void aug_lexer_close(aug_lexer* lexer)
-{
-    if (lexer->input != NULL)
-        AUG_DELETE(lexer->input);
-
-    AUG_DELETE(lexer);
-}
-
-aug_lexer* aug_lexer_open(const char* code, aug_error_callback* error_callback)
-{
-    aug_lexer* lexer = AUG_NEW(aug_lexer);
-
-    lexer->valid = true;
-    lexer->error_callback = error_callback;
-    lexer->input = NULL;
-    lexer->pos_buffer_index = 0;
-    lexer->track_pos = 0;
-
-    lexer->prev = aug_token();
-    lexer->curr = aug_token();
-    lexer->next = aug_token();
-
-    std::istringstream* iss = AUG_NEW(std::istringstream(code, std::fstream::in));
-    if (iss == NULL || !iss->good())
-    {
-        AUG_LOG_ERROR(lexer->error_callback, "Lexer failed to open code");
-        if(iss) 
-            AUG_DELETE(iss);
-        return NULL;
-    }
-
-    lexer->input = iss;
-    lexer->input_source = code;
-
-    aug_pos* pos = aug_lexer_pos(lexer);
-    pos->col = 0;
-    pos->line = 0;
-    pos->filepos = pos->linepos = lexer->input->tellg();
-
-    if (!aug_lexer_move(lexer))
-    {
-        aug_lexer_close(lexer);
-        return NULL;
-    }
-    return lexer;
-}
-
-aug_lexer* aug_lexer_open_file(const char* filename, aug_error_callback* error_callback)
-{
-    aug_lexer* lexer = AUG_NEW(aug_lexer);
-
-    lexer->valid = true;
-    lexer->error_callback = error_callback;
-    lexer->input = NULL;
-    lexer->pos_buffer_index = 0;
-    lexer->track_pos = 0;
-
-    lexer->prev = aug_token();
-    lexer->curr = aug_token();
-    lexer->next = aug_token();
-
-    std::fstream* file = AUG_NEW(std::fstream(filename, std::fstream::in));
-    if (file == NULL || !file->is_open())
-    {
-        AUG_LOG_ERROR(lexer->error_callback, "Lexer failed to open file %s", filename);
-        if (file)
-            AUG_DELETE(file);
-        return NULL;
-    }
-
-    lexer->input = file;
-    lexer->input_source = filename;
-
-    aug_pos* pos = aug_lexer_pos(lexer);
-    pos->col = 0;
-    pos->line = 0;
-    pos->filepos = pos->linepos = lexer->input->tellg();
-
-    if (!aug_lexer_move(lexer))
-    {
-        aug_lexer_close(lexer);
-        return NULL;
-    }
-    return lexer;
-}
-
 // -------------------------------------- Parser / Abstract Syntax Tree ---------------------------------------// 
-#define AUG_PARSE_ERROR(lexer,  ...)                                \
-if (lexer->valid)                                                   \
-{                                                                   \
-    lexer->valid = false;                                           \
-    aug_error_hint(lexer);                                          \
-    AUG_LOG_ERROR(lexer->error_callback, __VA_ARGS__);              \
-}
+
+#define AUG_COMPILE_ERROR(lexer, token, ...)           \
+{                                                      \
+    lexer->valid = false;                              \
+    token.id = AUG_TOKEN_ERR;                          \
+    aug_error_hint(lexer->error_callback,              \
+        lexer->input_source.c_str(),                   \
+        aug_lexer_prev_pos(lexer));                    \
+    AUG_LOG_ERROR(lexer->error_callback, __VA_ARGS__); \
 
 enum aug_ast_id : uint8_t
 {
@@ -1216,7 +1204,7 @@ inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_std_array<aug_token>& op_st
             aug_ast_delete(expr_stack.back());
             expr_stack.pop_back();
         }
-        AUG_PARSE_ERROR(lexer,  "Invalid number of arguments to operator %s", next_op.detail->label);
+        AUG_INPUT_ERROR(lexer->input, "Invalid number of arguments to operator %s", next_op.detail->label);
         return false;
     }
 
@@ -1284,7 +1272,7 @@ inline aug_ast* aug_parse_expr(aug_lexer* lexer)
             aug_ast_delete(expr_stack.back());
             expr_stack.pop_back();
         }
-        AUG_PARSE_ERROR(lexer,  "Invalid expression syntax");
+        AUG_INPUT_ERROR(lexer->input, "Invalid expression syntax");
         return NULL;
     }
 
@@ -1320,7 +1308,7 @@ inline aug_ast* aug_parse_funccall(aug_lexer* lexer)
     if (lexer->curr.id != AUG_TOKEN_RPAREN)
     {
         aug_ast_delete(funccall);
-        AUG_PARSE_ERROR(lexer,  "Function call missing closing parentheses");
+        AUG_INPUT_ERROR(lexer->input, "Function call missing closing parentheses");
         return NULL;
     }
 
@@ -1353,7 +1341,7 @@ inline aug_ast* aug_parse_list(aug_lexer* lexer)
     if (lexer->curr.id != AUG_TOKEN_RBRACKET)
     {
         aug_ast_delete(list);
-        AUG_PARSE_ERROR(lexer,  "List missing closing bracket");
+        AUG_INPUT_ERROR(lexer->input, "List missing closing bracket");
         return NULL;
     }
 
@@ -1404,7 +1392,7 @@ inline aug_ast* aug_parse_value(aug_lexer* lexer)
         }
         else
         {
-            AUG_PARSE_ERROR(lexer,  "Expression missing closing parentheses");
+            AUG_INPUT_ERROR(lexer->input, "Expression missing closing parentheses");
             aug_ast_delete(value);    
             value = NULL;
         }
@@ -1424,7 +1412,7 @@ aug_ast* aug_parse_stmt_expr(aug_lexer* lexer)
     if (lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(expr);
-        AUG_PARSE_ERROR(lexer, "Missing semicolon at end of expression");
+        AUG_INPUT_ERROR(lexer->input,  "Missing semicolon at end of expression");
         return NULL;
     }
 
@@ -1445,7 +1433,7 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
     aug_token name_token = lexer->curr;
     if (name_token.id != AUG_TOKEN_NAME)
     {
-        AUG_PARSE_ERROR(lexer, "Variable assignment expected name");
+        AUG_INPUT_ERROR(lexer->input,  "Variable assignment expected name");
         return NULL;
     }
     aug_lexer_move(lexer); // eat NAME
@@ -1460,7 +1448,7 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
 
     if (lexer->curr.id != AUG_TOKEN_ASSIGN)
     {
-        AUG_PARSE_ERROR(lexer, "Variable assignment expected \"=\" or ;");
+        AUG_INPUT_ERROR(lexer->input,  "Variable assignment expected \"=\" or ;");
         return NULL;
     }
 
@@ -1469,13 +1457,13 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
     aug_ast* expr = aug_parse_expr(lexer);
     if (expr == NULL)
     {
-        AUG_PARSE_ERROR(lexer, "Variable assignment expected expression after \"=\"");
+        AUG_INPUT_ERROR(lexer->input,  "Variable assignment expected expression after \"=\"");
         return NULL;
     }
     if (lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(expr);
-        AUG_PARSE_ERROR(lexer, "Variable assignment missing semicolon at end of expression");
+        AUG_INPUT_ERROR(lexer->input,  "Variable assignment missing semicolon at end of expression");
         return NULL;
     }
 
@@ -1499,14 +1487,14 @@ aug_ast* aug_parse_stmt_assign_var(aug_lexer* lexer)
     aug_ast* expr = aug_parse_expr(lexer);
     if (expr == NULL)
     {
-        AUG_PARSE_ERROR(lexer, "Assignment expected expression after \"=\"");
+        AUG_INPUT_ERROR(lexer->input,  "Assignment expected expression after \"=\"");
         return NULL;
     }
 
     if (lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(expr);
-        AUG_PARSE_ERROR(lexer, "Missing semicolon at end of expression");
+        AUG_INPUT_ERROR(lexer->input,  "Missing semicolon at end of expression");
         return NULL;
     }
 
@@ -1544,7 +1532,7 @@ aug_ast* aug_parse_stmt_if_else(aug_lexer* lexer, aug_ast* expr, aug_ast* block)
         if (else_block == NULL)
         {
             aug_ast_delete(if_else_stmt);
-            AUG_PARSE_ERROR(lexer, "If Else statement missing block");
+            AUG_INPUT_ERROR(lexer->input,  "If Else statement missing block");
             return NULL;
         }
         if_else_stmt->children.push_back(else_block);
@@ -1563,7 +1551,7 @@ aug_ast* aug_parse_stmt_if(aug_lexer* lexer)
     aug_ast* expr = aug_parse_expr(lexer);
     if(expr == NULL)
     {
-        AUG_PARSE_ERROR(lexer, "If statement missing expression");
+        AUG_INPUT_ERROR(lexer->input,  "If statement missing expression");
         return NULL;      
     }
 
@@ -1571,7 +1559,7 @@ aug_ast* aug_parse_stmt_if(aug_lexer* lexer)
     if (block == NULL)
     {
         aug_ast_delete(expr);
-        AUG_PARSE_ERROR(lexer, "If statement missing block");
+        AUG_INPUT_ERROR(lexer->input,  "If statement missing block");
         return NULL;
     }
 
@@ -1595,7 +1583,7 @@ aug_ast* aug_parse_stmt_while(aug_lexer* lexer)
     aug_ast* expr = aug_parse_expr(lexer);
     if (expr == NULL)
     {
-        AUG_PARSE_ERROR(lexer, "While statement missing expression");
+        AUG_INPUT_ERROR(lexer->input,  "While statement missing expression");
         return NULL;
     }
 
@@ -1603,7 +1591,7 @@ aug_ast* aug_parse_stmt_while(aug_lexer* lexer)
     if (block == NULL)
     {
         aug_ast_delete(expr);
-        AUG_PARSE_ERROR(lexer, "While statement missing block");
+        AUG_INPUT_ERROR(lexer->input,  "While statement missing block");
         return NULL;
     }
 
@@ -1618,7 +1606,7 @@ inline aug_ast* aug_parse_param_list(aug_lexer* lexer)
 {
     if (lexer->curr.id != AUG_TOKEN_LPAREN)
     {
-        AUG_PARSE_ERROR(lexer, "Missing opening parentheses in function parameter list");
+        AUG_INPUT_ERROR(lexer->input,  "Missing opening parentheses in function parameter list");
         return NULL;
     }
 
@@ -1638,7 +1626,7 @@ inline aug_ast* aug_parse_param_list(aug_lexer* lexer)
 
             if (lexer->curr.id != AUG_TOKEN_NAME)
             {
-                AUG_PARSE_ERROR(lexer, "Invalid function parameter. Expected parameter name");
+                AUG_INPUT_ERROR(lexer->input,  "Invalid function parameter. Expected parameter name");
                 aug_ast_delete(param_list);
                 return NULL;
             }
@@ -1652,7 +1640,7 @@ inline aug_ast* aug_parse_param_list(aug_lexer* lexer)
 
     if (lexer->curr.id != AUG_TOKEN_RPAREN)
     {
-        AUG_PARSE_ERROR(lexer, "Missing closing parentheses in function parameter list");
+        AUG_INPUT_ERROR(lexer->input,  "Missing closing parentheses in function parameter list");
         aug_ast_delete(param_list);
         return NULL;
     }
@@ -1671,7 +1659,7 @@ aug_ast* aug_parse_stmt_func(aug_lexer* lexer)
 
     if (lexer->curr.id != AUG_TOKEN_NAME)
     {
-        AUG_PARSE_ERROR(lexer, "Missing name in function definition");
+        AUG_INPUT_ERROR(lexer->input,  "Missing name in function definition");
         return NULL;
     }
 
@@ -1713,7 +1701,7 @@ aug_ast* aug_parse_stmt_return(aug_lexer* lexer)
     if (lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(return_stmt);
-        AUG_PARSE_ERROR(lexer, "Missing semicolon at end of expression");
+        AUG_INPUT_ERROR(lexer->input,  "Missing semicolon at end of expression");
         return NULL;
     }
 
@@ -1762,7 +1750,7 @@ aug_ast* aug_parse_block(aug_lexer* lexer)
 {
     if (lexer->curr.id != AUG_TOKEN_LBRACE)
     {
-        AUG_PARSE_ERROR(lexer, "Block missing opening \"{\"");
+        AUG_INPUT_ERROR(lexer->input,  "Block missing opening \"{\"");
         return NULL;
     }
     aug_lexer_move(lexer); // eat LBRACE
@@ -1773,7 +1761,7 @@ aug_ast* aug_parse_block(aug_lexer* lexer)
 
     if (lexer->curr.id != AUG_TOKEN_RBRACE)
     {
-        AUG_PARSE_ERROR(lexer, "Block missing closing \"}\"");
+        AUG_INPUT_ERROR(lexer->input,  "Block missing closing \"}\"");
         aug_ast_delete(block);
         return NULL;
     }
@@ -1784,6 +1772,11 @@ aug_ast* aug_parse_block(aug_lexer* lexer)
 
 aug_ast* aug_parse_root(aug_lexer* lexer)
 {
+    if (lexer == NULL)
+        return NULL;
+
+    aug_lexer_move(lexer); // move to first token
+
     aug_ast* root = aug_ast_new(AUG_AST_ROOT);
     while (aug_ast* stmt = aug_parse_stmt(lexer))
         root->children.push_back(stmt);
@@ -1796,25 +1789,19 @@ aug_ast* aug_parse_root(aug_lexer* lexer)
     return root;
 }
 
-aug_ast* aug_parse(aug_environment& env, const char* code)
+aug_ast* aug_parse(aug_environment& env, aug_input* input)
 {
-    aug_lexer* lexer = aug_lexer_open(code, env.error_callback);
-    if(lexer == NULL)
+    if (input == NULL)
         return NULL;
 
-    aug_ast* root = aug_parse_root(lexer);
-    aug_lexer_close(lexer);
-    return root;
-}
-
-aug_ast* aug_parse_file(aug_environment& env, const char* filename)
-{
-    aug_lexer* lexer = aug_lexer_open_file(filename, env.error_callback);
+    aug_lexer* lexer = aug_lexer_new(input);
     if (lexer == NULL)
         return NULL;
 
     aug_ast* root = aug_parse_root(lexer);
-    aug_lexer_close(lexer);
+
+    aug_lexer_delete(lexer);
+
     return root;
 }
 
@@ -1913,13 +1900,15 @@ struct aug_ir_operand
         bool b;
         int i;
         float f;
-        char bytes[AUG_OPERAND_LEN]; //Used to access raw byte data to bool, float and int types
+        char bytes[sizeof(float)]; //Used to access raw byte data to bool, float and int types
 
         const char* str; // NOTE: weak pointer to token data
     } data;
 
     aug_ir_operand_type type = AUG_IR_OPERAND_NONE;
 };
+
+static_assert(sizeof(float) >= sizeof(int), "Ensure bytes array has enough space to contain both int and float data types");
 
 struct aug_ir_operation
 {
@@ -1948,6 +1937,8 @@ struct aug_ir_frame
 // All the blocks within a compilation/translation unit (i.e. file, code literal)
 struct aug_ir
 {		
+    aug_input* input; // weak ref to source file/code
+
     // Transient IR data
     aug_std_array<aug_ir_frame> frame_stack;
     int label_count;
@@ -1962,9 +1953,10 @@ struct aug_ir
     bool valid;
 };
 
-inline void aug_ir_init(aug_ir& ir)
+inline void aug_ir_init(aug_ir& ir, aug_input* input)
 {
     ir.valid = true;
+    ir.input = input;
     ir.label_count = 0;
     ir.bytecode_offset = 0;
     ir.frame_stack.clear();
@@ -2572,10 +2564,10 @@ inline bool aug_neq(aug_value* result, aug_value* lhs, aug_value* rhs)
 inline bool aug_approxeq(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
-        return aug_set_bool(result, abs(lhs->i - rhs->i) < AUG_VM_APPROX_THRESHOLD),
-        return aug_set_bool(result, abs(lhs->i - rhs->f) < AUG_VM_APPROX_THRESHOLD),
-        return aug_set_bool(result, abs(lhs->f - rhs->i) < AUG_VM_APPROX_THRESHOLD),
-        return aug_set_bool(result, abs(lhs->f - rhs->f) < AUG_VM_APPROX_THRESHOLD),
+        return aug_set_bool(result, abs(lhs->i - rhs->i) < AUG_APPROX_THRESHOLD),
+        return aug_set_bool(result, abs(lhs->i - rhs->f) < AUG_APPROX_THRESHOLD),
+        return aug_set_bool(result, abs(lhs->f - rhs->i) < AUG_APPROX_THRESHOLD),
+        return aug_set_bool(result, abs(lhs->f - rhs->f) < AUG_APPROX_THRESHOLD),
         return aug_set_bool(result, lhs->b == rhs->b)
     )
     return false;
@@ -2591,8 +2583,10 @@ union aug_vm_bytecode_value
     bool b;
     int i;
     float f;
-    unsigned char bytes[AUG_OPERAND_LEN]; //Used to access raw byte data to bool, float and int types
+    unsigned char bytes[sizeof(float)]; //Used to access raw byte data to bool, float and int types
 };
+
+static_assert(sizeof(float) >= sizeof(int), "Ensure bytes array has enough space to contain both int and float data types");
 
 #define AUG_VM_ERROR(vm, ...)                      \
 {                                                  \
@@ -3214,14 +3208,14 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             if (symbol.type == AUG_SYM_NONE)
             {
                 ir.valid = false;
-                AUG_LOG_ERROR(env.error_callback, "Variable %s not defined in current block", token.data.c_str());
+                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Variable %s not defined in current block", token.data.c_str());
                 return;
             }
 
             if (symbol.type == AUG_SYM_FUNC)
             {
                 ir.valid = false;
-                AUG_LOG_ERROR(env.error_callback, "Function %s can not be used as a variable", token.data.c_str());
+                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function %s can not be used as a variable", token.data.c_str());
                 return;
             }
 
@@ -3274,7 +3268,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
                     if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
                     {
                         ir.valid = false;
-                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Left hand operand must be a variable");
                         break;
                     }
 
@@ -3289,7 +3283,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
                     if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
                     {
                         ir.valid = false;
-                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Left hand operand must be a variable");
                         break;
                     }
 
@@ -3304,7 +3298,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
                     if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
                     {
                         ir.valid = false;
-                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Left hand operand must be a variable");
                         break;
                     }
 
@@ -3319,7 +3313,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
                     if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
                     {
                         ir.valid = false;
-                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Left hand operand must be a variable");
                         break;
                     }
 
@@ -3334,7 +3328,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
                     if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
                     {
                         ir.valid = false;
-                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Left hand operand must be a variable");
                         break;
                     }
 
@@ -3349,7 +3343,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
                     if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
                     {
                         ir.valid = false;
-                        AUG_LOG_ERROR(env.error_callback, "Left hand operand must be a variable");
+                        AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Left hand operand must be a variable");
                         break;
                     }
 
@@ -3417,7 +3411,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             else if (symbol.type == AUG_SYM_FUNC)
             {
                 ir.valid = false;
-                AUG_LOG_ERROR(env.error_callback, "Can not assign function %s as a variable", token.data.c_str());
+                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Can not assign function %s as a variable", token.data.c_str());
                 return;
             }
 
@@ -3434,7 +3428,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             if (symbol.offset != AUG_OPCODE_INVALID)
             {
                 ir.valid = false;
-                AUG_LOG_ERROR(env.error_callback, "Variable %s already defined in block", token.data.c_str());
+                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Variable %s already defined in block", token.data.c_str());
                 return;
             }
 
@@ -3545,7 +3539,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             if (symbol.type == AUG_SYM_VAR)
             {
                 ir.valid = false;
-                AUG_LOG_ERROR(env.error_callback, "Can not call variable %s as a function", func_name);
+                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Can not call variable %s as a function", func_name);
                 break;
             }
 
@@ -3555,7 +3549,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
                 if (symbol.argc != arg_count)
                 {
                     ir.valid = false;
-                    AUG_LOG_ERROR(env.error_callback, "Function Call %s passed %d arguments, expected %d", func_name, arg_count, symbol.argc);
+                    AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function Call %s passed %d arguments, expected %d", func_name, arg_count, symbol.argc);
                 }
                 else
                 {
@@ -3589,13 +3583,13 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             if (func_index == -1)
             {
                 ir.valid = false;
-                AUG_LOG_ERROR(env.error_callback, "Function %s not defined", func_name);
+                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function %s not defined", func_name);
                 break;
             }
             if (env.external_functions[func_index] == nullptr)
             {
                 ir.valid = false;
-                AUG_LOG_ERROR(env.error_callback, "External Function %s was not properly registered.", func_name);
+                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "External Function %s was not properly registered.", func_name);
                 break;
             }
 
@@ -3653,7 +3647,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             if (!aug_ir_set_func(ir, func_name, param_count))
             {
                 ir.valid = false;
-                AUG_LOG_ERROR(env.error_callback, "Function %s already defined", func_name);
+                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function %s already defined", func_name);
                 break;
             }
 
@@ -3724,14 +3718,17 @@ void aug_ir_to_bytecode(aug_ir& ir, aug_std_array<char>& bytecode)
 
 // -------------------------------------- API ---------------------------------------------// 
 
-bool aug_compile_script(aug_environment& env, aug_ast* root, aug_script& script)
+bool aug_compile_script(aug_environment& env, aug_input* input, aug_ast* root, aug_script& script)
 {
+    if (root == NULL)
+        return false;
+
     script.bytecode.clear();
     script.globals.clear();
 
     // Generate IR
     aug_ir ir;
-    aug_ir_init(ir);
+    aug_ir_init(ir, input);
     aug_ast_to_ir(env, root, ir);
 
     if (!ir.valid)
@@ -3804,21 +3801,23 @@ void aug_execute(aug_environment& env, const char* filename)
 
 void aug_evaluate(aug_environment& env, const char* code)
 {
-    // Parse file
-    aug_ast* root = aug_parse(env, code);
-    if (root == NULL)
+    if (env.vm == NULL)
         return;
 
-    // Load bytecode into VM
+    aug_input* input = aug_input_open(code, env.error_callback, false);
+    if (input == NULL)
+        return;
+
+    // Parse file
     aug_script script;
-    bool success = aug_compile_script(env, root, script);
+    aug_ast* root = aug_parse(env, input);
+    script.valid = aug_compile_script(env, input, root, script);
+
     // Cleanup 
     aug_ast_delete(root);
+    aug_input_close(input);
 
-    if (!success)
-        return;
-
-    if (env.vm == NULL)
+    if (!script.valid)
         return;
 
     aug_vm& vm = *env.vm;
@@ -3829,16 +3828,19 @@ void aug_evaluate(aug_environment& env, const char* code)
 
 bool aug_compile(aug_environment& env, aug_script& script, const char* filename)
 {
-    // Parse file
-    aug_ast* root = aug_parse_file(env, filename);
-    if (root == NULL)
-    {
-        script.valid = false;
-        return false;
-    }
+    script.valid = false;
 
-    script.valid = aug_compile_script(env, root, script);
+    aug_input* input = aug_input_open(filename, env.error_callback, true);
+    if (input == NULL)
+        return NULL;
+
+    // Parse file
+    aug_ast* root = aug_parse(env, input);
+    script.valid = aug_compile_script(env, input, root, script);
+    
+    // Cleanup 
     aug_ast_delete(root);
+    aug_input_close(input);
 
     return script.valid;
 }
@@ -3851,19 +3853,27 @@ aug_value aug_call(aug_environment& env, aug_script& script, const char* func_na
 
     if (script.globals.count(func_name) == 0)
     {
-        AUG_LOG_ERROR(env.error_callback, "Function name not defined %s", func_name);
+        AUG_LOG_ERROR(env.error_callback, "Function %s not defined", func_name);
         return ret_value;
     }
 
     const aug_symbol& symbol = script.globals[func_name];
-    if (symbol.type != AUG_SYM_FUNC)
+    switch (symbol.type)
     {
-        AUG_LOG_ERROR(env.error_callback, "%s is not defined as a function", func_name);
-        return ret_value;
+        case AUG_SYM_VAR:
+        {
+            AUG_LOG_ERROR(env.error_callback, "Can not call variable %s a function", func_name);
+            return ret_value;
+        }
+        default:
+        {
+            AUG_LOG_ERROR(env.error_callback, "Symbol %s not defined as a function", func_name);
+            return ret_value;
+        }
     }
     if (symbol.argc != (int)args.size())
     {
-        AUG_LOG_ERROR(env.error_callback, "Function Call %s passed %d arguments, expected %d", func_name, (int)args.size(), symbol.argc);
+        AUG_LOG_ERROR(env.error_callback, "Function %s passed %d arguments, expected %d", func_name, (int)args.size(), symbol.argc);
         return ret_value;
     }
 

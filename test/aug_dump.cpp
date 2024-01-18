@@ -7,15 +7,16 @@ void dump_lexer(const char* filename)
 {
 	printf("Tokens \n");
 
-	aug_lexer* lexer = aug_lexer_open_file(filename, NULL);
+	aug_input* input = aug_input_open(filename, nullptr, true);
+
+	aug_lexer* lexer = aug_lexer_new(input);
 	while (lexer && aug_lexer_move(lexer) && lexer->curr.id != AUG_TOKEN_END)
 	{
-		//printf("\tPREV: %s (%s)%d:%d\n", lexer->prev.detail->label, lexer->prev.data.c_str(), lexer->prev.line, lexer->prev.col);
-		printf("\tCURR: %s (%s) %d:%d\n", lexer->curr.detail->label, lexer->curr.data.c_str(), lexer->curr.line, lexer->curr.col);
-		//printf("\tNEXT: %s (%s)%d:%d\n", lexer->next.detail->label, lexer->next.data.c_str(), lexer->next.line, lexer->next.col);
-		printf("\n");
+		printf("\tCURR: %s (%s) %d:%d\n", lexer->curr.detail->label, lexer->curr.data.c_str(), lexer->curr.pos.line, lexer->curr.pos.col);
 	}
-	aug_lexer_close(lexer);
+
+	aug_lexer_delete(lexer);
+	aug_input_close(input);
 
 	printf("End Tokenizing File: %s\n", filename);
 }
@@ -133,6 +134,8 @@ void dump_ast_tree(aug_ast* node, std::string prefix, bool is_leaf)
 
 void dump_ast(aug_ast* root)
 {
+	if (root == nullptr)
+		return;
 	dump_ast_tree(root, "", false);
 }
 
@@ -170,19 +173,19 @@ void aug_dump_file(aug_environment env, const char* filename)
 
 	//dump_lexer(filename);
 
-	aug_ast* root = aug_parse_file(env, filename);
-	if (root == nullptr)
-		return;
+	aug_input* input = aug_input_open(filename, env.error_callback, true);
+	aug_ast* root = aug_parse(env, input);
 
 	dump_ast(root);
 
 	// Generate IR
 	aug_ir ir;
-    aug_ir_init(ir);
+    aug_ir_init(ir, input);
 	aug_ast_to_ir(env, root, ir);
 
 	dump_bytecode(ir);
 
 	// Cleanup
 	aug_ast_delete(root);
+	aug_input_close(input);
 }
