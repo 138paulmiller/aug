@@ -85,6 +85,10 @@ SOFTWARE. */
     - Convert to C 
     -   Reimplement primary data structures, expose custom allocator/deallocator in environment
     - Pushing string literals should not create copy. Create a flag to determine if in memory bytes
+
+    Issues:
+        VM Calling functions should retain global state in between vm sessions. To resolve this, create new API for loading VM for a given script. 
+        This will exec the script ,and retain state. then can call each new script function. Also save state to script
 */
 
 #ifndef __AUG_HEADER__
@@ -291,10 +295,14 @@ void aug_execute(aug_environment& env, const char* filename);
 void aug_evaluate(aug_environment& env, const char* code);
 
 bool aug_compile(aug_environment& env, aug_script& script, const char* filename);
+aug_value aug_call(aug_environment& env, aug_script& script, const char* func_name);
 aug_value aug_call(aug_environment& env, aug_script& script, const char* func_name, const aug_std_array<aug_value>& args);
 
 aug_value aug_none();
-bool aug_to_bool(const aug_value* value);
+bool aug_get_bool(const aug_value& value);
+int aug_get_int(const aug_value& value);
+float aug_get_float(const aug_value& value);
+
 void aug_delete(aug_value* value);
 
 aug_value aug_from_bool(bool data);
@@ -2185,7 +2193,7 @@ inline aug_symbol aug_ir_symbol_relative(aug_ir& ir, const aug_std_string& name)
             const aug_symtable& symtable = scope.symtable;
             if (symtable.count(name))
             {
-                const aug_ir_frame& frame = aug_ir_current_frame(ir);
+                const aug_ir_frame & frame = aug_ir_current_frame(ir);
                 aug_symbol symbol = symtable.at(name);
                 symbol.offset = symbol.offset - frame.base_index;
                 return symbol;
@@ -2271,7 +2279,7 @@ aug_value aug_none()
     return value;
 }
 
-bool aug_to_bool(const aug_value* value)
+bool aug_is_true(const aug_value* value)
 {
     if (value == NULL)
         return false;
@@ -2294,6 +2302,72 @@ bool aug_to_bool(const aug_value* value)
         return value->list != NULL;
     }
     return false;
+}
+
+bool aug_get_bool(const aug_value& value)
+{
+    switch (value.type)
+    {
+    case AUG_NONE:
+        return false;
+    case AUG_BOOL:
+        return value.b;
+    case AUG_INT:
+        return value.i != 0;
+    case AUG_FLOAT:
+        return value.f != 0.0f;
+    case AUG_STRING:
+        return value.str != NULL;
+    case AUG_OBJECT:
+        return value.obj != NULL;
+    case AUG_LIST:
+        return value.list != NULL;
+    }
+    return false;
+}
+
+int aug_get_int(const aug_value& value)
+{
+    switch (value.type)
+    {
+    case AUG_NONE:
+        return 0;
+    case AUG_BOOL:
+        return value.b ? 1 : 0;
+    case AUG_INT:
+        return value.i;
+    case AUG_FLOAT:
+        return (int)value.f;
+    case AUG_STRING:
+        return 0;
+    case AUG_OBJECT:
+        return 0;
+    case AUG_LIST:
+        return 0;
+    }
+    return 0;
+}
+
+float aug_get_float(const aug_value& value)
+{
+    switch (value.type)
+    {
+    case AUG_NONE:
+        return 0.0f;
+    case AUG_BOOL:
+        return value.b ? 1.0f : 0.0f;
+    case AUG_INT:
+        return (float)value.i;
+    case AUG_FLOAT:
+        return value.f;
+    case AUG_STRING:
+        return 0.0f;
+    case AUG_OBJECT:
+        return 0.0f;
+    case AUG_LIST:
+        return 0.0f;
+    }
+    return 0.0f;
 }
 
 inline bool aug_move(aug_value* to, aug_value* from)
@@ -2874,7 +2948,7 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             {
                 aug_value* arg = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
-                if (!aug_set_bool(target, !aug_to_bool(arg)))
+                if (!aug_set_bool(target, !aug_is_true(arg)))
                     AUG_VM_UNOP_ERROR(vm, arg, "!");
                 break;
             }
@@ -2883,7 +2957,7 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
                 aug_value* rhs = aug_vm_pop(vm);
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
-                if (!aug_set_bool(target, aug_to_bool(lhs) && aug_to_bool(rhs)))
+                if (!aug_set_bool(target, aug_is_true(lhs) && aug_is_true(rhs)))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "&");
                 break;
             }
@@ -2892,7 +2966,7 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
                 aug_value* rhs = aug_vm_pop(vm);
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
-                if (!aug_set_bool(target, aug_to_bool(lhs) || aug_to_bool(rhs)))
+                if (!aug_set_bool(target, aug_is_true(lhs) || aug_is_true(rhs)))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "|");
                 break;
             }
@@ -2969,7 +3043,7 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             {
                 const int instruction_offset = aug_vm_read_int(vm);
                 aug_value* top = aug_vm_pop(vm);
-                if (aug_to_bool(top) != 0)
+                if (aug_is_true(top) != 0)
                     vm.instruction = vm.bytecode + instruction_offset;
                 aug_vm_free(top);
                 break;
@@ -2978,7 +3052,7 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
             {
                 const int instruction_offset = aug_vm_read_int(vm);
                 aug_value* top = aug_vm_pop(vm);
-                if (aug_to_bool(top) == 0)
+                if (aug_is_true(top) == 0)
                     vm.instruction = vm.bytecode + instruction_offset;
                 aug_vm_free(top);
                 break;
@@ -3217,7 +3291,6 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
                 return;
             }
 
-            // TODO: determine if variable is local or global
             const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_LOCAL, address_operand);
             break;
@@ -3858,6 +3931,8 @@ aug_value aug_call(aug_environment& env, aug_script& script, const char* func_na
     const aug_symbol& symbol = script.globals[func_name];
     switch (symbol.type)
     {
+        case AUG_SYM_FUNC:
+            break;
         case AUG_SYM_VAR:
         {
             AUG_LOG_ERROR(env.error_callback, "Can not call variable %s a function", func_name);
@@ -3881,6 +3956,9 @@ aug_value aug_call(aug_environment& env, aug_script& script, const char* func_na
 
     aug_vm& vm = *env.vm;
     aug_vm_startup(vm, env.error_callback, script);
+
+     // Push the globals. TODO: retain state ? 
+
 
     // Since the call operation is implicit, setup calling frame manually 
     // push base addr
@@ -3909,13 +3987,23 @@ aug_value aug_call(aug_environment& env, aug_script& script, const char* func_na
 
     aug_vm_execute(vm, env);
 
-    aug_value* top = aug_vm_pop(vm);
-    if (top)
-        ret_value = *top;
+    // If stack is valid
+    if (vm.stack_index > 0)
+    {
+        aug_value* top = aug_vm_pop(vm);
+        if (top)
+            ret_value = *top;
+    }
 
     aug_vm_shutdown(vm);
 
     return ret_value;
+}
+
+aug_value aug_call(aug_environment& env, aug_script& script, const char* func_name)
+{
+    const aug_std_array<aug_value> args;
+    return aug_call(env, script, func_name, args);
 }
 
 aug_value aug_from_bool(bool data)

@@ -225,7 +225,7 @@ aug_value expect(const aug_std_array<aug_value>& args)
 	if (args.size() == 0)
 		return aug_none();
 
-	bool success = aug_to_bool(&args[0]);
+	bool success = aug_get_bool(args[0]);
 	std::string message;
 	for( size_t i = 1; i < args.size(); ++i)
 		message += to_string(args[i]);
