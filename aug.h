@@ -250,6 +250,9 @@ struct aug_script
     aug_symtable globals;
     aug_std_array<char> bytecode;
     bool valid;
+
+    // If the script
+    aug_std_array<aug_value> stack_state;
 };
 
 // Calling frames are used to preserve and access parameters and local variables from the stack within a calling context
@@ -286,28 +289,33 @@ struct aug_vm
     // TODO: debug symtable from addr to func name / variable offsets
 };
 
+// VM Must call both startup before using the VM. When done, must call shutdown.
 void aug_startup(aug_vm& vm, aug_error_callback* error_callback);
 void aug_shutdown(aug_vm& vm);
 
+// Extend the script functions via external functions. 
 // NOTE: changing the registered functions will require a script recompilation. Can not guarantee the external function call will work. 
 void aug_register(aug_vm& vm, const char* func_name, aug_function_callback* callback);
 void aug_unregister(aug_vm& vm, const char* func_name);
 
+// Will reboot the VM to execute the standalone script or code
 void aug_execute(aug_vm& vm, const char* filename);
 void aug_evaluate(aug_vm& vm, const char* code);
 
+// Script
 bool aug_compile(aug_vm& vm, aug_script& script, const char* filename);
-void aug_boot(aug_vm& vm, aug_script& script);
-
+void aug_load(aug_vm& vm, aug_script& script);
+void aug_unload(aug_vm& vm, aug_script& script);
 aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name);
 aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name, const aug_std_array<aug_value>& args);
+
+// Types
+void aug_delete(aug_value* value);
 
 aug_value aug_none();
 bool aug_get_bool(const aug_value& value);
 int aug_get_int(const aug_value& value);
 float aug_get_float(const aug_value& value);
-
-void aug_delete(aug_value* value);
 
 aug_value aug_from_bool(bool data);
 aug_value aug_from_int(int data);
@@ -2846,7 +2854,7 @@ void aug_vm_shutdown(aug_vm& vm)
         AUG_LOG_ERROR(vm.error_callback, "Virtual machine shutdown error. Invalid stack state");
 }
 
-void aug_vm_boot(aug_vm& vm, const aug_script& script)
+void aug_vm_load_script(aug_vm& vm, const aug_script& script)
 {
     if (script.valid && script.bytecode.size() == 0)
         vm.bytecode = NULL;
@@ -2855,6 +2863,33 @@ void aug_vm_boot(aug_vm& vm, const aug_script& script)
     
     vm.instruction = vm.bytecode;
     vm.valid = (vm.bytecode != NULL);
+
+    // Load the script state
+    for (size_t i = 0; i < script.stack_state.size(); ++i)
+    {
+        aug_value* top = aug_vm_push(vm);
+        if (top)
+            *top = script.stack_state[i];
+    }
+}
+
+void aug_vm_save_script(aug_vm& vm, aug_script& script)
+{
+    script.stack_state.clear();
+    while (vm.stack_index > 0)
+    {
+        aug_value* top = aug_vm_pop(vm);
+        if (top)
+            script.stack_state.push_back(*top);
+    }
+}
+
+void aug_vm_free_script(aug_vm& vm, aug_script& script)
+{
+    for (size_t i = 0; i < script.stack_state.size(); ++i)
+    {
+        aug_vm_free(&script.stack_state[i]);
+    }
 }
 
 void aug_vm_execute(aug_vm& vm)
@@ -3268,6 +3303,45 @@ void aug_vm_execute(aug_vm& vm)
         getchar();
 #endif 
     }
+}
+
+aug_value aug_vm_execute_from_frame(aug_vm& vm, int func_addr, const aug_std_array<aug_value>& args)
+{
+    // Manually set expected call frame
+// push base addr
+    aug_value* base = aug_vm_push(vm);
+    base->type = AUG_INT;
+    base->i = vm.base_index;
+
+    // push return address
+    aug_value* return_address = aug_vm_push(vm);
+    return_address->type = AUG_INT;
+    return_address->i = AUG_OPCODE_INVALID;
+
+    // Jump to function call
+    vm.instruction = vm.bytecode + func_addr;
+
+    const size_t arg_count = args.size();
+    for (size_t i = 0; i < arg_count; ++i)
+    {
+        aug_value* value = aug_vm_push(vm);
+        if (value)
+            *value = args[i];
+    }
+
+    vm.base_index = vm.stack_index;
+    aug_vm_execute(vm);
+
+    aug_value ret_value = aug_none();
+    if (vm.stack_index > 0)
+    {
+        // If stack is valid, get the pushed value
+        aug_value* top = aug_vm_pop(vm);
+        if (top)
+            ret_value = *top;
+    }
+
+    return ret_value;
 }
 
 // -------------------------------------- Passes ------------------------------------------------// 
@@ -3894,11 +3968,12 @@ void aug_ir_to_bytecode(aug_ir& ir, aug_std_array<char>& bytecode)
 
 bool aug_compile_script(aug_vm& vm, aug_input* input, aug_ast* root, aug_script& script)
 {
-    if (root == NULL)
-        return false;
-
     script.bytecode.clear();
     script.globals.clear();
+    script.stack_state.clear();
+
+    if (root == NULL)
+        return false;
 
     // Generate IR
     aug_ir ir;
@@ -3976,7 +4051,7 @@ void aug_execute(aug_vm& vm, const char* filename)
         return;
 
     aug_vm_startup(vm);
-    aug_vm_boot(vm, script);
+    aug_vm_load_script(vm, script);
     aug_vm_execute(vm);
     aug_vm_shutdown(vm);
 }
@@ -4000,7 +4075,7 @@ void aug_evaluate(aug_vm& vm, const char* code)
         return;
 
     aug_vm_startup(vm);
-    aug_vm_boot(vm, script);
+    aug_vm_load_script(vm, script);
     aug_vm_execute(vm);
     aug_vm_shutdown(vm);
 }
@@ -4024,10 +4099,16 @@ bool aug_compile(aug_vm& vm, aug_script& script, const char* filename)
     return script.valid;
 }
 
-void aug_boot(aug_vm& vm, aug_script& script)
+void aug_load(aug_vm& vm, aug_script& script)
 {
-    aug_vm_boot(vm, script);
+    aug_vm_load_script(vm, script);
     aug_vm_execute(vm);
+    aug_vm_save_script(vm, script);
+}
+
+void aug_unload(aug_vm& vm, aug_script& script)
+{
+    aug_vm_free_script(vm, script);
 }
 
 aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name, const aug_std_array<aug_value>& args)
@@ -4064,42 +4145,15 @@ aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name, const 
         return ret_value;
     }
 
-    aug_vm_boot(vm, script);
-
-    // Manually set expected call frame
-    // push base addr
-    aug_value* base = aug_vm_push(vm);
-    base->type = AUG_INT;
-    base->i = vm.base_index;
-
-    // push return address
-    aug_value* return_address = aug_vm_push(vm);
-    return_address->type = AUG_INT;
-    return_address->i = AUG_OPCODE_INVALID;
-
-    // Jump to function call
-    vm.instruction = vm.bytecode + symbol.offset;
-
-    const size_t arg_count = args.size();
-    for (size_t i = 0; i < arg_count; ++i)
-    {
-        aug_value* value = aug_vm_push(vm);
-        if (value)
-            *value = args[i];
-    }
+    aug_vm_startup(vm);
+    aug_vm_load_script(vm, script);
 
     // Setup base index to be current stack index
-    vm.base_index = vm.stack_index;
+    const int func_addr = symbol.offset;
+    ret_value = aug_vm_execute_from_frame(vm, func_addr, args);
 
-    aug_vm_execute(vm);
-
-    // If stack is valid
-    if (vm.stack_index > 0)
-    {
-        aug_value* top = aug_vm_pop(vm);
-        if (top)
-            ret_value = *top;
-    }
+    aug_vm_save_script(vm, script);
+    aug_vm_shutdown(vm);
 
     return ret_value;
 }

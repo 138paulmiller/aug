@@ -269,14 +269,15 @@ void aug_test_gameloop(aug_vm& vm)
 {	
 	aug_script script;
 	aug_compile(vm, script, aug_tester::get().filename.c_str());
-
-	aug_boot(vm, script);
+	aug_load(vm, script);
 
 	const int test_count = 10;
 	for(int i = 0; i < test_count; ++i)
 	{
 		aug_call(vm, script, "update");
 	}
+
+	aug_unload(vm, script);
 }
 
 void aug_error(const char* msg)
