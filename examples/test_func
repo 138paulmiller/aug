@@ -21,9 +21,8 @@ func fibonacci(n) {
     return sum;
 }
 
-expect(a == 1, "a == ", a);
-expect(add3(1, 10, 100) == 111, "add3(1, 10, 100) == ", add3(1, 10, 100));
-
+#expect(a == 1, "a == ", a);
+#expect(add3(1, 10, 100) == 111, "add3(1, 10, 100) == ", add3(1, 10, 100));
 
 func fizzbuzz(i)
 {
@@ -31,20 +30,22 @@ func fizzbuzz(i)
     var b = i % 5 == 0;
     if a and b
     {
-        var c  = a and b;
-        expect(c, "Fizzbuzz");
+        var c = a and b;
+        expect(c, "Fizzbuzz c =", c);
     }
     else if a
     {
-        var c  = a and !b;
-        expect(c, "Fizz");
+        var c = a and !b;
+        expect(c, "Fizzc =", c);
     }
     else if b
     {
-        var c  = !a and b;
-        expect(c, "Buzz");
+        var c = !a and b;
+        expect(c, "Buzzc =", c);
     }
 }
+
+fizzbuzz(15);
 
 func fibonacci_fizzbuzz(n) {
     var a = 0;

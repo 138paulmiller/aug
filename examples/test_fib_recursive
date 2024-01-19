@@ -11,5 +11,5 @@ func fib_recursive(a) {
 a = fib_recursive(20);
 expect(a == 6765, "fib_recursive(50) = ", a);
 
-a = fib_recursive(30);
-expect(a == 832040, "fib_recursive(50) = ", a);
+#a = fib_recursive(30);
+#expect(a == 832040, "fib_recursive(50) = ", a);

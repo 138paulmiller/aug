@@ -87,12 +87,16 @@ SOFTWARE. */
     - Pushing string literals should not create copy. Create a flag to determine if in memory bytes
 
     Issues:
-        VM Calling functions should retain global state in between vm sessions. To resolve this, create new API for loading VM for a given script. 
-        This will exec the script ,and retain state. then can call each new script function. Also save state to script
+        - Accessing variables outside the current calling frame (function scope) causes issues. The 2 return and base index params.
+            Handle this via global ?  
+        - VM Calling functions should retain global state in between vm sessions. To resolve this, create new API for loading VM for a given script. 
+            This will exec the script ,and retain state. then can call each new script function. Also save state to script
 */
 
 #ifndef __AUG_HEADER__
 #define __AUG_HEADER__
+
+#define AUG_DEBUG_VM 0 // for console debug
 
 // Max size of the virtual machine stack
 #ifndef AUG_STACK_SIZE
@@ -223,6 +227,7 @@ enum aug_symbol_type
 // Script symbols 
 struct aug_symbol
 {
+    bool global;
     aug_symbol_type type;
     // Functions - offset is the bytecode address, argc is the number of expected params
     // Variables - offset is the stack offset from the base index
@@ -1808,6 +1813,8 @@ aug_ast* aug_parse(aug_vm& vm, aug_input* input)
 	AUG_OPCODE(PUSH_LIST)         \
 	AUG_OPCODE(PUSH_LOCAL)        \
 	AUG_OPCODE(LOAD_LOCAL)        \
+	AUG_OPCODE(PUSH_GLOBAL)       \
+	AUG_OPCODE(LOAD_GLOBAL)       \
 	AUG_OPCODE(ADD)               \
 	AUG_OPCODE(SUB)               \
 	AUG_OPCODE(MUL)               \
@@ -2048,6 +2055,14 @@ inline aug_ir_scope& aug_ir_current_scope(aug_ir& ir)
     return frame.scope_stack.back();
 }
 
+inline bool aug_ir_current_scope_is_global(aug_ir& ir)
+{
+    aug_ir_frame& frame = aug_ir_current_frame(ir);
+    if(ir.frame_stack.size() == 1 && frame.scope_stack.size() == 1)
+        return true;
+    return false;
+}
+
 inline int aug_ir_local_offset(aug_ir& ir)
 {
     const aug_ir_scope& scope = aug_ir_current_scope(ir);
@@ -2123,6 +2138,7 @@ inline bool aug_ir_set_var(aug_ir& ir, const aug_std_string& name)
     sym.type = AUG_SYM_VAR;
     sym.offset = offset;
     sym.argc = 0;
+    sym.global = aug_ir_current_scope_is_global(ir);
 
     scope.symtable[name] = sym;
     return true;
@@ -2139,6 +2155,7 @@ inline bool aug_ir_set_func(aug_ir& ir, const aug_std_string& name, int param_co
     sym.type = AUG_SYM_FUNC;
     sym.offset = offset;
     sym.argc = param_count;
+    sym.global = aug_ir_current_scope_is_global(ir);
 
     scope.symtable[name] = sym;
     return true;
@@ -2170,15 +2187,19 @@ inline aug_symbol aug_ir_symbol_relative(aug_ir& ir, const aug_std_string& name)
     for (int i = ir.frame_stack.size() - 1; i >= 0; --i)
     {
         const aug_ir_frame& frame = ir.frame_stack.at(i);
-        for (int i = frame.scope_stack.size() - 1; i >= 0; --i)
+        for (int j = frame.scope_stack.size() - 1; j >= 0; --j)
         {
-            const aug_ir_scope& scope = frame.scope_stack.at(i);
+            const aug_ir_scope& scope = frame.scope_stack.at(j);
             const aug_symtable& symtable = scope.symtable;
             if (symtable.count(name))
             {
-                const aug_ir_frame & frame = aug_ir_current_frame(ir);
                 aug_symbol symbol = symtable.at(name);
-                symbol.offset = symbol.offset - frame.base_index;
+                // global frame
+                if( !symbol.global )
+                {
+                    const aug_ir_frame& frame = aug_ir_current_frame(ir);
+                    symbol.offset = symbol.offset - frame.base_index; 
+                }
                 return symbol;
             }
         }
@@ -2697,23 +2718,27 @@ inline void aug_vm_free(aug_value* value)
     aug_delete(value);
 }
 
-inline aug_value* aug_vm_get_local(aug_vm& vm, int stack_offset)
+inline aug_value* aug_vm_get_global(aug_vm& vm, int stack_offset)
 {
-    const int offset = vm.base_index + stack_offset;
-    if (offset < 0)
+    if (stack_offset < 0)
     {
         if (vm.instruction)
             AUG_VM_ERROR(vm, "Stack underflow");
         return NULL;
     }
-    else if (offset >= AUG_STACK_SIZE)
+    else if (stack_offset >= AUG_STACK_SIZE)
     {
         if (vm.instruction)
             AUG_VM_ERROR(vm, "Stack overflow");
         return NULL;
     }
 
-    return &vm.stack[offset];
+    return &vm.stack[stack_offset];
+}
+
+inline aug_value* aug_vm_get_local(aug_vm& vm, int stack_offset)
+{
+    return aug_vm_get_global(vm, vm.base_index + stack_offset);
 }
 
 inline int aug_vm_read_bool(aug_vm& vm)
@@ -2759,9 +2784,9 @@ void aug_vm_startup(aug_vm& vm)
 
 void aug_vm_shutdown(aug_vm& vm)
 {
-    if (!vm.valid)
-        // Cleanup 
-        return;
+    // Cleanup stack values. Free any outstanding values
+    while(vm.stack_index > 0)
+        aug_vm_free(aug_vm_pop(vm));
 
     // Ensure that stack has returned to beginning state
     if (vm.stack_index != 0)
@@ -2777,8 +2802,6 @@ void aug_vm_boot(aug_vm& vm, const aug_script& script)
     
     vm.instruction = vm.bytecode;
     vm.valid = (vm.bytecode != NULL);
-    vm.stack_index = 0;
-    vm.base_index = 0;
 }
 
 void aug_vm_execute(aug_vm& vm)
@@ -2787,9 +2810,6 @@ void aug_vm_execute(aug_vm& vm)
     {
         aug_opcode opcode = (aug_opcode) (*vm.instruction);
         ++vm.instruction;
-
-        //printf("%s %s", aug_opcode_labels[(int)opcode], aug_value_type_labels[(int)aug_vm_top(vm)->type]);
-        //getchar();
 
         switch(opcode)
         {
@@ -2876,6 +2896,24 @@ void aug_vm_execute(aug_vm& vm)
             {
                 const int stack_offset = aug_vm_read_int(vm);
                 aug_value* local = aug_vm_get_local(vm, stack_offset);
+
+                aug_value* top = aug_vm_pop(vm);
+                aug_move(local, top);
+                break;
+            }
+            case AUG_OPCODE_PUSH_GLOBAL:
+            {
+                const int stack_offset = aug_vm_read_int(vm);
+                aug_value* local = aug_vm_get_global(vm, stack_offset);
+
+                aug_value* top = aug_vm_push(vm);
+                aug_assign(top, local);
+                break;
+            }
+            case AUG_OPCODE_LOAD_GLOBAL:
+            {
+                const int stack_offset = aug_vm_read_int(vm);
+                aug_value* local = aug_vm_get_global(vm, stack_offset);
 
                 aug_value* top = aug_vm_pop(vm);
                 aug_move(local, top);
@@ -3156,13 +3194,26 @@ void aug_vm_execute(aug_vm& vm)
                 // UNSUPPORTED!!!!
             break;
         }
-    }
 
-    if (!vm.valid)
-    {
-        // Cleanup if failed. Free any outstanding values
-        for (int i = 0; i < vm.stack_index; ++i)
-            aug_vm_free(aug_vm_pop(vm));
+#if AUG_DEBUG_VM
+        printf("%s\n", aug_opcode_labels[(int)opcode]);
+
+        for(int i = 0; i < 16; ++i)
+        {
+            aug_value val = vm.stack[i];
+            printf("%s %d: %s ", (vm.stack_index-1) == i ? ">" : " ", i, aug_value_type_labels[(int)val.type]);
+            switch(val.type)
+            {
+                case AUG_INT: printf("%d", val.i); break;
+                case AUG_FLOAT: printf("%f", val.f); break;
+                case AUG_STRING: printf("%s", val.str->c_str()); break;
+                case AUG_BOOL: printf("%s", val.b ? "true" : "false"); break;
+                default: break;
+            }
+            printf("\n");
+        }
+        getchar();
+#endif 
     }
 }
 
@@ -3195,8 +3246,8 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
                 aug_ast_to_ir(vm, stmt, ir);
 
             // Restore stack
-            const aug_ir_operand delta = aug_ir_operand_from_int(aug_ir_local_offset(ir));
-            aug_ir_add_operation(ir, AUG_OPCODE_DEC_STACK, delta);
+            //const aug_ir_operand delta = aug_ir_operand_from_int(aug_ir_local_offset(ir));
+            //aug_ir_add_operation(ir, AUG_OPCODE_DEC_STACK, delta);
             aug_ir_add_operation(ir, AUG_OPCODE_EXIT);
 
             aug_ir_pop_frame(ir); // pop global frame
@@ -3283,7 +3334,10 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
             }
 
             const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-            aug_ir_add_operation(ir, AUG_OPCODE_PUSH_LOCAL, address_operand);
+            if(symbol.global)
+                aug_ir_add_operation(ir, AUG_OPCODE_PUSH_GLOBAL, address_operand);
+            else
+                aug_ir_add_operation(ir, AUG_OPCODE_PUSH_LOCAL, address_operand);
             break;
         }
         case AUG_AST_UNARY_OP:
@@ -3307,6 +3361,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
 
             aug_ast_to_ir(vm, children[0], ir); // LHS
             aug_ast_to_ir(vm, children[1], ir); // RHS
+            bool load_var = false;
 
             switch (token.id)
             {
@@ -3334,10 +3389,8 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
                         break;
                     }
 
-                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
                     aug_ir_add_operation(ir, AUG_OPCODE_ADD);
-                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    load_var = true;
                     break;
                 }
                 case AUG_TOKEN_SUB_EQ:
@@ -3349,10 +3402,9 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
                         break;
                     }
 
-                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+                    load_var = true;
                     aug_ir_add_operation(ir, AUG_OPCODE_SUB);
-                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    load_var = true;
                     break;
                 }
                 case AUG_TOKEN_MUL_EQ:
@@ -3364,10 +3416,8 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
                         break;
                     }
 
-                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
                     aug_ir_add_operation(ir, AUG_OPCODE_MUL);
-                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    load_var = true;
                     break;
                 }
                 case AUG_TOKEN_DIV_EQ:
@@ -3379,10 +3429,8 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
                         break;
                     }
 
-                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
                     aug_ir_add_operation(ir, AUG_OPCODE_DIV);
-                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    load_var = true;
                     break;
                 }
                 case AUG_TOKEN_MOD_EQ:
@@ -3394,10 +3442,8 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
                         break;
                     }
 
-                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
                     aug_ir_add_operation(ir, AUG_OPCODE_MOD);
-                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    load_var = true;
                     break;
                 }
                 case AUG_TOKEN_POW_EQ:
@@ -3409,15 +3455,23 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
                         break;
                     }
 
-                    const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-                    const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
                     aug_ir_add_operation(ir, AUG_OPCODE_POW);
-                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                    load_var = true;
                     break;
                 }
                 default:
                     assert(0);
                     break;
+            }
+
+            if(load_var)
+            {
+                const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
+                const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+                if(symbol.global)
+                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_GLOBAL, address_operand);
+                else
+                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
             }
             break;
         }
@@ -3478,7 +3532,10 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
             }
 
             const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-            aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+            if(symbol.global)
+                aug_ir_add_operation(ir, AUG_OPCODE_LOAD_GLOBAL, address_operand);
+            else
+                aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
             break;
         }
         case AUG_AST_STMT_DEFINE_VAR:
@@ -3954,7 +4011,7 @@ aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name, const 
 
     aug_vm_boot(vm, script);
 
-    // Since the call operation is implicit, setup calling frame manually 
+    // Manually set expected call frame
     // push base addr
     aug_value* base = aug_vm_push(vm);
     base->type = AUG_INT;
