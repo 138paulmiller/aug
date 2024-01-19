@@ -3595,6 +3595,8 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         {
             if (children.size() == 1) // token = [0]
                 aug_ast_to_ir(vm, children[0], ir);
+            else
+                aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
 
             const aug_symbol symbol = aug_ir_get_symbol_local(ir, token.data);
             if (symbol.offset != AUG_OPCODE_INVALID)
