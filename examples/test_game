@@ -1,0 +1,6 @@
+i = 0;
+func update(){
+	j = i * 2;
+	i += 1;
+	print(i, " ", j);
+}

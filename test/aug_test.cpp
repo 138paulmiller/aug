@@ -3,10 +3,10 @@
 
 #include <string.h>
 
-void aug_dump_file(aug_environment env, const char* filename);
+void aug_dump_file(aug_vm vm, const char* filename);
 
 struct aug_tester;
-typedef void(aug_tester_func)(aug_environment&);
+typedef void(aug_tester_func)(aug_vm&);
 
 struct aug_tester
 {
@@ -47,15 +47,15 @@ public:
 			printf("[TEST]\t%s\n", filename.c_str());
 	}
 
-	void run(aug_environment& env, aug_tester_func* func = nullptr)
+	void run(aug_vm& vm, aug_tester_func* func = nullptr)
 	{
 		if (dump)
-			aug_dump_file(env, filename.c_str());
+			aug_dump_file(vm, filename.c_str());
 		 
 		if (func != nullptr)
-			func(env);
+			func(vm);
 		else
-			aug_execute(env, filename.c_str());
+			aug_execute(vm, filename.c_str());
 	}
 
 	void end()
@@ -235,17 +235,17 @@ aug_value expect(const aug_std_array<aug_value>& args)
 	return aug_none();
 }
 
-void aug_test_native(aug_environment& env)
+void aug_test_native(aug_vm& vm)
 {
 	aug_script script;
-	aug_compile(env, script, aug_tester::get().filename.c_str());
+	aug_compile(vm, script, aug_tester::get().filename.c_str());
 
 	{	
 		aug_std_array<aug_value> args;
 		args.push_back(aug_from_int(5));
 		//args.push_back(aug_from_int(30));
 
-		aug_value value = aug_call(env, script, "fibonacci", args);
+		aug_value value = aug_call(vm, script, "fibonacci", args);
 		
 		bool success = value.i == 5;
 		//bool success = value.i == 832040;
@@ -257,11 +257,25 @@ void aug_test_native(aug_environment& env)
 		aug_std_array<aug_value> args;
 		args.push_back(aug_from_int(n));
 
-		aug_value value = aug_call(env, script, "count", args);
+		aug_value value = aug_call(vm, script, "count", args);
 		
 		bool success = value.i == n;
 		const std::string message = "count = " + to_string(value);
 		aug_tester::get().verify(success, message);
+	}
+}
+
+void aug_test_gameloop(aug_vm& vm)
+{	
+	aug_script script;
+	aug_compile(vm, script, aug_tester::get().filename.c_str());
+
+	aug_boot(vm, script);
+
+	const int test_count = 10;
+	for(int i = 0; i < test_count; ++i)
+	{
+		aug_call(vm, script, "update");
 	}
 }
 
@@ -272,11 +286,11 @@ void aug_error(const char* msg)
 
 int aug_test(int argc, char** argv)
 {
-	aug_environment env;
-	aug_startup(env, aug_error);
-	aug_register(env, "print", print);
-	aug_register(env, "expect", expect);
-	aug_register(env, "sum", sum);
+	aug_vm vm;
+	aug_startup(vm, aug_error);
+	aug_register(vm, "print", print);
+	aug_register(vm, "expect", expect);
+	aug_register(vm, "sum", sum);
 
 	aug_tester::startup();
 	for(int i = 1; i < argc; ++i)
@@ -297,7 +311,7 @@ int aug_test(int argc, char** argv)
 				break;
 			}
 			aug_tester::get().begin(argv[i]);
-			aug_tester::get().run(env);
+			aug_tester::get().run(vm);
 			aug_tester::get().end();
 		}
 		else if (argv[i] && strcmp(argv[i], "--test_native") == 0)
@@ -309,7 +323,19 @@ int aug_test(int argc, char** argv)
 			}
 
 			aug_tester::get().begin(argv[i]);
-			aug_tester::get().run(env, aug_test_native);
+			aug_tester::get().run(vm, aug_test_native);
+			aug_tester::get().end();
+		}
+		else if (argv[i] && strcmp(argv[i], "--test_game") == 0)
+		{
+			if (++i >= argc)
+			{
+				printf("aug_test: --test_game parameter expected filename!");
+				break;
+			}
+
+			aug_tester::get().begin(argv[i]);
+			aug_tester::get().run(vm, aug_test_gameloop);
 			aug_tester::get().end();
 		}
 		else if (argv[i] && strcmp(argv[i], "--test_all") == 0)
@@ -325,13 +351,13 @@ int aug_test(int argc, char** argv)
 				const char* arg = argv[i++];
 
 				aug_tester::get().begin(arg);
-				aug_tester::get().run(env);
+				aug_tester::get().run(vm);
 				aug_tester::get().end();
 			}
 		}
 	}
 	aug_tester::shutdown();
 
-	aug_shutdown(env);
+	aug_shutdown(vm);
 	return 0;
 }

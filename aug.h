@@ -83,7 +83,7 @@ SOFTWARE. */
     - Native - Support return value in function callbacks
     - Semantic Pass - resolve IR pass any potential naming, field,  or return issues     
     - Convert to C 
-    -   Reimplement primary data structures, expose custom allocator/deallocator in environment
+    -   Reimplement primary data structures, expose custom allocator/deallocator in vmironment
     - Pushing string literals should not create copy. Create a flag to determine if in memory bytes
 
     Issues:
@@ -96,7 +96,7 @@ SOFTWARE. */
 
 // Max size of the virtual machine stack
 #ifndef AUG_STACK_SIZE
-#define AUG_STACK_SIZE (1024 * 128)
+#define AUG_STACK_SIZE (1024 * 16)
 #endif//AUG_STACK_SIZE
 
 #ifndef AUG_APPROX_THRESHOLD
@@ -261,42 +261,34 @@ struct aug_vm
     const char* instruction;
     const char* bytecode;
  
-    aug_value stack[AUG_STACK_SIZE];
+    aug_value* stack;
     int stack_index;
     int base_index;
 
-    // TODO: debug symtable from addr to func name / variable offsets
-};
-
-// USer specific environment
-struct aug_environment
-{
     // External functions are native functions that can be called from scripts   
     // This external function map contains the user's registered functions. 
     // Use aug_register/aug_unregister to modify these fields
     aug_std_array<aug_function_callback*> external_functions;
     aug_std_array<aug_std_string>         external_function_names;
 
-    // The error callback is triggered when the engine triggers an error, either parsing or runtime. 
-    aug_error_callback* error_callback;
-
-    // The virtual machine instance
-    aug_vm* vm;
+    // TODO: debug symtable from addr to func name / variable offsets
 };
 
-void aug_startup(aug_environment& env, aug_error_callback* error_callback);
-void aug_shutdown(aug_environment& env);
+void aug_startup(aug_vm& vm, aug_error_callback* error_callback);
+void aug_shutdown(aug_vm& vm);
 
 // NOTE: changing the registered functions will require a script recompilation. Can not guarantee the external function call will work. 
-void aug_register(aug_environment& env, const char* func_name, aug_function_callback* callback);
-void aug_unregister(aug_environment& env, const char* func_name);
+void aug_register(aug_vm& vm, const char* func_name, aug_function_callback* callback);
+void aug_unregister(aug_vm& vm, const char* func_name);
 
-void aug_execute(aug_environment& env, const char* filename);
-void aug_evaluate(aug_environment& env, const char* code);
+void aug_execute(aug_vm& vm, const char* filename);
+void aug_evaluate(aug_vm& vm, const char* code);
 
-bool aug_compile(aug_environment& env, aug_script& script, const char* filename);
-aug_value aug_call(aug_environment& env, aug_script& script, const char* func_name);
-aug_value aug_call(aug_environment& env, aug_script& script, const char* func_name, const aug_std_array<aug_value>& args);
+bool aug_compile(aug_vm& vm, aug_script& script, const char* filename);
+void aug_boot(aug_vm& vm, aug_script& script);
+
+aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name);
+aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name, const aug_std_array<aug_value>& args);
 
 aug_value aug_none();
 bool aug_get_bool(const aug_value& value);
@@ -1137,15 +1129,6 @@ bool aug_lexer_move(aug_lexer* lexer)
 
 // -------------------------------------- Parser / Abstract Syntax Tree ---------------------------------------// 
 
-#define AUG_COMPILE_ERROR(lexer, token, ...)           \
-{                                                      \
-    lexer->valid = false;                              \
-    token.id = AUG_TOKEN_ERR;                          \
-    aug_error_hint(lexer->error_callback,              \
-        lexer->input_source.c_str(),                   \
-        aug_lexer_prev_pos(lexer));                    \
-    AUG_LOG_ERROR(lexer->error_callback, __VA_ARGS__); \
-
 enum aug_ast_id : uint8_t
 {
     AUG_AST_ROOT,
@@ -1795,7 +1778,7 @@ aug_ast* aug_parse_root(aug_lexer* lexer)
     return root;
 }
 
-aug_ast* aug_parse(aug_environment& env, aug_input* input)
+aug_ast* aug_parse(aug_vm& vm, aug_input* input)
 {
     if (input == NULL)
         return NULL;
@@ -2765,21 +2748,13 @@ inline const char* aug_vm_read_bytes(aug_vm& vm)
     return vm.instruction - len;
 }
 
-void aug_vm_startup(aug_vm& vm, aug_error_callback* error_callback, const aug_script& script)
+void aug_vm_startup(aug_vm& vm)
 {
-    if (script.bytecode.size() == 0)
-        vm.bytecode = NULL;
-    else
-        vm.bytecode = &script.bytecode[0];
-    
-    vm.error_callback = error_callback;
-    vm.instruction = vm.bytecode;
+    vm.bytecode = NULL;
+    vm.instruction = NULL;
     vm.stack_index = 0;
     vm.base_index = 0;
-    vm.valid = true; 
-
-    for(int i = 0; i < AUG_STACK_SIZE; ++i)
-        vm.stack[i] = aug_none();
+    vm.valid = false; 
 }
 
 void aug_vm_shutdown(aug_vm& vm)
@@ -2793,12 +2768,28 @@ void aug_vm_shutdown(aug_vm& vm)
         AUG_LOG_ERROR(vm.error_callback, "Virtual machine shutdown error. Invalid stack state");
 }
 
-void aug_vm_execute(aug_vm& vm, aug_environment& env)
+void aug_vm_boot(aug_vm& vm, const aug_script& script)
+{
+    if (script.valid && script.bytecode.size() == 0)
+        vm.bytecode = NULL;
+    else
+        vm.bytecode = &script.bytecode[0];
+    
+    vm.instruction = vm.bytecode;
+    vm.valid = (vm.bytecode != NULL);
+    vm.stack_index = 0;
+    vm.base_index = 0;
+}
+
+void aug_vm_execute(aug_vm& vm)
 {
     while(vm.instruction)
     {
         aug_opcode opcode = (aug_opcode) (*vm.instruction);
         ++vm.instruction;
+
+        //printf("%s %s", aug_opcode_labels[(int)opcode], aug_value_type_labels[(int)aug_vm_top(vm)->type]);
+        //getchar();
 
         switch(opcode)
         {
@@ -2863,12 +2854,12 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
                 int list_count = aug_vm_read_int(vm);
                 while(list_count-- > 0)
                 {
-                    aug_value entry;
+                    aug_value entry = aug_none();
                     aug_move(&entry, aug_vm_pop(vm));
                     value.list->data.push_back(entry);
                 }
 
-                aug_value* top = aug_vm_push(vm);                
+                aug_value* top = aug_vm_push(vm);          
                 aug_move(top, &value);
                 break;
             }
@@ -3136,19 +3127,19 @@ void aug_vm_execute(aug_vm& vm, aug_environment& env)
                 }
 
                 // Check function call
-                if (func_index < 0 || func_index >= (int)env.external_functions.size() || env.external_functions[func_index] == NULL)
+                if (func_index < 0 || func_index >= (int)vm.external_functions.size() || vm.external_functions[func_index] == NULL)
                 {
                     AUG_VM_ERROR(vm, "External Function Called at index %d not registered", func_index);
                 }
                 else if ((int)args.size() != arg_count)
                 {
-                    const aug_std_string& func_name = env.external_function_names[func_index];
+                    const aug_std_string& func_name = vm.external_function_names[func_index];
                     AUG_VM_ERROR(vm, "External Function Call %s passed %d arguments, expected %d", func_name.c_str(), (int)args.size(), arg_count);
                 }
                 else
                 {
                     // Call the external function. Move return value on to top of stack
-                    aug_value ret_value = env.external_functions[func_index](args);
+                    aug_value ret_value = vm.external_functions[func_index](args);
                     aug_value* top = aug_vm_push(vm);
                     if (top)
                         aug_move(top, &ret_value);
@@ -3184,7 +3175,7 @@ bool aug_pass_semantic_check(const aug_ast* node)
 }
 // -------------------------------------- Transformations ---------------------------------------// 
 
-void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
+void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
 {
     if(node == NULL || !ir.valid)
         return;
@@ -3201,7 +3192,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             aug_ir_push_frame(ir, 0); // push a global frame
 
             for (aug_ast* stmt : children)
-                aug_ast_to_ir(env, stmt, ir);
+                aug_ast_to_ir(vm, stmt, ir);
 
             // Restore stack
             const aug_ir_operand delta = aug_ir_operand_from_int(aug_ir_local_offset(ir));
@@ -3214,7 +3205,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
         case AUG_AST_BLOCK: 
         {
             for (aug_ast* stmt : children)
-                aug_ast_to_ir(env, stmt, ir);
+                aug_ast_to_ir(vm, stmt, ir);
             break;
         }
         case AUG_AST_LITERAL:
@@ -3299,7 +3290,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
         {
             assert(children.size() == 1); // token [0]
 
-            aug_ast_to_ir(env, children[0], ir);
+            aug_ast_to_ir(vm, children[0], ir);
 
             switch (token.id)
             {
@@ -3314,8 +3305,8 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
         {
             assert(children.size() == 2); // [0] token [1]
 
-            aug_ast_to_ir(env, children[0], ir); // LHS
-            aug_ast_to_ir(env, children[1], ir); // RHS
+            aug_ast_to_ir(vm, children[0], ir); // LHS
+            aug_ast_to_ir(vm, children[1], ir); // RHS
 
             switch (token.id)
             {
@@ -3434,7 +3425,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
         {
             const int expr_count = children.size();
             for (int i = expr_count - 1; i >= 0; --i)
-                aug_ast_to_ir(env, children[i], ir);
+                aug_ast_to_ir(vm, children[i], ir);
 
             const aug_ir_operand& count_operand = aug_ir_operand_from_int(expr_count);
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_LIST, count_operand);
@@ -3444,7 +3435,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
         {
             if (children.size() == 1)
             {
-                aug_ast_to_ir(env, children[0], ir);
+                aug_ast_to_ir(vm, children[0], ir);
 
                 // discard the top if a non-assignment binop
                 bool discard = true;
@@ -3471,7 +3462,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
         case AUG_AST_STMT_ASSIGN_VAR:
         {
             if (children.size() == 1) // token = [0]
-                aug_ast_to_ir(env, children[0], ir);
+                aug_ast_to_ir(vm, children[0], ir);
 
             const aug_symbol& symbol = aug_ir_symbol_relative(ir, token.data);
             if (symbol.type == AUG_SYM_NONE)
@@ -3493,7 +3484,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
         case AUG_AST_STMT_DEFINE_VAR:
         {
             if (children.size() == 1) // token = [0]
-                aug_ast_to_ir(env, children[0], ir);
+                aug_ast_to_ir(vm, children[0], ir);
 
             const aug_symbol symbol = aug_ir_get_symbol_local(ir, token.data);
             if (symbol.offset != AUG_OPCODE_INVALID)
@@ -3514,14 +3505,14 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
 
             // Evaluate expression. 
-            aug_ast_to_ir(env, children[0], ir);
+            aug_ast_to_ir(vm, children[0], ir);
 
             //Jump to end if false
             const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
 
             // True block
             aug_ir_push_scope(ir);
-            aug_ast_to_ir(env, children[1], ir);
+            aug_ast_to_ir(vm, children[1], ir);
             aug_ir_pop_scope(ir);
 
             const size_t end_block_addr = ir.bytecode_offset;
@@ -3539,14 +3530,14 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
 
             // Evaluate expression. 
-            aug_ast_to_ir(env, children[0], ir);
+            aug_ast_to_ir(vm, children[0], ir);
 
             //Jump to else if false
             const size_t else_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
 
             // True block
             aug_ir_push_scope(ir);
-            aug_ast_to_ir(env, children[1], ir);
+            aug_ast_to_ir(vm, children[1], ir);
             aug_ir_pop_scope(ir);
 
             //Jump to end after true
@@ -3555,7 +3546,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
 
             // Else block
             aug_ir_push_scope(ir);
-            aug_ast_to_ir(env, children[2], ir);
+            aug_ast_to_ir(vm, children[2], ir);
             aug_ir_pop_scope(ir);
 
             // Tag end address
@@ -3579,14 +3570,14 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             const aug_ir_operand& begin_block_operand = aug_ir_operand_from_int(ir.bytecode_offset);
 
             // Evaluate expression. 
-            aug_ast_to_ir(env, children[0], ir);
+            aug_ast_to_ir(vm, children[0], ir);
 
             //Jump to end if false
             const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
 
             // Loop block
             aug_ir_push_scope(ir);
-            aug_ast_to_ir(env, children[1], ir);
+            aug_ast_to_ir(vm, children[1], ir);
             aug_ir_pop_scope(ir);
 
             // Jump back to beginning, expr evaluation 
@@ -3629,7 +3620,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
                     size_t push_return_addr = aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, aug_ir_operand_from_int(0));
 
                     for (const aug_ast* arg : children)
-                        aug_ast_to_ir(env, arg, ir);
+                        aug_ast_to_ir(vm, arg, ir);
 
                     const aug_ir_operand& func_addr = aug_ir_operand_from_int(symbol.offset); // func addr
                     aug_ir_add_operation(ir, AUG_OPCODE_CALL, func_addr);
@@ -3642,9 +3633,9 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
 
             // Check if the symbol is a registered function
             int func_index = -1;
-            for (int i = 0; i < (int)env.external_function_names.size(); ++i)
+            for (int i = 0; i < (int)vm.external_function_names.size(); ++i)
             {
-                if (env.external_function_names[i] == func_name)
+                if (vm.external_function_names[i] == func_name)
                 {
                     func_index = i;
                     break;
@@ -3657,7 +3648,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
                 AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function %s not defined", func_name);
                 break;
             }
-            if (env.external_functions[func_index] == nullptr)
+            if (vm.external_functions[func_index] == nullptr)
             {
                 ir.valid = false;
                 AUG_INPUT_ERROR_AT(ir.input, &token.pos, "External Function %s was not properly registered.", func_name);
@@ -3665,7 +3656,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             }
 
             for (int i = arg_count - 1; i >= 0; --i)
-                aug_ast_to_ir(env, children[i], ir);
+                aug_ast_to_ir(vm, children[i], ir);
 
             const aug_ir_operand& func_index_operand = aug_ir_operand_from_int(func_index);
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, func_index_operand);
@@ -3679,7 +3670,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
             const aug_ir_operand& offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
             if (children.size() == 1) //return [0];
             {
-                aug_ast_to_ir(env, children[0], ir);
+                aug_ast_to_ir(vm, children[0], ir);
                 aug_ir_add_operation(ir, AUG_OPCODE_RETURN, offset);
             }
             else
@@ -3698,7 +3689,7 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
         {
             // start stack offset at beginning of parameter (this will be nagative relative to the current frame)
             for (const aug_ast* param : children)
-                aug_ast_to_ir(env, param, ir);
+                aug_ast_to_ir(vm, param, ir);
             break;
         }
         case AUG_AST_FUNC_DEF:
@@ -3724,11 +3715,11 @@ void aug_ast_to_ir(aug_environment& env, const aug_ast* node, aug_ir& ir)
 
             // Parameter frame
             aug_ir_push_scope(ir);
-            aug_ast_to_ir(env, children[0], ir);
+            aug_ast_to_ir(vm, children[0], ir);
 
             // Function block frame
             aug_ir_push_frame(ir, param_count);
-            aug_ast_to_ir(env, children[1], ir);
+            aug_ast_to_ir(vm, children[1], ir);
 
             // Ensure there is a return
             if (ir.operations.at(ir.operations.size() - 1).opcode != AUG_OPCODE_RETURN)
@@ -3789,7 +3780,7 @@ void aug_ir_to_bytecode(aug_ir& ir, aug_std_array<char>& bytecode)
 
 // -------------------------------------- API ---------------------------------------------// 
 
-bool aug_compile_script(aug_environment& env, aug_input* input, aug_ast* root, aug_script& script)
+bool aug_compile_script(aug_vm& vm, aug_input* input, aug_ast* root, aug_script& script)
 {
     if (root == NULL)
         return false;
@@ -3800,7 +3791,7 @@ bool aug_compile_script(aug_environment& env, aug_input* input, aug_ast* root, a
     // Generate IR
     aug_ir ir;
     aug_ir_init(ir, input);
-    aug_ast_to_ir(env, root, ir);
+    aug_ast_to_ir(vm, root, ir);
 
     if (!ir.valid)
         return false;
@@ -3813,76 +3804,81 @@ bool aug_compile_script(aug_environment& env, aug_input* input, aug_ast* root, a
     return true;
 }
 
-void aug_startup(aug_environment& env, aug_error_callback* error_callback)
+void aug_startup(aug_vm& vm, aug_error_callback* error_callback)
 {
-    env.vm = AUG_NEW(aug_vm);
-    env.error_callback = error_callback;
+    vm.error_callback = NULL;
+    vm.external_functions.clear();
+    vm.external_function_names.clear();
+    vm.stack = AUG_NEW_ARRAY(aug_value, AUG_STACK_SIZE);
+    for(int i = 0; i < AUG_STACK_SIZE; ++i)
+        vm.stack[i] = aug_none();
+
+    // Initialize
+    vm.error_callback = error_callback;
+    aug_vm_startup(vm);
 }
 
-void aug_shutdown(aug_environment& env)
+void aug_shutdown(aug_vm& vm)
 {
-    AUG_DELETE(env.vm);
-    env.error_callback = NULL;
-    env.external_functions.clear();
-    env.external_function_names.clear();
+    aug_vm_shutdown(vm);
+    AUG_DELETE_ARRAY(vm.stack);
+    vm.stack = nullptr;
+
+    vm.error_callback = NULL;
+    vm.external_functions.clear();
+    vm.external_function_names.clear();
 }
 
-void aug_register(aug_environment& env, const char* func_name, aug_function_callback *callback)
+void aug_register(aug_vm& vm, const char* func_name, aug_function_callback *callback)
 {
-    for (int i = 0; i < (int)env.external_functions.size(); ++i)
+    for (int i = 0; i < (int)vm.external_functions.size(); ++i)
     {
-        if (env.external_functions[i] == NULL)
+        if (vm.external_functions[i] == NULL)
         {
-            env.external_functions[i] = callback;
-            env.external_function_names[i] = func_name;
+            vm.external_functions[i] = callback;
+            vm.external_function_names[i] = func_name;
             return;
         }
     }
-    env.external_functions.push_back(callback);
-    env.external_function_names.push_back(func_name);
+    vm.external_functions.push_back(callback);
+    vm.external_function_names.push_back(func_name);
 }
 
-void aug_unregister(aug_environment& env, const char* func_name)
+void aug_unregister(aug_vm& vm, const char* func_name)
 {
-    for (int i = 0; i < (int)env.external_functions.size(); ++i)
+    for (int i = 0; i < (int)vm.external_functions.size(); ++i)
     {
-        if (env.external_function_names[i] == func_name)
+        if (vm.external_function_names[i] == func_name)
         {
-            env.external_functions[i] = NULL;
+            vm.external_functions[i] = NULL;
             break;
         }
     }
 }
 
-void aug_execute(aug_environment& env, const char* filename)
+void aug_execute(aug_vm& vm, const char* filename)
 {
     aug_script script;
-    bool success = aug_compile(env, script, filename);
+    bool success = aug_compile(vm, script, filename);
     if (!success)
         return;
 
-    if (env.vm == NULL)
-        return;
-
-    aug_vm& vm = *env.vm;
-    aug_vm_startup(vm, env.error_callback, script);
-    aug_vm_execute(vm, env);
+    aug_vm_startup(vm);
+    aug_vm_boot(vm, script);
+    aug_vm_execute(vm);
     aug_vm_shutdown(vm);
 }
 
-void aug_evaluate(aug_environment& env, const char* code)
+void aug_evaluate(aug_vm& vm, const char* code)
 {
-    if (env.vm == NULL)
-        return;
-
-    aug_input* input = aug_input_open(code, env.error_callback, false);
+    aug_input* input = aug_input_open(code, vm.error_callback, false);
     if (input == NULL)
         return;
 
     // Parse file
     aug_script script;
-    aug_ast* root = aug_parse(env, input);
-    script.valid = aug_compile_script(env, input, root, script);
+    aug_ast* root = aug_parse(vm, input);
+    script.valid = aug_compile_script(vm, input, root, script);
 
     // Cleanup 
     aug_ast_delete(root);
@@ -3891,23 +3887,23 @@ void aug_evaluate(aug_environment& env, const char* code)
     if (!script.valid)
         return;
 
-    aug_vm& vm = *env.vm;
-    aug_vm_startup(vm, env.error_callback, script);
-    aug_vm_execute(vm, env);
+    aug_vm_startup(vm);
+    aug_vm_boot(vm, script);
+    aug_vm_execute(vm);
     aug_vm_shutdown(vm);
 }
 
-bool aug_compile(aug_environment& env, aug_script& script, const char* filename)
+bool aug_compile(aug_vm& vm, aug_script& script, const char* filename)
 {
     script.valid = false;
 
-    aug_input* input = aug_input_open(filename, env.error_callback, true);
+    aug_input* input = aug_input_open(filename, vm.error_callback, true);
     if (input == NULL)
         return NULL;
 
     // Parse file
-    aug_ast* root = aug_parse(env, input);
-    script.valid = aug_compile_script(env, input, root, script);
+    aug_ast* root = aug_parse(vm, input);
+    script.valid = aug_compile_script(vm, input, root, script);
     
     // Cleanup 
     aug_ast_delete(root);
@@ -3916,7 +3912,13 @@ bool aug_compile(aug_environment& env, aug_script& script, const char* filename)
     return script.valid;
 }
 
-aug_value aug_call(aug_environment& env, aug_script& script, const char* func_name, const aug_std_array<aug_value>& args)
+void aug_boot(aug_vm& vm, aug_script& script)
+{
+    aug_vm_boot(vm, script);
+    aug_vm_execute(vm);
+}
+
+aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name, const aug_std_array<aug_value>& args)
 {
     aug_value ret_value = aug_none();
     if (!script.valid)
@@ -3924,7 +3926,7 @@ aug_value aug_call(aug_environment& env, aug_script& script, const char* func_na
 
     if (script.globals.count(func_name) == 0)
     {
-        AUG_LOG_ERROR(env.error_callback, "Function %s not defined", func_name);
+        AUG_LOG_ERROR(vm.error_callback, "Function %s not defined", func_name);
         return ret_value;
     }
 
@@ -3935,30 +3937,22 @@ aug_value aug_call(aug_environment& env, aug_script& script, const char* func_na
             break;
         case AUG_SYM_VAR:
         {
-            AUG_LOG_ERROR(env.error_callback, "Can not call variable %s a function", func_name);
+            AUG_LOG_ERROR(vm.error_callback, "Can not call variable %s a function", func_name);
             return ret_value;
         }
         default:
         {
-            AUG_LOG_ERROR(env.error_callback, "Symbol %s not defined as a function", func_name);
+            AUG_LOG_ERROR(vm.error_callback, "Symbol %s not defined as a function", func_name);
             return ret_value;
         }
     }
     if (symbol.argc != (int)args.size())
     {
-        AUG_LOG_ERROR(env.error_callback, "Function %s passed %d arguments, expected %d", func_name, (int)args.size(), symbol.argc);
+        AUG_LOG_ERROR(vm.error_callback, "Function %s passed %d arguments, expected %d", func_name, (int)args.size(), symbol.argc);
         return ret_value;
     }
 
-    // Setup the VM
-    if (env.vm == NULL)
-        return ret_value;
-
-    aug_vm& vm = *env.vm;
-    aug_vm_startup(vm, env.error_callback, script);
-
-     // Push the globals. TODO: retain state ? 
-
+    aug_vm_boot(vm, script);
 
     // Since the call operation is implicit, setup calling frame manually 
     // push base addr
@@ -3985,7 +3979,7 @@ aug_value aug_call(aug_environment& env, aug_script& script, const char* func_na
     // Setup base index to be current stack index
     vm.base_index = vm.stack_index;
 
-    aug_vm_execute(vm, env);
+    aug_vm_execute(vm);
 
     // If stack is valid
     if (vm.stack_index > 0)
@@ -3995,15 +3989,13 @@ aug_value aug_call(aug_environment& env, aug_script& script, const char* func_na
             ret_value = *top;
     }
 
-    aug_vm_shutdown(vm);
-
     return ret_value;
 }
 
-aug_value aug_call(aug_environment& env, aug_script& script, const char* func_name)
+aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name)
 {
     const aug_std_array<aug_value> args;
-    return aug_call(env, script, func_name, args);
+    return aug_call(vm, script, func_name, args);
 }
 
 aug_value aug_from_bool(bool data)

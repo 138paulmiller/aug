@@ -167,21 +167,21 @@ void dump_bytecode(const aug_ir& ir)
 	}
 }
 
-void aug_dump_file(aug_environment env, const char* filename)
+void aug_dump_file(aug_vm vm, const char* filename)
 {
 	printf("----------%s------------\n", filename);
 
 	//dump_lexer(filename);
 
-	aug_input* input = aug_input_open(filename, env.error_callback, true);
-	aug_ast* root = aug_parse(env, input);
+	aug_input* input = aug_input_open(filename, vm.error_callback, true);
+	aug_ast* root = aug_parse(vm, input);
 
 	dump_ast(root);
 
 	// Generate IR
 	aug_ir ir;
     aug_ir_init(ir, input);
-	aug_ast_to_ir(env, root, ir);
+	aug_ast_to_ir(vm, root, ir);
 
 	dump_bytecode(ir);
 
