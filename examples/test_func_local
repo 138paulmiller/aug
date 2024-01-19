@@ -6,7 +6,9 @@ func fibonacci_fizzbuzz(n) {
     var sum = 0;
     var count = 1;
     while count <= n {
+        count = count + 1; 
 
+        var count_temp = count;
         func fizzbuzz(i){
             var a = i % 3 == 0;
             var b = i % 5 == 0;
@@ -21,11 +23,10 @@ func fibonacci_fizzbuzz(n) {
                 var c  = !a and b;
                 expect(c, "Buzz");
             }
+            expect(count == count_temp, count, " == ", count_temp);
         }
 
-        count = count + 1; 
-        var d = count;
-        fizzbuzz(d);
+        fizzbuzz(count);
         a = b;
         b = sum; 
         sum = a + b;

@@ -224,10 +224,17 @@ enum aug_symbol_type
     AUG_SYM_FUNC,
 };
 
+enum aug_symbol_scope
+{
+    AUG_SYM_SCOPE_LOCAL,
+    AUG_SYM_SCOPE_GLOBAL,
+    AUG_SYM_SCOPE_PARAM,
+};
+
 // Script symbols 
 struct aug_symbol
 {
-    bool global;
+    aug_symbol_scope scope;
     aug_symbol_type type;
     // Functions - offset is the bytecode address, argc is the number of expected params
     // Variables - offset is the stack offset from the base index
@@ -2063,7 +2070,7 @@ inline bool aug_ir_current_scope_is_global(aug_ir& ir)
     return false;
 }
 
-inline int aug_ir_local_offset(aug_ir& ir)
+inline int aug_ir_current_scope_local_offset(aug_ir& ir)
 {
     const aug_ir_scope& scope = aug_ir_current_scope(ir);
     return scope.stack_offset - scope.base_index;
@@ -2119,7 +2126,7 @@ inline void aug_ir_push_scope(aug_ir& ir)
 
 inline void aug_ir_pop_scope(aug_ir& ir)
 {
-    const aug_ir_operand delta = aug_ir_operand_from_int(aug_ir_local_offset(ir));
+    const aug_ir_operand delta = aug_ir_operand_from_int(aug_ir_current_scope_local_offset(ir));
     aug_ir_add_operation(ir, AUG_OPCODE_DEC_STACK, delta);
 
     aug_ir_frame& frame = aug_ir_current_frame(ir);
@@ -2138,7 +2145,33 @@ inline bool aug_ir_set_var(aug_ir& ir, const aug_std_string& name)
     sym.type = AUG_SYM_VAR;
     sym.offset = offset;
     sym.argc = 0;
-    sym.global = aug_ir_current_scope_is_global(ir);
+    
+    if (aug_ir_current_scope_is_global(ir))
+        sym.scope = AUG_SYM_SCOPE_GLOBAL;
+    else
+        sym.scope = AUG_SYM_SCOPE_LOCAL;
+
+    scope.symtable[name] = sym;
+    return true;
+}
+
+inline bool aug_ir_set_param(aug_ir& ir, const aug_std_string& name)
+{
+    aug_ir_scope& scope = aug_ir_current_scope(ir);
+    const int offset = scope.stack_offset++;
+
+    if (scope.symtable.count(name) != 0)
+        return false;
+
+    aug_symbol sym;
+    sym.type = AUG_SYM_VAR;
+    sym.offset = offset;
+    sym.argc = 0;
+    
+    if (aug_ir_current_scope_is_global(ir))
+        sym.scope = AUG_SYM_SCOPE_GLOBAL;
+    else
+        sym.scope = AUG_SYM_SCOPE_PARAM;
 
     scope.symtable[name] = sym;
     return true;
@@ -2155,7 +2188,11 @@ inline bool aug_ir_set_func(aug_ir& ir, const aug_std_string& name, int param_co
     sym.type = AUG_SYM_FUNC;
     sym.offset = offset;
     sym.argc = param_count;
-    sym.global = aug_ir_current_scope_is_global(ir);
+
+    if (aug_ir_current_scope_is_global(ir))
+        sym.scope = AUG_SYM_SCOPE_GLOBAL;
+    else
+        sym.scope = AUG_SYM_SCOPE_LOCAL;
 
     scope.symtable[name] = sym;
     return true;
@@ -2194,11 +2231,27 @@ inline aug_symbol aug_ir_symbol_relative(aug_ir& ir, const aug_std_string& name)
             if (symtable.count(name))
             {
                 aug_symbol symbol = symtable.at(name);
-                // global frame
-                if( !symbol.global )
+                
+                int relative_offset;
+                switch (symbol.scope)
+                {
+                case AUG_SYM_SCOPE_GLOBAL:
+                    relative_offset = symbol.offset;
+                    break;
+                case AUG_SYM_SCOPE_PARAM:
                 {
                     const aug_ir_frame& frame = aug_ir_current_frame(ir);
-                    symbol.offset = symbol.offset - frame.base_index; 
+                    symbol.offset = symbol.offset - frame.base_index;
+                    break;
+                }
+                case AUG_SYM_SCOPE_LOCAL:
+                {
+                    const aug_ir_frame& frame = aug_ir_current_frame(ir);
+                    //If this variable is a local variable in an outer frame. Offset by 2 (ret addr and base index) for each frame delta
+                    int frame_delta = (ir.frame_stack.size()-1) - i;
+                    symbol.offset = symbol.offset - frame.base_index - frame_delta * 2;
+                    break;
+                }
                 }
                 return symbol;
             }
@@ -3246,7 +3299,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
                 aug_ast_to_ir(vm, stmt, ir);
 
             // Restore stack
-            //const aug_ir_operand delta = aug_ir_operand_from_int(aug_ir_local_offset(ir));
+            //const aug_ir_operand delta = aug_ir_operand_from_int(aug_ir_current_scope_local_offset(ir));
             //aug_ir_add_operation(ir, AUG_OPCODE_DEC_STACK, delta);
             aug_ir_add_operation(ir, AUG_OPCODE_EXIT);
 
@@ -3334,7 +3387,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
             }
 
             const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-            if(symbol.global)
+            if(symbol.scope == AUG_SYM_SCOPE_GLOBAL)
                 aug_ir_add_operation(ir, AUG_OPCODE_PUSH_GLOBAL, address_operand);
             else
                 aug_ir_add_operation(ir, AUG_OPCODE_PUSH_LOCAL, address_operand);
@@ -3468,7 +3521,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
             {
                 const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
                 const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-                if(symbol.global)
+                if(symbol.scope == AUG_SYM_SCOPE_GLOBAL)
                     aug_ir_add_operation(ir, AUG_OPCODE_LOAD_GLOBAL, address_operand);
                 else
                     aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
@@ -3532,7 +3585,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
             }
 
             const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-            if(symbol.global)
+            if(symbol.scope == AUG_SYM_SCOPE_GLOBAL)
                 aug_ir_add_operation(ir, AUG_OPCODE_LOAD_GLOBAL, address_operand);
             else
                 aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
@@ -3739,7 +3792,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_PARAM:
         {
-            aug_ir_set_var(ir, token.data);
+            aug_ir_set_param(ir, token.data);
             break;
         }
         case AUG_AST_PARAM_LIST:
