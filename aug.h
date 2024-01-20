@@ -621,17 +621,11 @@ struct aug_token_detail
     AUG_TOKEN(RBRACE,         0, 0, 0, NULL)       \
     /* Operators - Arithmetic */                   \
     AUG_TOKEN(ADD,            2, 2, 0, NULL)       \
-    AUG_TOKEN(ADD_EQ,         1, 2, 0, NULL)       \
     AUG_TOKEN(SUB,            2, 2, 0, NULL)       \
-    AUG_TOKEN(SUB_EQ,         1, 2, 0, NULL)       \
     AUG_TOKEN(MUL,            3, 2, 0, NULL)       \
-    AUG_TOKEN(MUL_EQ,         1, 2, 0, NULL)       \
     AUG_TOKEN(DIV,            3, 2, 0, NULL)       \
-    AUG_TOKEN(DIV_EQ,         1, 2, 0, NULL)       \
     AUG_TOKEN(POW,            3, 2, 0, NULL)       \
-    AUG_TOKEN(POW_EQ,         1, 2, 0, NULL)       \
     AUG_TOKEN(MOD,            3, 2, 0, NULL)       \
-    AUG_TOKEN(MOD_EQ,         1, 2, 0, NULL)       \
     AUG_TOKEN(AND,            1, 2, 0, "and")      \
     AUG_TOKEN(OR,             1, 2, 0, "or")       \
     /* Operators - Boolean */                      \
@@ -649,9 +643,15 @@ struct aug_token_detail
     AUG_TOKEN(BINARY,         0, 0, 1, NULL)       \
     AUG_TOKEN(FLOAT,          0, 0, 1, NULL)       \
     AUG_TOKEN(STRING,         0, 0, 1, NULL)       \
-    /* Misc */                                     \
+    /* Variable/Symbol */                          \
     AUG_TOKEN(NAME,           0, 0, 1, NULL)       \
     AUG_TOKEN(ASSIGN,         0, 0, 0, NULL)       \
+    AUG_TOKEN(ADD_ASSIGN,     0, 0, 0, NULL)       \
+    AUG_TOKEN(SUB_ASSIGN,     0, 0, 0, NULL)       \
+    AUG_TOKEN(MUL_ASSIGN,     0, 0, 0, NULL)       \
+    AUG_TOKEN(DIV_ASSIGN,     0, 0, 0, NULL)       \
+    AUG_TOKEN(MOD_ASSIGN,     0, 0, 0, NULL)       \
+    AUG_TOKEN(POW_ASSIGN,     0, 0, 0, NULL)       \
     /* Keywords */                                 \
     AUG_TOKEN(IF,             0, 0, 0, "if")       \
     AUG_TOKEN(ELSE,           0, 0, 0, "else")     \
@@ -824,37 +824,37 @@ inline bool aug_lexer_tokenize_symbol(aug_lexer* lexer, aug_token& token)
     case '}': id = AUG_TOKEN_RBRACE;    break;
     case '+':
         if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
-            id = AUG_TOKEN_ADD_EQ;
+            id = AUG_TOKEN_ADD_ASSIGN;
         else
             id = AUG_TOKEN_ADD;
         break;
     case '-':
         if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
-            id = AUG_TOKEN_SUB_EQ;
+            id = AUG_TOKEN_SUB_ASSIGN;
         else
             id = AUG_TOKEN_SUB;
         break;
     case '*':
         if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
-            id = AUG_TOKEN_MUL_EQ;
+            id = AUG_TOKEN_MUL_ASSIGN;
         else
             id = AUG_TOKEN_MUL;
         break;
     case '/':
         if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
-            id = AUG_TOKEN_DIV_EQ;
+            id = AUG_TOKEN_DIV_ASSIGN;
         else
             id = AUG_TOKEN_DIV;
         break;
     case '^':
         if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
-            id = AUG_TOKEN_POW_EQ;
+            id = AUG_TOKEN_POW_ASSIGN;
         else
             id = AUG_TOKEN_POW;
         break;
     case '%':
         if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
-            id = AUG_TOKEN_MOD_EQ;
+            id = AUG_TOKEN_MOD_ASSIGN;
         else
             id = AUG_TOKEN_MOD;
         break;
@@ -1486,9 +1486,23 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
 aug_ast* aug_parse_stmt_assign_var(aug_lexer* lexer)
 {
     aug_token name_token = lexer->curr;
-    aug_token eq_token = lexer->next;
-    if (name_token.id != AUG_TOKEN_NAME || eq_token.id != AUG_TOKEN_ASSIGN)
+    if (name_token.id != AUG_TOKEN_NAME)
         return NULL;
+
+    aug_token eq_token = lexer->next;
+    aug_token op_token;
+
+    switch(eq_token.id)
+    {
+    case AUG_TOKEN_ASSIGN:     op_token.id = AUG_TOKEN_NONE; break;
+    case AUG_TOKEN_ADD_ASSIGN: op_token.id = AUG_TOKEN_ADD; break;
+    case AUG_TOKEN_SUB_ASSIGN: op_token.id = AUG_TOKEN_SUB; break;
+    case AUG_TOKEN_MUL_ASSIGN: op_token.id = AUG_TOKEN_MUL; break;
+    case AUG_TOKEN_DIV_ASSIGN: op_token.id = AUG_TOKEN_DIV; break;
+    case AUG_TOKEN_MOD_ASSIGN: op_token.id = AUG_TOKEN_MOD; break;
+    case AUG_TOKEN_POW_ASSIGN: op_token.id = AUG_TOKEN_POW; break;
+    default: return NULL;
+    }
 
     aug_lexer_move(lexer); // eat NAME
     aug_lexer_move(lexer); // eat ASSIGN
@@ -1508,6 +1522,24 @@ aug_ast* aug_parse_stmt_assign_var(aug_lexer* lexer)
     }
 
     aug_lexer_move(lexer); // eat SEMICOLON
+
+    if(op_token.id != AUG_TOKEN_NONE)
+    {
+        // setup detail
+        op_token.detail = &aug_token_details[(int)op_token.id];
+
+        // Create name + expr
+        aug_ast* binaryop = aug_ast_new(AUG_AST_BINARY_OP, op_token);
+        aug_ast* value = aug_ast_new(AUG_AST_VARIABLE, name_token);
+
+        // add in reverse order
+        binaryop->children.push_back(value);
+        binaryop->children.push_back(expr);
+
+        aug_ast* stmt_assign = aug_ast_new(AUG_AST_STMT_ASSIGN_VAR, name_token);
+        stmt_assign->children.push_back(binaryop);
+        return stmt_assign;
+    }
 
     aug_ast* stmt_assign = aug_ast_new(AUG_AST_STMT_ASSIGN_VAR, name_token);
     stmt_assign->children.push_back(expr);
@@ -2238,13 +2270,10 @@ inline aug_symbol aug_ir_symbol_relative(aug_ir& ir, const aug_std_string& name)
             const aug_symtable& symtable = scope.symtable;
             if (symtable.count(name))
             {
-                aug_symbol symbol = symtable.at(name);
-                
-                int relative_offset;
+                aug_symbol symbol = symtable.at(name);                
                 switch (symbol.scope)
                 {
                 case AUG_SYM_SCOPE_GLOBAL:
-                    relative_offset = symbol.offset;
                     break;
                 case AUG_SYM_SCOPE_PARAM:
                 {
@@ -3488,7 +3517,6 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
 
             aug_ast_to_ir(vm, children[0], ir); // LHS
             aug_ast_to_ir(vm, children[1], ir); // RHS
-            bool load_var = false;
 
             switch (token.id)
             {
@@ -3507,98 +3535,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
                 case AUG_TOKEN_EQ:     aug_ir_add_operation(ir, AUG_OPCODE_EQ);  break;
                 case AUG_TOKEN_NOT_EQ: aug_ir_add_operation(ir, AUG_OPCODE_NEQ); break;
                 case AUG_TOKEN_APPROX_EQ: aug_ir_add_operation(ir, AUG_OPCODE_APPROXEQ); break;
-                case AUG_TOKEN_ADD_EQ:
-                {
-                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-                    {
-                        ir.valid = false;
-                        AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Left hand operand must be a variable");
-                        break;
-                    }
-
-                    aug_ir_add_operation(ir, AUG_OPCODE_ADD);
-                    load_var = true;
-                    break;
-                }
-                case AUG_TOKEN_SUB_EQ:
-                {
-                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-                    {
-                        ir.valid = false;
-                        AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Left hand operand must be a variable");
-                        break;
-                    }
-
-                    load_var = true;
-                    aug_ir_add_operation(ir, AUG_OPCODE_SUB);
-                    load_var = true;
-                    break;
-                }
-                case AUG_TOKEN_MUL_EQ:
-                {
-                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-                    {
-                        ir.valid = false;
-                        AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Left hand operand must be a variable");
-                        break;
-                    }
-
-                    aug_ir_add_operation(ir, AUG_OPCODE_MUL);
-                    load_var = true;
-                    break;
-                }
-                case AUG_TOKEN_DIV_EQ:
-                {
-                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-                    {
-                        ir.valid = false;
-                        AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Left hand operand must be a variable");
-                        break;
-                    }
-
-                    aug_ir_add_operation(ir, AUG_OPCODE_DIV);
-                    load_var = true;
-                    break;
-                }
-                case AUG_TOKEN_MOD_EQ:
-                {
-                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-                    {
-                        ir.valid = false;
-                        AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Left hand operand must be a variable");
-                        break;
-                    }
-
-                    aug_ir_add_operation(ir, AUG_OPCODE_MOD);
-                    load_var = true;
-                    break;
-                }
-                case AUG_TOKEN_POW_EQ:
-                {
-                    if (children[0] == NULL || children[0]->id != AUG_AST_VARIABLE)
-                    {
-                        ir.valid = false;
-                        AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Left hand operand must be a variable");
-                        break;
-                    }
-
-                    aug_ir_add_operation(ir, AUG_OPCODE_POW);
-                    load_var = true;
-                    break;
-                }
-                default:
-                    assert(0);
-                    break;
-            }
-
-            if(load_var)
-            {
-                const aug_symbol& symbol = aug_ir_symbol_relative(ir, children[0]->token.data); // previous LHS pass will handle and var semantic errors
-                const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
-                if(symbol.scope == AUG_SYM_SCOPE_GLOBAL)
-                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_GLOBAL, address_operand);
-                else
-                    aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                default: break;
             }
             break;
         }
@@ -3617,26 +3554,8 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
             if (children.size() == 1)
             {
                 aug_ast_to_ir(vm, children[0], ir);
-
                 // discard the top if a non-assignment binop
-                bool discard = true;
-                if (children[0] && children[0]->id == AUG_AST_BINARY_OP)
-                {
-                    switch (children[0]->token.id)
-                    {
-                    case AUG_TOKEN_ADD_EQ:
-                    case AUG_TOKEN_SUB_EQ:
-                    case AUG_TOKEN_DIV_EQ:
-                    case AUG_TOKEN_MUL_EQ:
-                    case AUG_TOKEN_MOD_EQ:
-                    case AUG_TOKEN_POW_EQ:
-                        discard = false;
-                        break;
-                    default: break;
-                    }
-                }
-                if (discard)
-                    aug_ir_add_operation(ir, AUG_OPCODE_POP);
+                aug_ir_add_operation(ir, AUG_OPCODE_POP);
             }
             break;
         }
