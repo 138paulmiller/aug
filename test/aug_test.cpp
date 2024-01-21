@@ -8,6 +8,14 @@ void aug_dump_file(aug_vm vm, const char* filename);
 struct aug_tester;
 typedef void(aug_tester_func)(aug_vm&);
 
+#ifdef __linux__
+	#define STDOUT_RED(txt)   "\u001b[31m" txt "\u001b[0m"
+	#define STDOUT_GREEN(txt) "\u001b[32m" txt "\u001b[0m"
+#else 
+	#define STDOUT_RED(txt) txt  
+	#define STDOUT_GREEN(txt) txt 
+#endif
+
 struct aug_tester
 {
 	int passed = 0;
@@ -62,8 +70,9 @@ public:
 	{
 		if (verbose)
 			printf("[TEST]\tEnded. Passed %d / %d\n", passed, total);
-		else
-			printf("[%s]\t%s\n", total > 0 && passed == total ? "PASS" : "FAIL", filename.c_str());
+		bool success = total > 0 && passed == total;
+		printf("[%s]\t", success ? STDOUT_GREEN("PASS") : STDOUT_RED("FAIL"));
+		printf("%s\n", filename.c_str());
 	}
 
 	void verify(bool success, const std::string& message)
@@ -75,7 +84,7 @@ public:
 
 		if (verbose)
 		{
-			printf("[%s]\t", success ? "PASS" : "FAIL");
+			printf("[%s]\t", success ? STDOUT_GREEN("PASS") : STDOUT_RED("FAIL"));
 
 			if (message.size())
 				printf("%s", message.c_str());
@@ -97,6 +106,9 @@ std::string to_string(const aug_value& value)
     case AUG_BOOL:
         len = snprintf(out, sizeof(out), "%s", value.b ? "true" : "false");
         break;
+	case AUG_CHAR:
+        len = snprintf(out, sizeof(out), "%c", value.c);
+        break;
     case AUG_INT:
         len = snprintf(out, sizeof(out), "%d", value.i);
         break;
@@ -108,12 +120,12 @@ std::string to_string(const aug_value& value)
         break;
     case AUG_OBJECT:
         return "object";
-    case AUG_LIST:
+    case AUG_ARRAY:
     {
         std::string str = "[ ";
-		if(value.list)
+		if(value.array)
 		{
-			for(const aug_value& entry : value.list->data)
+			for(const aug_value& entry : *value.array)
 			{
 				str += to_string(entry);
 				str += " ";
@@ -136,6 +148,9 @@ void print(const aug_value& value)
 	case AUG_BOOL:
 		printf("%s", value.b ? "true" : "false");
 		break;
+	case AUG_CHAR:
+		printf("%c", value.c);
+		break;
 	case AUG_INT:
 		printf("%d", value.i);
 		break;
@@ -148,12 +163,12 @@ void print(const aug_value& value)
 	case AUG_OBJECT:
 		printf("object");
 		break;
-	case AUG_LIST:
+	case AUG_ARRAY:
 	{
 		printf("[ ");
-		if(value.list)
+		if(value.array)
 		{
-			for(const aug_value& entry : value.list->data)
+			for(const aug_value& entry : *value.array)
 			{
 				print(entry);
 				printf(" ");
@@ -177,15 +192,17 @@ float sum(const aug_value& value, aug_value_type& type)
 		return 0.0f;
 	case AUG_INT:
 		return (float)value.i;
+	case AUG_CHAR:
+		return (float)value.c;
 	case AUG_FLOAT:
 		type = AUG_FLOAT;
 		return value.f;
-	case AUG_LIST:
+	case AUG_ARRAY:
 	{
 		float  total = 0;
-		if(value.list)
+		if(value.array)
 		{
-			for(const aug_value& entry : value.list->data)
+			for(const aug_value& entry : *value.array)
 				total += sum(entry, type);
 		}
 		return total;
