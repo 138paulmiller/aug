@@ -632,10 +632,11 @@ struct aug_token_detail
     AUG_TOKEN(NOT_EQ,         2, 2, 0, NULL)       \
     AUG_TOKEN(APPROX_EQ,      1, 2, 0, NULL)       \
     /* Literals */                                 \
-    AUG_TOKEN(DECIMAL,        0, 0, 1, NULL)       \
-    AUG_TOKEN(HEXIDECIMAL,    0, 0, 1, NULL)       \
+    AUG_TOKEN(INT,            0, 0, 1, NULL)       \
+    AUG_TOKEN(HEX,            0, 0, 1, NULL)       \
     AUG_TOKEN(BINARY,         0, 0, 1, NULL)       \
     AUG_TOKEN(FLOAT,          0, 0, 1, NULL)       \
+    AUG_TOKEN(CHAR,           0, 0, 1, NULL)       \
     AUG_TOKEN(STRING,         0, 0, 1, NULL)       \
     /* Variable/Symbol */                          \
     AUG_TOKEN(NAME,           0, 0, 1, NULL)       \
@@ -714,6 +715,35 @@ aug_lexer* aug_lexer_new(aug_input* input)
 void aug_lexer_delete(aug_lexer* lexer)
 {
     AUG_DELETE(lexer);
+}
+
+inline bool aug_lexer_tokenize_char(aug_lexer* lexer, aug_token& token)
+{
+    char c = aug_input_get(lexer->input);
+    if (c != '\'')
+    {
+        aug_input_unget(lexer->input);
+        return false;
+    }
+
+    token.id = AUG_TOKEN_CHAR;
+    token.data.clear();
+
+    c = aug_input_get(lexer->input);
+    if (c != '\'')
+    {
+        token.data.push_back(c);
+        c = aug_input_get(lexer->input); // eat 
+    }
+    else
+        token.data.push_back(0);
+
+    if (c != '\'')
+    {
+        AUG_INPUT_ERROR(lexer->input, "char literal missing closing \"");
+        return false;
+    }
+    return true;
 }
 
 inline bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token& token)
@@ -941,7 +971,7 @@ bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token& token)
 
     if (c == '0' && aug_input_peek(lexer->input) == 'x')
     {
-        id = AUG_TOKEN_HEXIDECIMAL;
+        id = AUG_TOKEN_HEX;
 
         c = aug_input_get(lexer->input); //eat 'x'
         c = aug_input_get(lexer->input);
@@ -987,7 +1017,7 @@ bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token& token)
         if (c == '.')
             id = AUG_TOKEN_FLOAT;
         else 
-            id = AUG_TOKEN_DECIMAL;
+            id = AUG_TOKEN_INT;
 
         bool dot = false;
         while (c == '.' || isdigit(c))
@@ -1095,9 +1125,9 @@ aug_token aug_lexer_tokenize(aug_lexer* lexer)
         {
             case AUG_TOKEN_NAME:
             case AUG_TOKEN_BINARY:
-            case AUG_TOKEN_HEXIDECIMAL:
+            case AUG_TOKEN_HEX:
             case AUG_TOKEN_FLOAT:
-            case AUG_TOKEN_DECIMAL:
+            case AUG_TOKEN_INT:
                 allow_sign = false;
                 break;
             default:
@@ -1109,6 +1139,9 @@ aug_token aug_lexer_tokenize(aug_lexer* lexer)
     }
     case '\"':
         aug_lexer_tokenize_string(lexer, token);
+        break;
+    case '\'':
+        aug_lexer_tokenize_char(lexer, token);
         break;
     default:
         if (aug_lexer_tokenize_symbol(lexer, token))
@@ -1391,11 +1424,12 @@ inline aug_ast* aug_parse_value(aug_lexer* lexer)
     const aug_token token = lexer->curr;
     switch (token.id)
     {
-    case AUG_TOKEN_DECIMAL:
-    case AUG_TOKEN_HEXIDECIMAL:
+    case AUG_TOKEN_INT:
+    case AUG_TOKEN_HEX:
     case AUG_TOKEN_BINARY:
     case AUG_TOKEN_FLOAT:
     case AUG_TOKEN_STRING:
+    case AUG_TOKEN_CHAR:
     case AUG_TOKEN_TRUE:
     case AUG_TOKEN_FALSE:
     {
@@ -1892,13 +1926,14 @@ aug_ast* aug_parse(aug_vm& vm, aug_input* input)
 	AUG_OPCODE(PUSH_NONE)         \
 	AUG_OPCODE(PUSH_BOOL)         \
 	AUG_OPCODE(PUSH_INT)          \
+	AUG_OPCODE(PUSH_CHAR)         \
 	AUG_OPCODE(PUSH_FLOAT)        \
 	AUG_OPCODE(PUSH_STRING)       \
 	AUG_OPCODE(PUSH_ARRAY)        \
 	AUG_OPCODE(PUSH_LOCAL)        \
 	AUG_OPCODE(PUSH_GLOBAL)       \
 	AUG_OPCODE(PUSH_ELEMENT)      \
-    AUG_OPCODE(PUSH_CALL_FRAME)        \
+    AUG_OPCODE(PUSH_CALL_FRAME)   \
     AUG_OPCODE(LOAD_LOCAL)        \
 	AUG_OPCODE(LOAD_GLOBAL)       \
 	AUG_OPCODE(ADD)               \
@@ -1969,6 +2004,7 @@ enum aug_ir_operand_type
     // type if operand is constant or literal
     AUG_IR_OPERAND_NONE = 0,
     AUG_IR_OPERAND_BOOL,
+    AUG_IR_OPERAND_CHAR,
     AUG_IR_OPERAND_INT,
     AUG_IR_OPERAND_FLOAT,  
     AUG_IR_OPERAND_BYTES,
@@ -1980,6 +2016,7 @@ struct aug_ir_operand
     {
         bool b;
         int i;
+        char c;
         float f;
         char bytes[sizeof(float)]; //Used to access raw byte data to bool, float and int types
 
@@ -2052,6 +2089,8 @@ inline size_t aug_ir_operand_size(const aug_ir_operand& operand)
         return 0;
     case AUG_IR_OPERAND_BOOL:
         return sizeof(operand.data.b);
+    case AUG_IR_OPERAND_CHAR:
+        return sizeof(operand.data.c);
     case AUG_IR_OPERAND_INT:
         return sizeof(operand.data.i);
     case AUG_IR_OPERAND_FLOAT:
@@ -2100,6 +2139,14 @@ inline aug_ir_operand aug_ir_operand_from_bool(bool data)
     aug_ir_operand operand;
     operand.type = AUG_IR_OPERAND_BOOL;
     operand.data.b = data;
+    return operand;
+}
+
+inline aug_ir_operand aug_ir_operand_from_char(char data)
+{
+    aug_ir_operand operand;
+    operand.type = AUG_IR_OPERAND_CHAR;
+    operand.data.c = data;
     return operand;
 }
 
@@ -2940,6 +2987,14 @@ inline int aug_vm_read_int(aug_vm& vm)
     return bytecode_value.i;
 }
 
+inline char aug_vm_read_char(aug_vm& vm)
+{
+    aug_vm_bytecode_value bytecode_value;
+    for (size_t i = 0; i < sizeof(bytecode_value.c); ++i)
+        bytecode_value.bytes[i] = *(vm.instruction++);
+    return bytecode_value.c;
+}
+
 inline float aug_vm_read_float(aug_vm& vm)
 {
     aug_vm_bytecode_value bytecode_value;
@@ -3057,6 +3112,14 @@ void aug_vm_execute(aug_vm& vm)
                 if(value == NULL) 
                     break;
                 aug_set_int(value, aug_vm_read_int(vm));
+                break;
+            }
+            case AUG_OPCODE_PUSH_CHAR:   
+            {
+                aug_value* value = aug_vm_push(vm);
+                if(value == NULL) 
+                    break;
+                aug_set_char(value, aug_vm_read_char(vm));
                 break;
             }
             case AUG_OPCODE_PUSH_FLOAT:
@@ -3427,8 +3490,7 @@ void aug_vm_execute(aug_vm& vm)
         }
 
 #if AUG_DEBUG_VM
-        printf("%s\n", aug_opcode_labels[(int)opcode]);
-
+        printf("OP:   %s\n", aug_opcode_labels[(int)opcode]);
         for(int i = 0; i < 16; ++i)
         {
             aug_value val = vm.stack[i];
@@ -3439,6 +3501,7 @@ void aug_vm_execute(aug_vm& vm)
                 case AUG_FLOAT: printf("%f", val.f); break;
                 case AUG_STRING: printf("%s", val.str->c_str()); break;
                 case AUG_BOOL: printf("%s", val.b ? "true" : "false"); break;
+                case AUG_CHAR: printf("%c", val.c); break;
                 default: break;
             }
             printf("\n");
@@ -3526,15 +3589,25 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
             const aug_token& token = node->token;
             switch (token.id)
             {
-                case AUG_TOKEN_DECIMAL:
+                case AUG_TOKEN_CHAR:
                 {
+                    assert(token.data.size() > 0);
+                    const char data = token.data[0];
+                    const aug_ir_operand& operand = aug_ir_operand_from_char(data);
+                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_CHAR, operand);
+                    break;
+                }
+                case AUG_TOKEN_INT:
+                {
+                    assert(token.data.size() > 0);
                     const int data = strtol(token.data.c_str(), NULL, 10);
                     const aug_ir_operand& operand = aug_ir_operand_from_int(data);
                     aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
                     break;
                 }
-                case AUG_TOKEN_HEXIDECIMAL:
+                case AUG_TOKEN_HEX:
                 {
+                    assert(token.data.size() > 0);
                     const unsigned int data = strtoul(token.data.c_str(), NULL, 16);
                     const aug_ir_operand& operand = aug_ir_operand_from_int(data);
                     aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
@@ -3542,6 +3615,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
                 }
                 case AUG_TOKEN_BINARY:
                 {
+                    assert(token.data.size() > 0);
                     const unsigned int data = strtoul(token.data.c_str(), NULL, 2);
                     const aug_ir_operand& operand = aug_ir_operand_from_int(data);
                     aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
@@ -3549,6 +3623,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
                 }
                 case AUG_TOKEN_FLOAT:
                 {
+                    assert(token.data.size() > 0);
                     const float data = strtof(token.data.c_str(), NULL);
                     const aug_ir_operand& operand = aug_ir_operand_from_float(data);
                     aug_ir_add_operation(ir, AUG_OPCODE_PUSH_FLOAT, operand);
@@ -3982,6 +4057,7 @@ void aug_ir_to_bytecode(aug_ir& ir, aug_std_array<char>& bytecode)
         case AUG_IR_OPERAND_NONE:
             break;
         case AUG_IR_OPERAND_BOOL:
+        case AUG_IR_OPERAND_CHAR:
         case AUG_IR_OPERAND_INT:
         case AUG_IR_OPERAND_FLOAT:
             for (size_t i = 0; i < aug_ir_operand_size(operand); ++i)

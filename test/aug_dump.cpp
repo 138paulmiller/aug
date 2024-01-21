@@ -156,6 +156,9 @@ void dump_bytecode(const aug_ir& ir)
 		case AUG_IR_OPERAND_BOOL:
 			printf(" %s", operand.data.b ? "true" : "false");
 			break;
+		case AUG_IR_OPERAND_CHAR:
+			printf(" %c", operand.data.c);
+			break;
 		case AUG_IR_OPERAND_INT:
 			printf(" %d", operand.data.i);
 			break;
