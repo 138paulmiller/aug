@@ -2,7 +2,6 @@
 clear 
 make clean 
 make
-valgrind  --track-origins=yes --leak-check=full --tool=memcheck \
-../build/aug_test --verbose --dump ../examples/test --test ../examples/test
 
-#../build/aug_test --verbose --dump ../examples/test_game --test_game ../examples/test_game
+valgrind --main-stacksize=1048576 --tool=memcheck --leak-check=full ../build/aug_test \
+--dump --test ../examples/test

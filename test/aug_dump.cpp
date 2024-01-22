@@ -3,8 +3,19 @@
 #define AUG_DEBUG
 #include <aug.h>
 
+void dump_token(aug_token* token)
+{
+	printf("\tCURR: %s (%s) %d:%d\n", 
+		token->detail ? token->detail->label : "", 
+		token->data ? token->data->buffer : "", 
+		token->pos.line, 
+		token->pos.col
+	);
+}
+
 void dump_lexer(const char* filename)
 {
+	return;
 	printf("Tokens \n");
 
 	aug_input* input = aug_input_open(filename, nullptr, true);
@@ -12,7 +23,7 @@ void dump_lexer(const char* filename)
 	aug_lexer* lexer = aug_lexer_new(input);
 	while (lexer && aug_lexer_move(lexer) && lexer->curr.id != AUG_TOKEN_END)
 	{
-		printf("\tCURR: %s (%s) %d:%d\n", lexer->curr.detail->label, lexer->curr.data.c_str(), lexer->curr.pos.line, lexer->curr.pos.col);
+		dump_token(&lexer->curr);
 	}
 
 	aug_lexer_delete(lexer);
@@ -44,6 +55,8 @@ void dump_ast_tree(aug_ast* node, std::string prefix, bool is_leaf)
 	const aug_token& token = node->token;
 	const aug_std_array<aug_ast*>& children = node->children;
 
+	printf("[%d]", node->id);
+
 	switch(node->id)
 	{
 		case AUG_AST_ROOT:
@@ -57,17 +70,17 @@ void dump_ast_tree(aug_ast* node, std::string prefix, bool is_leaf)
 				dump_ast_tree(children[i], prefix, i == children.size()-1);
 			break;
 		case AUG_AST_STMT_DEFINE_VAR:
-			printf("DEFINE:%s\n", token.data.c_str());
+			printf("DEFINE: %s\n", token.data ?  token.data->buffer : "(null)");
 			if(children.size()==1)
 				dump_ast_tree(children[0], prefix, true);
 			break;
 		case AUG_AST_STMT_ASSIGN_VAR:
 			assert(children.size() == 1);
-			printf("ASSIGN%s\n",token.data.c_str() );
+			printf("ASSIGN: %s\n", token.data ?  token.data->buffer : "(null)");
 			dump_ast_tree(children[0], prefix, false);
 			break;
 		case AUG_AST_STMT_EXPR:
-			printf("EXPR:%s\n", token.data.c_str());
+			printf("EXPR:\n");
 			dump_ast_tree(children[0], prefix, true);
 			break;
 		case AUG_AST_STMT_IF:
@@ -99,18 +112,18 @@ void dump_ast_tree(aug_ast* node, std::string prefix, bool is_leaf)
 			dump_ast_tree(children[1], prefix, true);
 			break;
 		case AUG_AST_FUNC_CALL:
-			printf("FUNCCALL:%s\n", token.data.c_str());
+			printf("FUNCCALL: %s\n", token.data ?  token.data->buffer : "(null)");
 			for (size_t i = 0; i < children.size(); ++i)
 				dump_ast_tree(children[i], prefix, i == children.size()-1);
 			break;
 		case AUG_AST_FUNC_DEF:
 			assert(children.size() == 2);
-			printf("FUNCDEF:%s\n", token.data.c_str());
+			printf("FUNCDEF: %s\n",token.data ?  token.data->buffer : "(null)");
 			for (size_t i = 0; i < children.size(); ++i)
 				dump_ast_tree(children[i], prefix, i == children.size() - 1);
 			break;
 		case AUG_AST_PARAM_LIST:
-			printf("PARAMS:%s\n", token.data.c_str());
+			printf("PARAMS\n");
 			for (size_t i = 0; i < children.size(); ++i)
 				dump_ast_tree(children[i], prefix, i == children.size() - 1);
 			break;
@@ -132,7 +145,7 @@ void dump_ast_tree(aug_ast* node, std::string prefix, bool is_leaf)
 		case AUG_AST_PARAM:
 		case AUG_AST_VARIABLE:
 		case AUG_AST_LITERAL:
-			printf("%s\n", token.data.c_str());
+			printf("%s\n", token.data->buffer);
 			break;
 	}
 }
@@ -144,7 +157,7 @@ void dump_ast(aug_ast* root)
 	dump_ast_tree(root, "", false);
 }
 
-void dump_bytecode(const aug_ir& ir)
+void dump_ir(const aug_ir& ir)
 {
 	printf("Bytecode\n");
 	for(const aug_ir_operation& operation : ir.operations)
@@ -179,7 +192,7 @@ void aug_dump_file(aug_vm vm, const char* filename)
 {
 	printf("----------%s------------\n", filename);
 
-	//dump_lexer(filename);
+	dump_lexer(filename);
 
 	aug_input* input = aug_input_open(filename, vm.error_callback, true);
 	aug_ast* root = aug_parse(vm, input);
@@ -191,7 +204,7 @@ void aug_dump_file(aug_vm vm, const char* filename)
     aug_ir_init(ir, input);
 	aug_ast_to_ir(vm, root, ir);
 
-	dump_bytecode(ir);
+	dump_ir(ir);
 
 	// Cleanup
 	aug_ast_delete(root);

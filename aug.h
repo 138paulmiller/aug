@@ -1,4 +1,3 @@
-
 /* MIT License
 
 Copyright (c) 2024 Paul Miller (https://github.com/138paulmiller)
@@ -104,11 +103,6 @@ SOFTWARE. */
 #define AUG_APPROX_THRESHOLD 0.0000001
 #endif//AUG_APPROX_THRESHOLD 
 
-// Max number of characters per symbol name
-#ifndef AUG_TOKEN_BUFFER_SIZE
-#define AUG_TOKEN_BUFFER_SIZE 32
-#endif//AUG_TOKEN_BUFFER_SIZE
-
 #ifndef AUG_NEW
 #define AUG_NEW(type) new type
 #endif//AUG_NEW
@@ -125,17 +119,65 @@ SOFTWARE. */
 #define AUG_DELETE_ARRAY(ptr) delete [] ptr
 #endif//AUG_DELETE_ARRAY
 
-
 #include <string>
 #include <vector>
 #include <unordered_map>
+
 
 // Data structures
 struct aug_value;
 struct aug_object;
 struct aug_symbol;
 
-using aug_std_string = std::string;
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <sys/types.h>
+#include <stdlib.h>
+#include <stdbool.h>
+
+typedef struct
+{
+	char *buffer;
+	int ref_count;
+	size_t capacity;
+	size_t length;
+} aug_string;
+
+aug_string* aug_string_new(size_t size);
+aug_string* aug_string_create(const char* bytes);
+void aug_string_incref (aug_string* string);
+aug_string* aug_string_decref (aug_string* string);
+void aug_string_reserve(aug_string* string, size_t size);
+void aug_string_push(aug_string* string, char c);
+char aug_string_pop (aug_string* string);
+char aug_string_at(const aug_string* string, size_t index);
+char aug_string_back(const aug_string* string);
+bool aug_string_equal(const aug_string* a, const aug_string* b);
+bool aug_string_bytes_equal(const aug_string* a, const char* bytes);
+
+typedef struct
+{
+	aug_value *buffer;
+	int ref_count;
+	size_t capacity;
+	size_t length;
+} aug_array;
+
+aug_array*aug_array_new(size_t size);
+void aug_array_incref(aug_array* array);
+aug_array* aug_array_decref (aug_array* array);
+void aug_array_reserve(aug_array* array, size_t size);
+void aug_array_push(aug_array* array, aug_value value);
+aug_value aug_array_pop (aug_array* array);
+aug_value aug_array_at(const aug_array* array, size_t index);
+aug_value* aug_array_at_ptr(const aug_array* array, size_t index);
+aug_value aug_array_back(const aug_array* array);
+
+#ifdef __cplusplus
+}
+#endif
 
 template <class type>
 using aug_std_array = std::vector<type>;
@@ -144,7 +186,7 @@ template <class key, class type>
 using aug_std_map = std::unordered_map<key, type>;
 
 typedef void(aug_error_callback)(const char* /*msg*/);
-typedef aug_value /*return_value*/ (aug_function_callback)(const aug_std_array<aug_value>& /*args*/);
+typedef aug_value /*return_value*/ (aug_function_callback)(int argc, const aug_value* /*args*/);
 
 // Value Types
 enum aug_value_type : char
@@ -166,18 +208,6 @@ const char* aug_value_type_labels[] =
 };
 static_assert(sizeof(aug_value_type_labels) / sizeof(aug_value_type_labels[0]) == (int)AUG_NONE + 1, "Type labels must be up to date with enum");
 #endif //AUG_IMPLEMENTATION
-
-// TODO: replace with custom class
-struct aug_array : public aug_std_array<aug_value>
-{
-    int ref_count;
-};
-
-// TODO: replace with custom class
-struct aug_string : public aug_std_string
-{
-    int ref_count;
-};
 
 // Values instance 
 struct aug_value
@@ -236,14 +266,13 @@ struct aug_symbol
     int argc;
 };
 
-using aug_symtable = aug_std_map<aug_std_string, aug_symbol>;
+using aug_symtable = aug_std_map<std::string, aug_symbol>;
 
 // Represents a "compiled" script
 struct aug_script
 {
     aug_symtable globals;
-    aug_std_array<char> bytecode;
-    bool valid;
+    aug_string* bytecode;
 
     // If the script
     aug_std_array<aug_value> stack_state;
@@ -270,7 +299,7 @@ struct aug_vm
     const char* instruction;
     const char* bytecode;
  
-    aug_value* stack;
+    aug_value stack[AUG_STACK_SIZE];
     int stack_index;
     int base_index;
 
@@ -278,7 +307,7 @@ struct aug_vm
     // This external function map contains the user's registered functions. 
     // Use aug_register/aug_unregister to modify these fields
     aug_std_array<aug_function_callback*> external_functions;
-    aug_std_array<aug_std_string>         external_function_names;
+    aug_std_array<aug_string*>            external_function_names;
 
     // TODO: debug symtable from addr to func name / variable offsets
 };
@@ -297,7 +326,9 @@ void aug_execute(aug_vm& vm, const char* filename);
 void aug_evaluate(aug_vm& vm, const char* code);
 
 // Script
-bool aug_compile(aug_vm& vm, aug_script& script, const char* filename);
+aug_script aug_script_new();
+void aug_script_delete(aug_script& script);
+void aug_compile(aug_vm& vm, aug_script& script, const char* filename);
 void aug_load(aug_vm& vm, aug_script& script);
 void aug_unload(aug_vm& vm, aug_script& script);
 aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name);
@@ -384,15 +415,13 @@ struct aug_input
 {
     bool is_file; // True if input source is a file. If false, file is string stream and filename is raw source code
     std::istream* file;
-    aug_std_string filename;
+    std::string filename;
     aug_error_callback* error_callback;
     bool valid;
 
     std::streampos track_pos;
     int pos_buffer_index;
     aug_pos pos_buffer[4];
-
-    char token_buffer[AUG_TOKEN_BUFFER_SIZE];
 };
 
 inline aug_pos* aug_input_pos(aug_input* input)
@@ -513,7 +542,7 @@ inline void aug_input_start_tracking(aug_input* input)
     input->track_pos = input->file->tellg();
 }
 
-inline bool aug_input_end_tracking(aug_input* input, aug_std_string& s)
+inline aug_string* aug_input_end_tracking(aug_input* input)
 {
     assert(input != NULL && input->file != NULL);
     const std::fstream::iostate state = input->file->rdstate();
@@ -522,21 +551,16 @@ inline bool aug_input_end_tracking(aug_input* input, aug_std_string& s)
     const std::streampos pos_end = input->file->tellg();
     const std::streamoff len = (pos_end - input->track_pos);
 
-    if (len >= AUG_TOKEN_BUFFER_SIZE)
-    {
-        AUG_LOG_ERROR(input->error_callback, "Token contains to many characters. Can not exceed %d", AUG_TOKEN_BUFFER_SIZE);
-        input->file->clear(state);
-        return false;
-    }
+    aug_string* string = aug_string_new(len+1);
+    string->length = len;
+    string->buffer[len] = '\0';
 
-    input->token_buffer[0] = '\0';
     input->file->seekg(input->track_pos);
-    input->file->read(input->token_buffer, len);
+    input->file->read(string->buffer, len);
     input->file->seekg(pos_end);
     input->file->clear(state);
 
-    s.assign(input->token_buffer, (size_t)len);
-    return true;
+    return string;
 }
 
 inline void aug_input_error_hint(aug_input* input, const aug_pos* pos)
@@ -683,7 +707,7 @@ struct aug_token
 {
     aug_token_id id;
     const aug_token_detail* detail; 
-    aug_std_string data;
+    aug_string* data;
     aug_pos pos;
 };
 
@@ -692,12 +716,33 @@ struct aug_lexer
 {
     aug_input* input;
 
-    aug_token prev;
     aug_token curr;
     aug_token next;
 
     char comment_symbol;
 };
+
+aug_token aug_token_new()
+{
+    aug_token token;
+    token.id = AUG_TOKEN_NONE;
+    token.detail = &aug_token_details[(int)token.id];
+    token.data = NULL;
+    return token;
+}
+
+void aug_token_delete(aug_token* token)
+{
+    aug_string_decref(token->data);
+    *token = aug_token_new();
+}
+
+aug_token aug_token_copy(aug_token token)
+{
+    aug_token new_token = token;
+    aug_string_incref(new_token.data);
+    return new_token;
+}
 
 aug_lexer* aug_lexer_new(aug_input* input)
 {
@@ -705,15 +750,17 @@ aug_lexer* aug_lexer_new(aug_input* input)
     lexer->input = input;
     lexer->comment_symbol = '#';
 
-    lexer->prev = aug_token();
-    lexer->curr = aug_token();
-    lexer->next = aug_token();
+    lexer->curr = aug_token_new();
+    lexer->next = aug_token_new();
 
     return lexer;
 }
 
 void aug_lexer_delete(aug_lexer* lexer)
 {
+    aug_token_delete(&lexer->curr);
+    aug_token_delete(&lexer->next);
+
     AUG_DELETE(lexer);
 }
 
@@ -727,19 +774,20 @@ inline bool aug_lexer_tokenize_char(aug_lexer* lexer, aug_token& token)
     }
 
     token.id = AUG_TOKEN_CHAR;
-    token.data.clear();
+    token.data = aug_string_new(1);
 
     c = aug_input_get(lexer->input);
     if (c != '\'')
     {
-        token.data.push_back(c);
+        aug_string_push(token.data, c);
         c = aug_input_get(lexer->input); // eat 
     }
     else
-        token.data.push_back(0);
+        aug_string_push(token.data, 0);
 
     if (c != '\'')
     {
+        token.data = aug_string_decref(token.data);
         AUG_INPUT_ERROR(lexer->input, "char literal missing closing \"");
         return false;
     }
@@ -756,7 +804,7 @@ inline bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token& token)
     }
 
     token.id = AUG_TOKEN_STRING;
-    token.data.clear();
+    token.data = aug_string_new(4);
 
     c = aug_input_get(lexer->input);
 
@@ -764,6 +812,7 @@ inline bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token& token)
     {
         if (c == EOF)
         {
+            token.data = aug_string_decref(token.data);
             AUG_INPUT_ERROR(lexer->input, "string literal missing closing \"");
             return false;
         }
@@ -775,52 +824,47 @@ inline bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token& token)
             switch (c)
             {
             case '\'': 
-                token.data.push_back('\'');
+                aug_string_push(token.data, '\'');
                 break;
             case '\"':
-                token.data.push_back('\"');
+                aug_string_push(token.data, '\"');
                 break;
             case '\\':
-                token.data.push_back('\\');
+                aug_string_push(token.data, '\\');
                 break;
             case '0': //Null
-                token.data.push_back(0x0);
+                aug_string_push(token.data, 0x0);
                 break;
             case 'a': //Alert beep
-                token.data.push_back(0x07);
+                aug_string_push(token.data, 0x07);
                 break;
             case 'b': // Backspace
-                token.data.push_back(0x08);
+                aug_string_push(token.data, 0x08);
                 break;
             case 'f': // Page break
-                token.data.push_back(0x0C);
+                aug_string_push(token.data, 0x0C);
                 break;
             case 'n': // Newline
-                token.data.push_back(0x0A);
+                aug_string_push(token.data, 0x0A);
                 break;
             case 'r': // Carriage return
-                token.data.push_back(0x0D);
+                aug_string_push(token.data, 0x0D);
                 break;
             case 't': // Tab (Horizontal)
-                token.data.push_back(0x09);
+                aug_string_push(token.data, 0x09);
                 break;
             case 'v': // Tab (Vertical)
-                token.data.push_back(0x0B);
+                aug_string_push(token.data, 0x0B);
                 break;
             default:
+                token.data = aug_string_decref(token.data);
                 AUG_INPUT_ERROR(lexer->input, "invalid escape character \\%c", c);
-                while (c != '\"')
-                {
-                    if (c == EOF)
-                        break;
-                    c = aug_input_get(lexer->input);
-                }
                 return false;
             }
         }
         else
         {
-            token.data.push_back(c);
+            aug_string_push(token.data, c);
         }
 
         c = aug_input_get(lexer->input);
@@ -937,18 +981,17 @@ inline bool aug_lexer_tokenize_name(aug_lexer* lexer, aug_token& token)
         c = aug_input_get(lexer->input);
     aug_input_unget(lexer->input);
 
-    if (!aug_input_end_tracking(lexer->input, token.data))
-        return false;
-
     token.id = AUG_TOKEN_NAME;
+    token.data = aug_input_end_tracking(lexer->input);
 
     // find token id for keyword
     for (size_t i = 0; i < (size_t)AUG_TOKEN_COUNT; ++i)
     {
         const aug_token_detail& detail = aug_token_details[i];
-        if (detail.keyword && detail.keyword == token.data)
+        if (aug_string_bytes_equal(token.data, detail.keyword))
         {
             token.id = (aug_token_id)i;
+            token.data = aug_string_decref(token.data); // keyword is static, free allocation
             break;
         }
     }
@@ -1037,30 +1080,25 @@ bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token& token)
     }
 
     token.id = id;
+    token.data = aug_input_end_tracking(lexer->input);
 
     if(id == AUG_TOKEN_NONE)
     {
-        AUG_INPUT_ERROR(lexer->input, "invalid numeric format %s", token.data.c_str());
+        AUG_INPUT_ERROR(lexer->input, "invalid numeric format %s", token.data->buffer);
+        token.data = aug_string_decref(token.data);
         return false;
     }
-    
-    if (!aug_input_end_tracking(lexer->input, token.data))
-        return false;
 
     return true;
 }
 
 aug_token aug_lexer_tokenize(aug_lexer* lexer)
 {
-    aug_token token;
+    aug_token token = aug_token_new();
 
     // if file is not open, or already at then end. return invalid token
     if (lexer->input == NULL || !lexer->input->valid)
-    {
-        token.id = AUG_TOKEN_NONE;
-        token.detail = &aug_token_details[(int)token.id];
         return token;
-    }
 
     if (aug_input_peek(lexer->input) == EOF)
     {
@@ -1167,7 +1205,9 @@ bool aug_lexer_move(aug_lexer* lexer)
     if (lexer->next.id == AUG_TOKEN_NONE)
         lexer->next = aug_lexer_tokenize(lexer);        
 
-    lexer->prev = lexer->curr; 
+
+    aug_token_delete(&lexer->curr);
+
     lexer->curr = lexer->next;
     lexer->next = aug_lexer_tokenize(lexer);
 
@@ -1209,7 +1249,15 @@ struct aug_ast
 aug_ast* aug_parse_value(aug_lexer* lexer); 
 aug_ast* aug_parse_block(aug_lexer* lexer);
 
-inline aug_ast* aug_ast_new(aug_ast_id id, const aug_token& token = aug_token())
+inline aug_ast* aug_ast_new(aug_ast_id id)
+{
+    aug_ast* node = AUG_NEW(aug_ast);
+    node->id = id;
+    node->token = aug_token_new();
+    return node;
+}
+
+inline aug_ast* aug_ast_new(aug_ast_id id, aug_token token)
 {
     aug_ast* node = AUG_NEW(aug_ast);
     node->id = id;
@@ -1217,12 +1265,43 @@ inline aug_ast* aug_ast_new(aug_ast_id id, const aug_token& token = aug_token())
     return node;
 }
 
+# if 0
+
+#include <libunwind.h>
+#include <stdio.h>
+void do_backtrace()
+{
+    unw_cursor_t    cursor;
+    unw_context_t   context;
+
+    unw_getcontext(&context);
+    unw_init_local(&cursor, &context);
+
+    while (unw_step(&cursor) > 0) 
+    {
+        unw_word_t  offset, pc;
+        char        fname[64];
+
+        unw_get_reg(&cursor, UNW_REG_IP, &pc);
+
+        fname[0] = '\0';
+        (void) unw_get_proc_name(&cursor, fname, sizeof(fname), &offset);
+
+        printf ("%p : (%s+0x%x) [%p]\n", pc, fname, offset, pc);
+    }
+}
+#endif
+
 inline void aug_ast_delete(aug_ast* node)
 {
     if (node == NULL)
         return;
+    
     for(aug_ast* child : node->children)
         aug_ast_delete(child);
+
+    aug_token_delete(&node->token);
+
     delete node;
 }
 
@@ -1270,12 +1349,17 @@ inline aug_ast* aug_parse_expr(aug_lexer* lexer)
     while(lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_token op = lexer->curr;
+
         if(op.detail->prec > 0)
         {
             // left associate by default (for right, <= becomes <)
-            while(op_stack.size() && op_stack.back().detail->prec >= op.detail->prec)
+            while(op_stack.size())
             {
-                if(!aug_parse_expr_pop(lexer,  op_stack, expr_stack))
+                aug_token next_op = op_stack.back();
+
+                if(next_op.detail->prec < op.detail->prec)
+                    break;
+                if(!aug_parse_expr_pop(lexer, op_stack, expr_stack))
                     return NULL;
             }
 
@@ -1297,7 +1381,7 @@ inline aug_ast* aug_parse_expr(aug_lexer* lexer)
 
     while(op_stack.size())
     {
-        if(!aug_parse_expr_pop(lexer,  op_stack, expr_stack))
+        if(!aug_parse_expr_pop(lexer, op_stack, expr_stack))
             return NULL;
     }
 
@@ -1318,12 +1402,13 @@ inline aug_ast* aug_parse_expr(aug_lexer* lexer)
 
 inline aug_ast* aug_parse_funccall(aug_lexer* lexer)
 {
-    aug_token name_token = lexer->curr;
-    if (name_token.id != AUG_TOKEN_NAME)
+    if (lexer->curr.id != AUG_TOKEN_NAME)
         return NULL;
 
     if (lexer->next.id != AUG_TOKEN_LPAREN)
         return NULL;
+
+    aug_token name_token = aug_token_copy(lexer->curr);
 
     aug_lexer_move(lexer); // eat NAME
     aug_lexer_move(lexer); // eat LPAREN
@@ -1387,9 +1472,10 @@ inline aug_ast* aug_parse_array(aug_lexer* lexer)
 
 inline aug_ast* aug_parse_get_element(aug_lexer* lexer)
 {
-    aug_token name_token = lexer->curr;
     if (lexer->next.id != AUG_TOKEN_LBRACKET)
         return NULL;
+
+    aug_token name_token = aug_token_copy(lexer->curr);
 
     aug_lexer_move(lexer); // eat NAME
     aug_lexer_move(lexer); // eat LBRACKET
@@ -1421,8 +1507,7 @@ inline aug_ast* aug_parse_get_element(aug_lexer* lexer)
 inline aug_ast* aug_parse_value(aug_lexer* lexer)
 {
     aug_ast* value = NULL;
-    const aug_token token = lexer->curr;
-    switch (token.id)
+    switch (lexer->curr.id)
     {
     case AUG_TOKEN_INT:
     case AUG_TOKEN_HEX:
@@ -1433,8 +1518,10 @@ inline aug_ast* aug_parse_value(aug_lexer* lexer)
     case AUG_TOKEN_TRUE:
     case AUG_TOKEN_FALSE:
     {
-        aug_lexer_move(lexer);
+        aug_token token = aug_token_copy(lexer->curr);
         value = aug_ast_new(AUG_AST_LITERAL, token);
+
+        aug_lexer_move(lexer);
         break;
     }
     case AUG_TOKEN_NAME:
@@ -1450,8 +1537,10 @@ inline aug_ast* aug_parse_value(aug_lexer* lexer)
             break;
 
         // consume token. return variable node
-        aug_lexer_move(lexer); // eat name
+        aug_token token = aug_token_copy(lexer->curr);
         value = aug_ast_new(AUG_AST_VARIABLE, token);
+
+        aug_lexer_move(lexer); // eat name
         break;
     }
     case AUG_TOKEN_LBRACKET:
@@ -1507,12 +1596,13 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
 
     aug_lexer_move(lexer); // eat VAR
 
-    aug_token name_token = lexer->curr;
-    if (name_token.id != AUG_TOKEN_NAME)
+    if (lexer->curr.id != AUG_TOKEN_NAME)
     {
         AUG_INPUT_ERROR(lexer->input,  "Variable assignment expected name");
         return NULL;
     }
+
+    aug_token name_token = aug_token_copy(lexer->curr);
     aug_lexer_move(lexer); // eat NAME
 
     if (lexer->curr.id == AUG_TOKEN_SEMICOLON)
@@ -1525,6 +1615,7 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
 
     if (lexer->curr.id != AUG_TOKEN_ASSIGN)
     {
+        aug_token_delete(&name_token);
         AUG_INPUT_ERROR(lexer->input,  "Variable assignment expected \"=\" or ;");
         return NULL;
     }
@@ -1534,11 +1625,13 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
     aug_ast* expr = aug_parse_expr(lexer);
     if (expr == NULL)
     {
+        aug_token_delete(&name_token);
         AUG_INPUT_ERROR(lexer->input,  "Variable assignment expected expression after \"=\"");
         return NULL;
     }
     if (lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
+        aug_token_delete(&name_token);
         aug_ast_delete(expr);
         AUG_INPUT_ERROR(lexer->input,  "Variable assignment missing semicolon at end of expression");
         return NULL;
@@ -1553,12 +1646,11 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
 
 aug_ast* aug_parse_stmt_assign_var(aug_lexer* lexer)
 {
-    aug_token name_token = lexer->curr;
-    if (name_token.id != AUG_TOKEN_NAME)
+    if (lexer->curr.id != AUG_TOKEN_NAME)
         return NULL;
 
     aug_token eq_token = lexer->next;
-    aug_token op_token;
+    aug_token op_token = aug_token_new();
 
     switch(eq_token.id)
     {
@@ -1572,18 +1664,21 @@ aug_ast* aug_parse_stmt_assign_var(aug_lexer* lexer)
     default: return NULL;
     }
 
+    aug_token name_token = aug_token_copy(lexer->curr);
     aug_lexer_move(lexer); // eat NAME
     aug_lexer_move(lexer); // eat ASSIGN
 
     aug_ast* expr = aug_parse_expr(lexer);
     if (expr == NULL)
     {
+        aug_token_delete(&name_token);
         AUG_INPUT_ERROR(lexer->input,  "Assignment expected expression after \"=\"");
         return NULL;
     }
 
     if (lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
+        aug_token_delete(&name_token);
         aug_ast_delete(expr);
         AUG_INPUT_ERROR(lexer->input,  "Missing semicolon at end of expression");
         return NULL;
@@ -1597,13 +1692,13 @@ aug_ast* aug_parse_stmt_assign_var(aug_lexer* lexer)
         op_token.detail = &aug_token_details[(int)op_token.id];
 
         // Create name + expr
+        aug_token expr_name_token = aug_token_copy(name_token);
         aug_ast* binaryop = aug_ast_new(AUG_AST_BINARY_OP, op_token);
-        aug_ast* value = aug_ast_new(AUG_AST_VARIABLE, name_token);
+        aug_ast* value = aug_ast_new(AUG_AST_VARIABLE, expr_name_token);
 
         // add in reverse order
         binaryop->children.push_back(value);
         binaryop->children.push_back(expr);
-
 
         aug_ast* stmt_assign = aug_ast_new(AUG_AST_STMT_ASSIGN_VAR, name_token);
         stmt_assign->children.push_back(binaryop);
@@ -1725,7 +1820,8 @@ inline aug_ast* aug_parse_param_list(aug_lexer* lexer)
     aug_ast* param_list = aug_ast_new(AUG_AST_PARAM_LIST);
     if (lexer->curr.id == AUG_TOKEN_NAME)
     {
-        aug_ast* param = aug_ast_new(AUG_AST_PARAM, lexer->curr);
+        aug_token param_name = aug_token_copy(lexer->curr);
+        aug_ast* param = aug_ast_new(AUG_AST_PARAM, param_name);
         param_list->children.push_back(param);
 
         aug_lexer_move(lexer); // eat NAME
@@ -1741,7 +1837,8 @@ inline aug_ast* aug_parse_param_list(aug_lexer* lexer)
                 return NULL;
             }
 
-            aug_ast* param = aug_ast_new(AUG_AST_PARAM, lexer->curr);
+            aug_token param_name = aug_token_copy(lexer->curr);
+            aug_ast* param = aug_ast_new(AUG_AST_PARAM, param_name);
             param_list->children.push_back(param);
 
             aug_lexer_move(lexer); // eat NAME
@@ -1773,22 +1870,26 @@ aug_ast* aug_parse_stmt_func(aug_lexer* lexer)
         return NULL;
     }
 
-    const aug_token func_name = lexer->curr;
+    aug_token func_name_token = aug_token_copy(lexer->curr);
 
     aug_lexer_move(lexer); // eat NAME
 
     aug_ast* param_list = aug_parse_param_list(lexer);
     if (param_list == NULL)
+    {
+        aug_token_delete(&func_name_token);
         return NULL;
+    }
 
     aug_ast* block = aug_parse_block(lexer);
     if (block == NULL)
     {
+        aug_token_delete(&func_name_token);
         aug_ast_delete(param_list);
         return NULL;
     }
 
-    aug_ast* func_def = aug_ast_new(AUG_AST_FUNC_DEF, func_name);
+    aug_ast* func_def = aug_ast_new(AUG_AST_FUNC_DEF, func_name_token);
     func_def->children.push_back(param_list);
     func_def->children.push_back(block);
 
@@ -2258,8 +2359,12 @@ inline void aug_ir_pop_scope(aug_ir& ir)
     frame.scope_stack.pop_back();
 }
 
-inline bool aug_ir_set_var(aug_ir& ir, const aug_std_string& name)
+inline bool aug_ir_set_var(aug_ir& ir, const aug_string* var_name)
 {
+    std::string name;
+    for(int i = 0; i < var_name->length; ++i)
+        name.push_back(var_name->buffer[i]);
+
     aug_ir_scope& scope = aug_ir_current_scope(ir);
     const int offset = scope.stack_offset++;
 
@@ -2280,8 +2385,12 @@ inline bool aug_ir_set_var(aug_ir& ir, const aug_std_string& name)
     return true;
 }
 
-inline bool aug_ir_set_param(aug_ir& ir, const aug_std_string& name)
+inline bool aug_ir_set_param(aug_ir& ir, const aug_string* param_name)
 {
+    std::string name;
+    for(int i = 0; i < param_name->length; ++i)
+        name.push_back(param_name->buffer[i]);
+
     aug_ir_scope& scope = aug_ir_current_scope(ir);
     const int offset = scope.stack_offset++;
 
@@ -2302,8 +2411,12 @@ inline bool aug_ir_set_param(aug_ir& ir, const aug_std_string& name)
     return true;
 }
 
-inline bool aug_ir_set_func(aug_ir& ir, const aug_std_string& name, int param_count)
+inline bool aug_ir_set_func(aug_ir& ir, const aug_string* func_name, int param_count)
 {
+    std::string name;
+    for(int i = 0; i < func_name->length; ++i)
+        name.push_back(func_name->buffer[i]);
+
     aug_ir_scope& scope = aug_ir_current_scope(ir);
     const int offset = ir.bytecode_offset;
     if (scope.symtable.count(name) != 0)
@@ -2323,8 +2436,12 @@ inline bool aug_ir_set_func(aug_ir& ir, const aug_std_string& name, int param_co
     return true;
 }
 
-inline aug_symbol aug_ir_get_symbol(aug_ir& ir, const aug_std_string& name)
+inline aug_symbol aug_ir_get_symbol(aug_ir& ir, const aug_string* symbol_name)
 {
+    std::string name;
+    for(int i = 0; i < symbol_name->length; ++i)
+        name.push_back(symbol_name->buffer[i]);
+
     for (int i = ir.frame_stack.size() - 1; i >= 0; --i)
     {
         const aug_ir_frame& frame = ir.frame_stack.at(i);
@@ -2344,8 +2461,12 @@ inline aug_symbol aug_ir_get_symbol(aug_ir& ir, const aug_std_string& name)
     return sym;
 }
 
-inline aug_symbol aug_ir_symbol_relative(aug_ir& ir, const aug_std_string& name)
+inline aug_symbol aug_ir_symbol_relative(aug_ir& ir, const aug_string* symbol_name)
 {
+    std::string name;
+    for(int i = 0; i < symbol_name->length; ++i)
+        name.push_back(symbol_name->buffer[i]);
+
     for (int i = ir.frame_stack.size() - 1; i >= 0; --i)
     {
         const aug_ir_frame& frame = ir.frame_stack.at(i);
@@ -2387,8 +2508,12 @@ inline aug_symbol aug_ir_symbol_relative(aug_ir& ir, const aug_std_string& name)
     return sym;
 }
 
-inline aug_symbol aug_ir_get_symbol_local(aug_ir& ir, const aug_std_string& name)
+inline aug_symbol aug_ir_get_symbol_local(aug_ir& ir, const aug_string* symbol_name)
 {
+    std::string name;
+    for(int i = 0; i < symbol_name->length; ++i)
+        name.push_back(symbol_name->buffer[i]);
+
     const aug_ir_scope& scope = aug_ir_current_scope(ir);
     if (scope.symtable.count(name))
         return scope.symtable.at(name);
@@ -2443,9 +2568,7 @@ inline bool aug_set_string(aug_value* value, const char* data)
         return false;
 
     value->type = AUG_STRING;
-    value->str = AUG_NEW(aug_string);
-    value->str->ref_count = 1;
-    value->str->assign(data, strlen(data));
+    value->str = aug_string_create(data);
     return true;
 }
 
@@ -2455,9 +2578,8 @@ inline bool aug_set_array(aug_value* value)
         return false;
 
     value->type = AUG_ARRAY;
-    value->array = AUG_NEW(aug_array);
-    value->array->ref_count = 1; 
-     return true;
+    value->array = aug_array_new(1);
+    return true;
 }
 
 aug_value aug_none()
@@ -2543,7 +2665,7 @@ float aug_get_float(const aug_value& value)
 
 inline void aug_decref(aug_value* value)
 {
-    if (value == NULL)
+    if(value == nullptr)
         return;
 
     switch (value->type)
@@ -2555,10 +2677,16 @@ inline void aug_decref(aug_value* value)
     case AUG_FLOAT:
         break;
     case AUG_STRING:
-        if(value->str && --value->str->ref_count <= 0)
+        value->str = aug_string_decref(value->str);
+        break;
+    case AUG_ARRAY:
+        if(value->array)
         {
-            value->type = AUG_NONE;
-            AUG_DELETE(value->str);
+            for(int i = 0; i < value->array->length; ++i)
+            {
+                aug_decref(aug_array_at_ptr(value->array, i));
+            }
+            value->array = aug_array_decref(value->array);
         }
         break;
     case AUG_OBJECT:
@@ -2568,56 +2696,49 @@ inline void aug_decref(aug_value* value)
             AUG_DELETE(value->obj);
         }
         break;
-    case AUG_ARRAY:
-        if(value->array && --value->array->ref_count <= 0)
-        {
-            value->type = AUG_NONE;
-            for(aug_value& entry : *value->array)
-                aug_decref(&entry);
-            AUG_DELETE(value->array);
-        }
-        break;
     }
 }
 
-inline bool aug_incref(aug_value* to, aug_value* from)
+inline void aug_incref(aug_value* value)
 {
-    if(from == NULL || to == NULL)
-        return false;
+    if(value == nullptr)
+        return;
 
-    aug_decref(to);
-    *to = *from;
-
-    switch (to->type)
+    switch (value->type)
     {
     case AUG_STRING:
-        assert(to->str);
-        ++to->str->ref_count;
-        break;
-    case AUG_OBJECT:
-        assert(to->obj);
-        ++to->obj->ref_count;
+        aug_string_incref(value->str);
         break;
     case AUG_ARRAY:
-        assert(to->array);
-        ++to->array->ref_count;
+        aug_array_incref(value->array);
+        break;
+    case AUG_OBJECT:
+        assert(value->obj);
+        ++value->obj->ref_count;
         break;
     default:
         break;
     }
-    return true;
 }
 
-inline bool aug_move(aug_value* to, aug_value* from)
+inline void aug_copy(aug_value* to, aug_value* from)
 {
     if(from == NULL || to == NULL)
-        return false;
+        return;
+
+    aug_decref(to);
+    *to = *from;
+    aug_incref(to);
+}
+
+inline void aug_move(aug_value* to, aug_value* from)
+{
+    if(from == NULL || to == NULL)
+        return;
 
     aug_decref(to);
     *to = *from;
     *from = aug_none();
-
-    return true;
 }
 
 inline bool aug_get_element(aug_value* container, aug_value* index, aug_value* element)
@@ -2633,16 +2754,12 @@ inline bool aug_get_element(aug_value* container, aug_value* index, aug_value* e
     {
     case AUG_STRING:
     {
-        assert(container->str);
-        aug_string* str = container->str;
-        *element = aug_from_char((*str)[i]);
+        *element = aug_from_char(aug_string_at(container->str, i));
         return true;
     }
     case AUG_ARRAY:
     {
-        assert(container->array);
-        aug_array* array = container->array;
-        *element = (*array)[i];
+        *element = aug_array_at(container->array, i);
         return true;
     }
     default:
@@ -3022,9 +3139,11 @@ void aug_vm_startup(aug_vm& vm)
 
 void aug_vm_shutdown(aug_vm& vm)
 {
-    // Cleanup stack values. Free any outstanding values
+    //Cleanup stack values. Free any outstanding values
     while(vm.stack_index > 0)
+    {
         aug_decref(aug_vm_pop(vm));
+    }
 
     // Ensure that stack has returned to beginning state
     if (vm.stack_index != 0)
@@ -3033,10 +3152,10 @@ void aug_vm_shutdown(aug_vm& vm)
 
 void aug_vm_load_script(aug_vm& vm, const aug_script& script)
 {
-    if (script.valid && script.bytecode.size() == 0)
+    if (script.bytecode == NULL && script.bytecode->length == 0)
         vm.bytecode = NULL;
     else
-        vm.bytecode = &script.bytecode[0];
+        vm.bytecode = script.bytecode->buffer;
     
     vm.instruction = vm.bytecode;
     vm.valid = (vm.bytecode != NULL);
@@ -3050,6 +3169,12 @@ void aug_vm_load_script(aug_vm& vm, const aug_script& script)
     }
 }
 
+void aug_vm_unload_script(aug_vm& vm, aug_script& script)
+{
+    for (size_t i = 0; i < script.stack_state.size(); ++i)
+        aug_decref(&script.stack_state[i]);
+}
+
 void aug_vm_save_script(aug_vm& vm, aug_script& script)
 {
     script.stack_state.clear();
@@ -3057,15 +3182,10 @@ void aug_vm_save_script(aug_vm& vm, aug_script& script)
     {
         aug_value* top = aug_vm_pop(vm);
         if (top)
+        {
+            aug_incref(top);
             script.stack_state.push_back(*top);
-    }
-}
-
-void aug_free_script(aug_vm& vm, aug_script& script)
-{
-    for (size_t i = 0; i < script.stack_state.size(); ++i)
-    {
-        aug_decref(&script.stack_state[i]);
+        }
     }
 }
 
@@ -3149,7 +3269,7 @@ void aug_vm_execute(aug_vm& vm)
                 {
                     aug_value entry = aug_none();
                     aug_move(&entry, aug_vm_pop(vm));
-                    value.array->push_back(entry);
+                    aug_array_push(value.array, entry);
                 }
 
                 aug_value* top = aug_vm_push(vm);          
@@ -3162,7 +3282,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* local = aug_vm_get_local(vm, stack_offset);
 
                 aug_value* top = aug_vm_push(vm);
-                aug_incref(top, local);
+                aug_copy(top, local);
                 break;
             }
             case AUG_OPCODE_PUSH_GLOBAL:
@@ -3171,7 +3291,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* local = aug_vm_get_global(vm, stack_offset);
 
                 aug_value* top = aug_vm_push(vm);
-                aug_incref(top, local);
+                aug_copy(top, local);
                 break;
             }
             case AUG_OPCODE_PUSH_ELEMENT:
@@ -3383,8 +3503,9 @@ void aug_vm_execute(aug_vm& vm)
             {
                 const int delta = aug_vm_read_int(vm);
                 for(int i = 0; i < delta; ++i)
+                {
                     aug_decref(aug_vm_pop(vm));
-                //vm.stack_index = vm.stack_index - delta;
+                }
                 break;
             }
             case AUG_OPCODE_PUSH_CALL_FRAME:
@@ -3408,15 +3529,29 @@ void aug_vm_execute(aug_vm& vm)
                 // Free locals
                 const int delta = aug_vm_read_int(vm);
                 for(int i = 0; i < delta; ++i)
+                {
                     aug_decref(aug_vm_pop(vm));
+                }
                 
                 // Restore base index
                 aug_value* ret_base = aug_vm_pop(vm);
+                if(ret_base == NULL)
+                {                    
+                    AUG_VM_ERROR(vm, "Calling frame setup incorrectly. Stack missing stack base");
+                    break;
+                }
+
                 vm.base_index = ret_base->i;
                 aug_decref(ret_base);
 
                 // jump to return instruction
                 aug_value* ret_addr = aug_vm_pop(vm);
+                if(ret_addr == NULL)
+                {                    
+                    AUG_VM_ERROR(vm, "Calling frame setup incorrectly. Stack missing return address");
+                    break;
+                }
+                
                 if (ret_addr->i == AUG_OPCODE_INVALID)
                     vm.instruction = NULL;
                 else
@@ -3445,8 +3580,8 @@ void aug_vm_execute(aug_vm& vm)
                 const int func_index = func_index_value->i;
 
                 // Gather arguments
-                aug_std_array<aug_value> args;
-                args.reserve(arg_count);
+                aug_value* args = (aug_value*)malloc(sizeof(aug_value) * arg_count);
+
                 for (int i = arg_count - 1; i >= 0; --i)
                 {
                     aug_value* arg = aug_vm_pop(vm);
@@ -3454,24 +3589,20 @@ void aug_vm_execute(aug_vm& vm)
                     {
                         aug_value value = aug_none();
                         aug_move(&value, arg);
-                        args.push_back(value);
+                        args[arg_count - i - 1] = value;
                     }
                 }
-
+          
                 // Check function call
                 if (func_index < 0 || func_index >= (int)vm.external_functions.size() || vm.external_functions[func_index] == NULL)
                 {
                     AUG_VM_ERROR(vm, "External Function Called at index %d not registered", func_index);
                 }
-                else if ((int)args.size() != arg_count)
-                {
-                    const aug_std_string& func_name = vm.external_function_names[func_index];
-                    AUG_VM_ERROR(vm, "External Function Call %s passed %d arguments, expected %d", func_name.c_str(), (int)args.size(), arg_count);
-                }
-                else
+                
+                if(vm.valid)
                 {
                     // Call the external function. Move return value on to top of stack
-                    aug_value ret_value = vm.external_functions[func_index](args);
+                    aug_value ret_value = vm.external_functions[func_index](arg_count, args);
                     aug_value* top = aug_vm_push(vm);
                     if (top)
                         aug_move(top, &ret_value);
@@ -3481,7 +3612,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_decref(func_index_value);
                 for (int i = 0; i < arg_count; ++i)
                     aug_decref(&args[i]);
-
+                free(args);
                 break;
             }
             default:
@@ -3531,14 +3662,13 @@ aug_value aug_vm_execute_from_frame(aug_vm& vm, int func_addr, const aug_std_arr
     aug_vm_execute(vm);
 
     aug_value ret_value = aug_none();
-    if (vm.stack_index > 0)
+    if (vm.stack_index > 1)
     {
         // If stack is valid, get the pushed value
         aug_value* top = aug_vm_pop(vm);
         if (top)
             ret_value = *top;
     }
-
     return ret_value;
 }
 
@@ -3557,6 +3687,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         return;
 
     const aug_token& token = node->token;
+    const aug_string* token_data = token.data; 
     const aug_std_array<aug_ast*>& children = node->children;
 
     switch(node->id)
@@ -3586,52 +3717,51 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_LITERAL:
         {
-            const aug_token& token = node->token;
             switch (token.id)
             {
                 case AUG_TOKEN_CHAR:
                 {
-                    assert(token.data.size() > 0);
-                    const char data = token.data[0];
+                    assert(token_data && token_data->length == 1);
+                    const char data = token_data->buffer[0];
                     const aug_ir_operand& operand = aug_ir_operand_from_char(data);
                     aug_ir_add_operation(ir, AUG_OPCODE_PUSH_CHAR, operand);
                     break;
                 }
                 case AUG_TOKEN_INT:
                 {
-                    assert(token.data.size() > 0);
-                    const int data = strtol(token.data.c_str(), NULL, 10);
+                    assert(token_data && token_data->length > 0);
+                    const int data = strtol(token_data->buffer, NULL, 10);
                     const aug_ir_operand& operand = aug_ir_operand_from_int(data);
                     aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
                     break;
                 }
                 case AUG_TOKEN_HEX:
                 {
-                    assert(token.data.size() > 0);
-                    const unsigned int data = strtoul(token.data.c_str(), NULL, 16);
+                    assert(token_data && token_data->length > 0);
+                    const unsigned int data = strtoul(token_data->buffer, NULL, 16);
                     const aug_ir_operand& operand = aug_ir_operand_from_int(data);
                     aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
                     break;
                 }
                 case AUG_TOKEN_BINARY:
                 {
-                    assert(token.data.size() > 0);
-                    const unsigned int data = strtoul(token.data.c_str(), NULL, 2);
+                    assert(token_data && token_data->length > 0);
+                    const unsigned int data = strtoul(token_data->buffer, NULL, 2);
                     const aug_ir_operand& operand = aug_ir_operand_from_int(data);
                     aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
                     break;
                 }
                 case AUG_TOKEN_FLOAT:
                 {
-                    assert(token.data.size() > 0);
-                    const float data = strtof(token.data.c_str(), NULL);
+                    assert(token_data && token_data->length > 0);
+                    const float data = strtof(token_data->buffer, NULL);
                     const aug_ir_operand& operand = aug_ir_operand_from_float(data);
                     aug_ir_add_operation(ir, AUG_OPCODE_PUSH_FLOAT, operand);
                     break;
                 }
                 case AUG_TOKEN_STRING:
                 {
-                    const aug_ir_operand& operand = aug_ir_operand_from_str(token.data.c_str());
+                    const aug_ir_operand& operand = aug_ir_operand_from_str(token_data->buffer);
                     aug_ir_add_operation(ir, AUG_OPCODE_PUSH_STRING, operand);
                     break;
                 }
@@ -3655,18 +3785,19 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_VARIABLE:
         {
-            const aug_symbol& symbol = aug_ir_symbol_relative(ir, token.data);
+            assert(token_data != NULL);
+            const aug_symbol& symbol = aug_ir_symbol_relative(ir, token_data);
             if (symbol.type == AUG_SYM_NONE)
             {
                 ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Variable %s not defined in current block", token.data.c_str());
+                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Variable %s not defined in current block", token_data->buffer);
                 return;
             }
 
             if (symbol.type == AUG_SYM_FUNC)
             {
                 ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function %s can not be used as a variable", token.data.c_str());
+                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function %s can not be used as a variable", token_data->buffer);
                 return;
             }
 
@@ -3750,20 +3881,21 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_STMT_ASSIGN_VAR:
         {
+            assert(token_data != NULL);
             assert(children.size() == 1); // token = [0]
             
             aug_ast_to_ir(vm, children[0], ir);
 
-            const aug_symbol& symbol = aug_ir_symbol_relative(ir, token.data);
+            const aug_symbol& symbol = aug_ir_symbol_relative(ir, token_data);
             if (symbol.type == AUG_SYM_NONE)
             {
-                aug_ir_set_var(ir, token.data);
+                aug_ir_set_var(ir, token_data);
                 return;
             }
             else if (symbol.type == AUG_SYM_FUNC)
             {
                 ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Can not assign function %s as a variable", token.data.c_str());
+                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Can not assign function %s as a variable", token_data->buffer);
                 return;
             }
 
@@ -3781,15 +3913,15 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
             else
                 aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
 
-            const aug_symbol symbol = aug_ir_get_symbol_local(ir, token.data);
+            const aug_symbol symbol = aug_ir_get_symbol_local(ir, token_data);
             if (symbol.offset != AUG_OPCODE_INVALID)
             {
                 ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Variable %s already defined in block", token.data.c_str());
+                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Variable %s already defined in block", token_data->buffer);
                 return;
             }
 
-            aug_ir_set_var(ir, token.data);
+            aug_ir_set_var(ir, token_data);
         
             break;
         }
@@ -3889,14 +4021,14 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_FUNC_CALL:
         {
-            const char* func_name = token.data.c_str();
+            assert(token_data != NULL); // func name is token data
             const int arg_count = children.size();
-            const aug_symbol& symbol = aug_ir_get_symbol(ir, func_name);
+            const aug_symbol& symbol = aug_ir_get_symbol(ir, token_data);
 
             if (symbol.type == AUG_SYM_VAR)
             {
                 ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Can not call variable %s as a function", func_name);
+                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Can not call variable %s as a function", token_data->buffer);
                 break;
             }
 
@@ -3906,7 +4038,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
                 if (symbol.argc != arg_count)
                 {
                     ir.valid = false;
-                    AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function Call %s passed %d arguments, expected %d", func_name, arg_count, symbol.argc);
+                    AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function Call %s passed %d arguments, expected %d", token_data->buffer, arg_count, symbol.argc);
                 }
                 else
                 {
@@ -3929,7 +4061,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
             int func_index = -1;
             for (int i = 0; i < (int)vm.external_function_names.size(); ++i)
             {
-                if (vm.external_function_names[i] == func_name)
+                if (aug_string_equal(vm.external_function_names[i], token_data))
                 {
                     func_index = i;
                     break;
@@ -3939,13 +4071,13 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
             if (func_index == -1)
             {
                 ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function %s not defined", func_name);
+                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function %s not defined", token_data->buffer);
                 break;
             }
             if (vm.external_functions[func_index] == nullptr)
             {
                 ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "External Function %s was not properly registered.", func_name);
+                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "External Function %s was not properly registered.", token_data->buffer);
                 break;
             }
 
@@ -3976,7 +4108,8 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_PARAM:
         {
-            aug_ir_set_param(ir, token.data);
+            assert(token_data != NULL);
+            aug_ir_set_param(ir, token_data);
             break;
         }
         case AUG_AST_PARAM_LIST:
@@ -3988,22 +4121,21 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_FUNC_DEF:
         {
+            assert(token_data != NULL); // func name is token
             assert(children.size() == 2); //func token [0] {[1]};
 
             // Jump over the func def
             const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
             const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP, stub_operand);
 
-            const char* func_name = token.data.c_str();
-
             aug_ast* params = children[0];
             assert(params && params->id == AUG_AST_PARAM_LIST);
             const int param_count = params->children.size();
 
-            if (!aug_ir_set_func(ir, func_name, param_count))
+            if (!aug_ir_set_func(ir, token_data, param_count))
             {
                 ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function %s already defined", func_name);
+                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function %s already defined", token_data->buffer);
                 break;
             }
 
@@ -4040,16 +4172,13 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
     }
 }
 
-void aug_ir_to_bytecode(aug_ir& ir, aug_std_array<char>& bytecode)
+aug_string* aug_ir_to_bytecode(aug_ir& ir)
 {  
-    bytecode.resize(ir.bytecode_offset, AUG_OPCODE_NO_OP) ;
-
-    char* instruction = &bytecode[0];
+    aug_string* bytecode = aug_string_new(ir.bytecode_offset);
 
     for(const aug_ir_operation& operation : ir.operations)
     {
-        *instruction = (char)operation.opcode;
-        ++instruction;    
+        aug_string_push(bytecode, (char)operation.opcode);
 
         const aug_ir_operand& operand = operation.operand;
         switch (operand.type)
@@ -4061,28 +4190,43 @@ void aug_ir_to_bytecode(aug_ir& ir, aug_std_array<char>& bytecode)
         case AUG_IR_OPERAND_INT:
         case AUG_IR_OPERAND_FLOAT:
             for (size_t i = 0; i < aug_ir_operand_size(operand); ++i)
-                *(instruction++) = operand.data.bytes[i];
+                aug_string_push(bytecode, operand.data.bytes[i]);
             break;
         case AUG_IR_OPERAND_BYTES:
             for (size_t i = 0; i < strlen(operand.data.str); ++i)
-                *(instruction++) = operand.data.str[i];
-
-            *(instruction++) = 0; // null terminate
+                aug_string_push(bytecode, operand.data.str[i]);
+            aug_string_push(bytecode, 0); // null terminate
             break;
         }
     }
+
+    return bytecode;
 }
 
 // -------------------------------------- API ---------------------------------------------// 
-
-bool aug_compile_script(aug_vm& vm, aug_input* input, aug_ast* root, aug_script& script)
+aug_script aug_script_new()
 {
-    script.bytecode.clear();
-    script.globals.clear();
-    script.stack_state.clear();
+    aug_script script;
+    script.bytecode = NULL;
+    return script;
+}
 
+void aug_script_delete(aug_script& script)
+{
+    for (size_t i = 0; i < script.stack_state.size(); ++i)
+    {
+        aug_decref(&script.stack_state[i]);
+    }
+
+    script.stack_state.clear();
+    script.globals.clear();
+    script.bytecode = aug_string_decref(script.bytecode);
+}
+
+void aug_compile_script(aug_vm& vm, aug_input* input, aug_ast* root, aug_script& script)
+{
     if (root == NULL)
-        return false;
+        return;
 
     // Generate IR
     aug_ir ir;
@@ -4090,14 +4234,13 @@ bool aug_compile_script(aug_vm& vm, aug_input* input, aug_ast* root, aug_script&
     aug_ast_to_ir(vm, root, ir);
 
     if (!ir.valid)
-        return false;
+        return;
 
     // Load script globals
     script.globals = ir.globals;
 
     // Load bytecode into VM
-    aug_ir_to_bytecode(ir, script.bytecode);
-    return true;
+    script.bytecode = aug_ir_to_bytecode(ir);
 }
 
 void aug_startup(aug_vm& vm, aug_error_callback* error_callback)
@@ -4105,7 +4248,6 @@ void aug_startup(aug_vm& vm, aug_error_callback* error_callback)
     vm.error_callback = NULL;
     vm.external_functions.clear();
     vm.external_function_names.clear();
-    vm.stack = AUG_NEW_ARRAY(aug_value, AUG_STACK_SIZE);
     for(int i = 0; i < AUG_STACK_SIZE; ++i)
         vm.stack[i] = aug_none();
 
@@ -4117,8 +4259,9 @@ void aug_startup(aug_vm& vm, aug_error_callback* error_callback)
 void aug_shutdown(aug_vm& vm)
 {
     aug_vm_shutdown(vm);
-    AUG_DELETE_ARRAY(vm.stack);
-    vm.stack = nullptr;
+
+    for (size_t i = 0; i < vm.external_functions.size(); ++i)
+        vm.external_function_names[i] = aug_string_decref(vm.external_function_names[i]);
 
     vm.error_callback = NULL;
     vm.external_functions.clear();
@@ -4127,26 +4270,28 @@ void aug_shutdown(aug_vm& vm)
 
 void aug_register(aug_vm& vm, const char* func_name, aug_function_callback *callback)
 {
+    aug_string* func_name_string = aug_string_create(func_name);
     for (int i = 0; i < (int)vm.external_functions.size(); ++i)
     {
         if (vm.external_functions[i] == NULL)
         {
             vm.external_functions[i] = callback;
-            vm.external_function_names[i] = func_name;
+            vm.external_function_names[i] = func_name_string;
             return;
         }
     }
     vm.external_functions.push_back(callback);
-    vm.external_function_names.push_back(func_name);
+    vm.external_function_names.push_back(func_name_string);
 }
 
 void aug_unregister(aug_vm& vm, const char* func_name)
 {
     for (int i = 0; i < (int)vm.external_functions.size(); ++i)
     {
-        if (vm.external_function_names[i] == func_name)
+        if (aug_string_bytes_equal(vm.external_function_names[i], func_name))
         {
             vm.external_functions[i] = NULL;
+            vm.external_function_names[i] = aug_string_decref(vm.external_function_names[i]);
             break;
         }
     }
@@ -4154,15 +4299,15 @@ void aug_unregister(aug_vm& vm, const char* func_name)
 
 void aug_execute(aug_vm& vm, const char* filename)
 {
-    aug_script script;
-    bool success = aug_compile(vm, script, filename);
-    if (!success)
-        return;
+    aug_script script = aug_script_new();
+    aug_compile(vm, script, filename);
 
     aug_vm_startup(vm);
     aug_vm_load_script(vm, script);
     aug_vm_execute(vm);
     aug_vm_shutdown(vm);
+
+    aug_script_delete(script);
 }
 
 void aug_evaluate(aug_vm& vm, const char* code)
@@ -4172,40 +4317,37 @@ void aug_evaluate(aug_vm& vm, const char* code)
         return;
 
     // Parse file
-    aug_script script;
+    aug_script script = aug_script_new();
     aug_ast* root = aug_parse(vm, input);
-    script.valid = aug_compile_script(vm, input, root, script);
+    aug_compile_script(vm, input, root, script);
 
     // Cleanup 
     aug_ast_delete(root);
     aug_input_close(input);
-
-    if (!script.valid)
-        return;
 
     aug_vm_startup(vm);
     aug_vm_load_script(vm, script);
     aug_vm_execute(vm);
     aug_vm_shutdown(vm);
+
+    aug_script_delete(script);
 }
 
-bool aug_compile(aug_vm& vm, aug_script& script, const char* filename)
+void aug_compile(aug_vm& vm, aug_script& script, const char* filename)
 {
-    script.valid = false;
+    script.bytecode = NULL;
 
     aug_input* input = aug_input_open(filename, vm.error_callback, true);
     if (input == NULL)
-        return NULL;
+        return;
 
     // Parse file
     aug_ast* root = aug_parse(vm, input);
-    script.valid = aug_compile_script(vm, input, root, script);
+    aug_compile_script(vm, input, root, script);
     
     // Cleanup 
     aug_ast_delete(root);
     aug_input_close(input);
-
-    return script.valid;
 }
 
 void aug_load(aug_vm& vm, aug_script& script)
@@ -4217,13 +4359,13 @@ void aug_load(aug_vm& vm, aug_script& script)
 
 void aug_unload(aug_vm& vm, aug_script& script)
 {
-    aug_free_script(vm, script);
+    aug_vm_unload_script(vm, script);
 }
 
 aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name, const aug_std_array<aug_value>& args)
 {
     aug_value ret_value = aug_none();
-    if (!script.valid)
+    if (script.bytecode == NULL)
         return ret_value;
 
     if (script.globals.count(func_name) == 0)
@@ -4308,4 +4450,413 @@ aug_value aug_from_string(const char* data)
     return value;
 }
 
+// ------------------------------- Data Structures --------------------------------//
+
+#ifdef __cplusplus
+extern "C" {
 #endif
+
+
+aug_string* aug_string_new(size_t size) 
+{
+	aug_string* string = (aug_string*)malloc(sizeof(aug_string));
+
+	string->ref_count = 1;
+	string->length = 0;
+	string->capacity = size;
+	string->buffer = (char*)malloc(string->capacity * sizeof(char));
+
+	return string;
+}
+
+aug_string* aug_string_create(const char* bytes) 
+{
+	aug_string* string = (aug_string*)malloc(sizeof(aug_string));
+
+	string->ref_count = 1;
+	string->length = strlen(bytes);
+	string->capacity = string->length + 1;
+	string->buffer = (char*)malloc(string->capacity * sizeof(char));
+    strcpy(string->buffer, bytes);
+	return string;
+}
+
+void aug_string_reserve(aug_string* string, size_t size) 
+{
+	string->buffer = (char*)realloc(string->buffer, size * sizeof(char));
+	string->capacity = size;
+}
+
+void aug_string_push(aug_string* string, char c) 
+{
+	if (string->length + 1 >= string->capacity) 
+        aug_string_reserve(string, 2 * string->capacity);
+    string->buffer[string->length++] = c;
+    string->buffer[string->length] = '\0';
+}
+
+char aug_string_pop(aug_string* string) 
+{
+	return string->length > 0 ? string->buffer[--string->length] : -1;
+}
+
+char aug_string_at(const aug_string* string, size_t index) 
+{
+	return index < string->length ? string->buffer[index] : -1;
+}
+
+char aug_string_back(const aug_string* string) 
+{
+	return string->length > 0 ? string->buffer[string->length-1] : -1;
+}
+
+bool aug_string_equal(const aug_string* a, const aug_string* b) 
+{
+	if (a->length != b->length)
+        return false; 
+
+    return strncmp(a->buffer, b->buffer, a->length) == 0;
+}
+
+bool aug_string_bytes_equal(const aug_string* a, const char* bytes) 
+{
+    if(bytes == NULL)
+        return a->buffer == NULL;
+
+    size_t len = strlen(bytes);
+    if(len != a->length)
+        return false;
+
+    size_t i;
+    for(i = 0; i < a->length; ++i)
+    {
+        if(a->buffer[i] != bytes[i])
+            return false;
+
+    }
+    return true;
+}
+
+void aug_string_incref(aug_string* string) 
+{
+    if(string != NULL)
+	    string->ref_count++;
+}
+
+aug_string* aug_string_decref(aug_string* string) 
+{
+	if(string != NULL && --string->ref_count == 0)
+    {
+        free(string->buffer);
+        free(string);
+
+        return NULL;
+    }
+    return string;
+}
+
+// -------------------------------- Array ----------------------------------------------------//
+
+aug_array* aug_array_new(size_t size) 
+{
+	aug_array* array = (aug_array*)malloc(sizeof(aug_array));
+
+	array->ref_count = 1;
+	array->length = 0;
+	array->capacity = size;
+	array->buffer = (aug_value*)malloc(array->capacity * sizeof(aug_value));
+
+	return array;
+}
+
+void aug_array_reserve(aug_array* array, size_t size) 
+{
+	array->buffer = (aug_value*)realloc(array->buffer, size * sizeof(aug_value));
+	array->capacity = size;
+}
+
+void aug_array_push(aug_array* array, aug_value value) 
+{
+	if (array->length + 1 >= array->capacity) 
+        aug_array_reserve(array, 2 * array->capacity);
+    array->buffer[array->length++] = value;
+}
+
+aug_value aug_array_pop(aug_array* array) 
+{
+	return array->length > 0 ? array->buffer[--array->length] : aug_none();
+}
+
+aug_value aug_array_at(const aug_array* array, size_t index) 
+{
+	return index < array->length ? array->buffer[index] : aug_none();
+}
+
+aug_value* aug_array_at_ptr(const aug_array* array, size_t index) 
+{
+	return index < array->length ? &array->buffer[index] : NULL;
+}
+
+aug_value aug_array_back(const aug_array* array) 
+{
+	return array->length > 0 ? array->buffer[array->length-1] : aug_none();
+}
+
+void aug_array_incref(aug_array* array) 
+{
+    if(array != NULL)
+	    array->ref_count++;
+}
+
+aug_array* aug_array_decref(aug_array* array) 
+{
+	if(array != NULL && --array->ref_count == 0)
+    {
+        free(array->buffer);
+        free(array);
+
+        return NULL;
+    }
+    return array;
+}
+
+// ------------------------------- Hashmap ---------------------------------------------------//
+
+#if 0// HASHMAP
+
+#define HASHMAP_DEFAULT_CAPACITY 20
+#define HASHMAP_MAX_LOAD 0.75f
+#define HASHMAP_RESIZE_FACTOR 2
+#define HASHMAP_HASH_INIT 2166136261u
+
+typedef struct hashmap_bucket
+{
+	hashmap_bucket* next;
+	const char* key;
+	size_t key_size;
+	uint32_t hash;
+	void* value;
+} hashmap_bucket;
+
+typedef struct hashmap
+{
+	hashmap_bucket* hashmap_buckets;
+
+	int capacity;
+	int count;
+
+	int removed_count;
+	
+	hashmap_bucket* first;
+	hashmap_bucket* last;
+} hashmap;
+
+typedef void (*hashmap_callback)(const char *key, size_t key_size, void* value, void *usr);
+
+int hashmap_size(hashmap* m)
+{
+	return map->count - map->removed_count;
+}
+
+hashmap* hashmap_new()
+{
+	hashmap* m = malloc(sizeof(hashmap));
+	if (m == NULL)
+	{
+		return NULL;
+	}
+
+	map->capacity = HASHMAP_DEFAULT_CAPACITY;
+	map->count = 0;
+	map->removed_count = 0;
+	map->hashmap_buckets = malloc(HASHMAP_DEFAULT_CAPACITY * sizeof(hashmap_bucket));
+	map->first = NULL;
+	map->last = (hashmap_bucket*)&map->first;
+	return m;
+}
+
+void hashmap_free(hashmap* m)
+{
+	free(map->hashmap_buckets);
+	free(m);
+}
+
+static hashmap_bucket* resize_entry(hashmap* map, hashmap_bucket* old_entry)
+{
+	uint32_t index = old_entry->hash % map->capacity;
+	for (;;)
+	{
+		hashmap_bucket* entry = &map->hashmap_buckets[index];
+
+		if (entry->key == NULL)
+		{
+			*entry = *old_entry; // copy data from old entry
+			return entry;
+		}
+
+		index = (index + 1) % map->capacity;
+	}
+}
+
+static void hashmap_resize(hashmap* map)
+{
+	hashmap_bucket* old_hashmap_buckets = map->hashmap_buckets;
+
+	map->capacity *= HASHMAP_RESIZE_FACTOR;
+	map->hashmap_buckets = malloc(map->capacity * sizeof(hashmap_bucket));
+	map->last = (hashmap_bucket*)&map->first;
+	map->count -= map->removed_count;
+	map->removed_count = 0;
+
+	do
+	{
+		hashmap_bucket* current = map->last->next;
+		if (current->key == NULL)
+		{
+			map->last->next = current->next;
+			// skip to loop condition
+			continue;
+		}
+		
+		map->last->next = resize_entry(m, map->last->next);
+		map->last = map->last->next;
+	} while (map->last->next != NULL);
+
+	free(old_hashmap_buckets);
+}
+
+// FNV-1a hash function
+static inline uint32_t hash_data(const char* data, size_t size)
+{
+	size_t nblocks = size / 8;
+	uint64_t hash = HASHMAP_HASH_INIT;
+	for (size_t i = 0; i < nblocks; ++i)
+	{
+		hash ^= (uint64_t)data[0] << 0 | (uint64_t)data[1] << 8 |
+			 (uint64_t)data[2] << 16 | (uint64_t)data[3] << 24 |
+			 (uint64_t)data[4] << 32 | (uint64_t)data[5] << 40 |
+			 (uint64_t)data[6] << 48 | (uint64_t)data[7] << 56;
+		hash *= 0xbf58476d1ce4e5b9;
+		data += 8;
+	}
+
+	uint64_t last = size & 0xff;
+	switch (size % 8)
+	{
+	case 7:
+		last |= (uint64_t)data[6] << 56; /* fallthrough */
+	case 6:
+		last |= (uint64_t)data[5] << 48; /* fallthrough */
+	case 5:
+		last |= (uint64_t)data[4] << 40; /* fallthrough */
+	case 4:
+		last |= (uint64_t)data[3] << 32; /* fallthrough */
+	case 3:
+		last |= (uint64_t)data[2] << 24; /* fallthrough */
+	case 2:
+		last |= (uint64_t)data[1] << 16; /* fallthrough */
+	case 1:
+		last |= (uint64_t)data[0] << 8;
+		hash ^= last;
+		hash *= 0xd6e8feb86659fd93;
+	}
+
+	// compress to a 32-bit result.
+	// also serves as a finalizer.
+	return (uint32_t)(hash ^ hash >> 32);
+}
+
+hashmap_bucket* hashmap_find_entry(hashmap* map, const void* key, size_t key_size, uint32_t hash)
+{
+    uint32_t hash = hash_data(key, key_size);
+	uint32_t index = hash % map->capacity;
+
+	while(true)
+	{
+		hashmap_bucket* entry = &map->hashmap_buckets[index];
+
+		bool null_key = ;
+		bool null_value = entry->value == 0;
+        if(entry->key == NULL && entry->value == 0)
+            return entry;
+
+        if(entry->hash != hash)
+            continue;
+
+        // if hash and key are equivalent
+		if (entry->key_size == key_size && strncmp(entry->key, key, key_size) == 0))
+			return entry;
+
+		index = (index + 1) % map->capacity;
+	}
+}
+
+void hashmap_set(hashmap* map, const void* key, size_t key_size, void* val)
+{
+	if (map->count + 1 > HASHMAP_MAX_LOAD * map->capacity)
+		hashmap_resize(m);
+
+	hashmap_bucket* entry = hashmap_find_entry(m, key, key_size);
+	if (entry->key == NULL)
+	{
+		map->last->next = entry;
+		map->last = entry;
+		entry->next = NULL;
+
+		++map->count;
+
+		entry->key = key;
+		entry->key_size = key_size;
+		entry->hash = hash;
+	}
+	entry->value = val;
+}
+
+void* hashmap_get(hashmap* map, const void* key, size_t key_size)
+{
+	uint32_t hash = hash_data(key, key_size);
+	hashmap_bucket* entry = hashmap_find_entry(m, key, key_size, hash);
+
+	return entry->value;
+}
+
+// before removing, must free any allocated data
+void hashmap_remove(hashmap* map, const void* key, size_t key_size)
+{
+	uint32_t hash = hash_data(key, key_size);
+	hashmap_bucket* entry = hashmap_find_entry(m, key, key_size, hash);
+
+	if (entry->key != NULL)
+	{
+		entry->key = NULL;
+		entry->value = NULL; 
+
+		++map->removed_count;
+	}
+}
+
+void hashmap_iterate(hashmap* map, hashmap_callback callback, void* user_ptr)
+{
+	hashmap_bucket* current = map->first;
+	
+	while (current != NULL)
+	{
+		#ifdef __HASHMAP_REMOVABLE
+		// "tombstone" check
+		if (current->key != NULL)
+		#endif
+			callback(current->key, current->key_size, current->value, user_ptr);
+		
+		current = current->next;
+	}
+}
+
+#endif // HASHMAP
+
+
+#ifdef __cplusplus
+}
+#endif
+
+
+#endif //AUG_IMPLEMENTATION
