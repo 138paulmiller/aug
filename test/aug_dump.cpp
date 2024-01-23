@@ -211,12 +211,12 @@ void aug_dump_file(aug_vm* vm, const char* filename)
 	dump_ast(root);
 
 	// Generate IR
-	aug_ir ir = aug_ir_new(input);
+	aug_ir* ir = aug_ir_new(input);
 	aug_ast_to_ir(vm, root, ir);
 
-	dump_ir(&ir);
+	dump_ir(ir);
 
 	aug_ast_delete(root);
-	aug_ir_delete(&ir);
+	aug_ir_delete(ir);
 	aug_input_close(input);
 }

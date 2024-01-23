@@ -40,44 +40,24 @@ SOFTWARE. */
 */
 
 // Size of the virtual machine's value stack 
-#ifndef AUG_STACK_SIZE
 #define AUG_STACK_SIZE (1024 * 16)
-#endif//AUG_STACK_SIZE
-
-// MAx number of user-provided external functions
-#ifndef AUG_EXTENSION_SIZE
 #define AUG_EXTENSION_SIZE 64
-#endif//AUG_EXTENSION_SIZE
-
-// Threshold of the nearly equal operator
-#ifndef AUG_APPROX_THRESHOLD
 #define AUG_APPROX_THRESHOLD 0.0000001
-#endif//AUG_APPROX_THRESHOLD 
-
-#ifndef AUG_ALLOC
 #define AUG_ALLOC(type) (type*)(malloc(sizeof(type)))
-#endif//AUG_ALLOC
-
-#ifndef AUG_ALLOC_ARRAY
 #define AUG_ALLOC_ARRAY(type, count) (type*)(malloc(sizeof(type)*count))
-#endif//AUG_ALLOC_ARRAY
-
-#ifndef AUG_REALLOC_ARRAY
 #define AUG_REALLOC_ARRAY(ptr, type, count) (type*)(realloc(ptr, sizeof(type)*count))
-#endif//AUG_REALLOC_ARRAY
-
-#ifndef AUG_FREE
 #define AUG_FREE(ptr) free(ptr)
-#endif//AUG_FREE
-
-#ifndef AUG_FREE_ARRAY
 #define AUG_FREE_ARRAY(ptr) free(ptr)
-#endif//AUG_FREE_ARRAY
 
-#include <stdlib.h>
+#include <assert.h>
+#include <ctype.h>
+#include <math.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 // Data structures
 typedef struct aug_value aug_value;
@@ -120,16 +100,11 @@ aug_value* aug_array_pop(aug_array* array);
 aug_value* aug_array_at(const aug_array* array, size_t index);
 aug_value* aug_array_back(const aug_array* array);
 
-
-// Object instance
 typedef struct aug_object
 {
     int ref_count;
-    // Value Hash map aug_string -> aug_value
-    //aug_std_array<aug_attribute> attribs;
 } aug_object;
 
-// Value Types
 typedef enum aug_value_type
 {
     AUG_BOOL,
@@ -141,13 +116,8 @@ typedef enum aug_value_type
     AUG_OBJECT,
     AUG_NONE,
 } aug_value_type;
-
-const char* aug_value_type_labels[] =
-{
-    "bool", "char", "int", "float", "string", "array", "object", "none"
-};
-
-// Values instance 
+const char* aug_value_type_labels[] = { "bool", "char", "int", "float", "string", "array", "object", "none" };
+ 
 typedef struct aug_value
 {
     aug_value_type type;
@@ -219,13 +189,10 @@ typedef struct aug_script
     aug_array* stack_state;
 } aug_script;
 
-// Calling frames are used to preserve and access parameters and local variables from the stack within a calling context
 typedef struct aug_frame
 {
     int base_index;
     int stack_index;
-    // For function frames, there will be a return instruction and arg count. Otherwise, the frame is used for local scope 
-
     bool func_call;
     int arg_count;
     const char* instruction; 
@@ -234,75 +201,31 @@ typedef struct aug_frame
 typedef void(aug_error_function)(const char* /*msg*/);
 typedef aug_value /*return*/ (aug_extension)(int argc, const aug_value* /*args*/);
 
-// Running instance of the virtual machine
 typedef struct aug_vm
 {
     aug_error_function* error_callback;
     bool valid;
-
     const char* instruction;
     const char* bytecode;
- 
     aug_value stack[AUG_STACK_SIZE];
     int stack_index;
     int base_index;
-
-    // Extensions are external functions are native functions that can be called from scripts   
-    // This external function map contains the user's registered functions. 
-    // Use aug_register/aug_unregister to modify these fields
     aug_extension* extensions[AUG_EXTENSION_SIZE];      
     aug_string* extension_names[AUG_EXTENSION_SIZE]; 
     int extension_count;
-
-    // TODO: debug symtable from addr to func name / variable offsets
 } aug_vm;
-
-// VM Must call both startup before using the VM. When done, must call shutdown.
 aug_vm* aug_startup(aug_error_function* on_error);
 void aug_shutdown(aug_vm* vm);
-
-// Extend the script functions via external functions. 
-// NOTE: changing the registered functions will require a script recompilation. Can not guarantee the external function call will work. 
 void aug_register(aug_vm* vm, const char* func_name, aug_extension* extension);
 void aug_unregister(aug_vm* vm, const char* func_name);
-
-// Will reboot the VM to execute the standalone script or code
 void aug_execute(aug_vm* vm, const char* filename);
-void aug_evaluate(aug_vm* vm, const char* code);
-
-// Script
 bool aug_compile(aug_vm* vm, aug_script* script, const char* filename);
-
 aug_script* aug_script_new();
 void aug_script_delete(aug_script* script);
-
 void aug_load(aug_vm* vm, aug_script* script);
 void aug_unload(aug_vm* vm, aug_script* script);
-
 aug_value aug_call(aug_vm* vm, aug_script* script, const char* func_name);
 aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, int argc, aug_value* args);
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif //__AUG_HEADER__
-
-// -------------------------------------- Implementation Details ---------------------------------------// 
-
-#if defined(AUG_IMPLEMENTATION)
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#include <ctype.h>
-#include <assert.h>
-#include <math.h>
-#include <stdarg.h>
-#include <string.h>
-
-// --------------------------------------- Generic Containers -----------------------------------------//
 
 typedef struct aug_container
 {
@@ -319,46 +242,6 @@ void* aug_container_pop(aug_container* array);
 void* aug_container_at(const aug_container* array, size_t index);
 void* aug_container_back(const aug_container* array);
 
-// --------------------------------------- Input/Logging ---------------------------------------//
-
-void aug_log_error_internal(aug_error_function* error_callback, const char* format, ...)
-{
-    // TODO: make thread safe
-    static char log_buffer[4096];
-
-    va_list args;
-    va_start(args, format);
-    if(error_callback)
-    {
-        vsnprintf(log_buffer, sizeof(log_buffer), format, args);
-        error_callback(log_buffer);
-    }
-    else
-    {
-#if defined(AUG_LOG_VERBOSE)
-        vprintf(format, args);
-#endif //defined(AUG_LOG_VERBOSE)
-    }
-    va_end(args);
-}
-
-#define AUG_LOG_ERROR(error_callback, ...)   \
-    aug_log_error_internal(error_callback, __VA_ARGS__);
-
-#define AUG_INPUT_ERROR_AT(input, pos, ...) \
-if(input->valid)                            \
-{                                           \
-    input->valid = false;                   \
-    aug_input_error_hint(input, pos);       \
-    AUG_LOG_ERROR(input->error_callback,    \
-        __VA_ARGS__);                       \
-}
-
-#define AUG_INPUT_ERROR(input, ...) \
-    AUG_INPUT_ERROR_AT(input,       \
-        aug_input_prev_pos(input),  \
-        __VA_ARGS__);
-
 typedef struct aug_pos
 {
     size_t filepos;
@@ -372,12 +255,9 @@ typedef struct aug_input
     FILE* file;
     aug_string* filename;
     aug_error_function* error_callback;
-    bool valid;
-
     size_t track_pos;
     size_t pos_buffer_index;
     aug_pos pos_buffer[4];
-
     char c;
 }aug_input;
 
@@ -542,10 +422,7 @@ inline aug_string* aug_input_end_tracking(aug_input* input)
     size_t count = fread(string->buffer, sizeof(char), len, input->file);
     fseek(input->file, pos_end, SEEK_SET);
     if(count != len)
-    {
-        AUG_INPUT_ERROR(input, "Failed to read %d bytes! %s", len, input->filename->buffer);
         fseek(input->file, pos_end, SEEK_END);
-    }
 
     return string;
 }
@@ -722,20 +599,19 @@ inline bool aug_lexer_tokenize_char(aug_lexer* lexer, aug_token& token)
 
     if(c != '\'')
     {
-        token.data = aug_string_decref(token.data);
-        AUG_INPUT_ERROR(lexer->input, "char literal missing closing \"");
+        token.data = aug_string_decref(token.data);        
         return false;
     }
     return true;
 }
 
-inline bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token& token)
+inline bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token* token)
 {
     char c = aug_input_get(lexer->input);
     assert(c == '\"');
 
-    token.id = AUG_TOKEN_STRING;
-    token.data = aug_string_new(4);
+    token->id = AUG_TOKEN_STRING;
+    token->data = aug_string_new(4);
 
     c = aug_input_get(lexer->input);
 
@@ -743,68 +619,38 @@ inline bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token& token)
     {
         if(c == EOF)
         {
-            token.data = aug_string_decref(token.data);
-            AUG_INPUT_ERROR(lexer->input, "string literal missing closing \"");
+            token->data = aug_string_decref(token->data);
+            
             return false;
         }
-
         if(c == '\\')
         {
             // handle escaped chars
             c = aug_input_get(lexer->input);
             switch(c)
             {
-            case '\'': 
-                aug_string_push(token.data, '\'');
-                break;
-            case '\"':
-                aug_string_push(token.data, '\"');
-                break;
-            case '\\':
-                aug_string_push(token.data, '\\');
-                break;
-            case '0': //Null
-                aug_string_push(token.data, 0x0);
-                break;
-            case 'a': //Alert beep
-                aug_string_push(token.data, 0x07);
-                break;
-            case 'b': // Backspace
-                aug_string_push(token.data, 0x08);
-                break;
-            case 'f': // Page break
-                aug_string_push(token.data, 0x0C);
-                break;
-            case 'n': // Newline
-                aug_string_push(token.data, 0x0A);
-                break;
-            case 'r': // Carriage return
-                aug_string_push(token.data, 0x0D);
-                break;
-            case 't': // Tab (Horizontal)
-                aug_string_push(token.data, 0x09);
-                break;
-            case 'v': // Tab (Vertical)
-                aug_string_push(token.data, 0x0B);
-                break;
-            default:
-                token.data = aug_string_decref(token.data);
-                AUG_INPUT_ERROR(lexer->input, "invalid escape character \\%c", c);
-                return false;
+            case '\'': aug_string_push(token->data, '\''); break;
+            case '\"': aug_string_push(token->data, '\"'); break;
+            case '\\': aug_string_push(token->data, '\\'); break;
+            case '0':  aug_string_push(token->data, 0x0);  break;
+            case 'a':  aug_string_push(token->data, 0x07); break;
+            case 'b':  aug_string_push(token->data, 0x08); break;
+            case 'f':  aug_string_push(token->data, 0x0C); break;
+            case 'n': aug_string_push(token->data, 0x0A);  break;
+            case 'r':  aug_string_push(token->data, 0x0D); break;
+            case 't': aug_string_push(token->data, 0x09);  break;
+            case 'v': aug_string_push(token->data, 0x0B);  break;
+            default: token->data = aug_string_decref(token->data); return false;
             }
         }
         else
-        {
-            aug_string_push(token.data, c);
-        }
-
+            aug_string_push(token->data, c);
         c = aug_input_get(lexer->input);
     }
-
     return true;
 }
 
-inline bool aug_lexer_tokenize_symbol(aug_lexer* lexer, aug_token& token)
+inline bool aug_lexer_tokenize_symbol(aug_lexer* lexer, aug_token* token)
 {
     aug_token_id id = AUG_TOKEN_NONE;
 
@@ -893,11 +739,11 @@ inline bool aug_lexer_tokenize_symbol(aug_lexer* lexer, aug_token& token)
         return false;
     }
 
-    token.id = id;
+    token->id = id;
     return true;
 }
 
-inline bool aug_lexer_tokenize_name(aug_lexer* lexer, aug_token& token)
+inline bool aug_lexer_tokenize_name(aug_lexer* lexer, aug_token* token)
 {
     aug_input_start_tracking(lexer->input);
 
@@ -912,17 +758,16 @@ inline bool aug_lexer_tokenize_name(aug_lexer* lexer, aug_token& token)
         c = aug_input_get(lexer->input);
     aug_input_unget(lexer->input);
 
-    token.id = AUG_TOKEN_NAME;
-    token.data = aug_input_end_tracking(lexer->input);
+    token->id = AUG_TOKEN_NAME;
+    token->data = aug_input_end_tracking(lexer->input);
 
     // find token id for keyword
     for(size_t i = 0; i < (size_t)AUG_TOKEN_COUNT; ++i)
     {
-        const aug_token_detail& detail = aug_token_details[i];
-        if(aug_string_compare_bytes(token.data, detail.keyword))
+        if(aug_string_compare_bytes(token->data, aug_token_details[i].keyword))
         {
-            token.id = (aug_token_id)i;
-            token.data = aug_string_decref(token.data); // keyword is static, free token data
+            token->id = (aug_token_id)i;
+            token->data = aug_string_decref(token->data); // keyword is static, free token data
             break;
         }
     }
@@ -930,7 +775,7 @@ inline bool aug_lexer_tokenize_name(aug_lexer* lexer, aug_token& token)
     return true;
 }
 
-bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token& token)
+bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token* token)
 {    
     aug_input_start_tracking(lexer->input);
 
@@ -1010,13 +855,13 @@ bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token& token)
         aug_input_unget(lexer->input);
     }
 
-    token.id = id;
-    token.data = aug_input_end_tracking(lexer->input);
+    token->id = id;
+    token->data = aug_input_end_tracking(lexer->input);
 
     if(id == AUG_TOKEN_NONE)
     {
-        AUG_INPUT_ERROR(lexer->input, "invalid numeric format %s", token.data->buffer);
-        token.data = aug_string_decref(token.data);
+        
+        token->data = aug_string_decref(token->data);
         return false;
     }
 
@@ -1028,7 +873,7 @@ aug_token aug_lexer_tokenize(aug_lexer* lexer)
     aug_token token = aug_token_new();
 
     // if file is not open, or already at then end. return invalid token
-    if(lexer->input == NULL || !lexer->input->valid)
+    if(lexer->input == NULL)
         return token;
 
     if(aug_input_peek(lexer->input) == EOF)
@@ -1107,20 +952,20 @@ aug_token aug_lexer_tokenize(aug_lexer* lexer)
         break;
     }
     case '\"':
-        aug_lexer_tokenize_string(lexer, token);
+        aug_lexer_tokenize_string(lexer, &token);
         break;
     case '\'':
-        aug_lexer_tokenize_char(lexer, token);
+        aug_lexer_tokenize_char(lexer, &token);
         break;
     default:
-        if(aug_lexer_tokenize_name(lexer, token))
+        if(aug_lexer_tokenize_name(lexer, &token))
             break;
-        if(aug_lexer_tokenize_number(lexer, token))
+        if(aug_lexer_tokenize_number(lexer, &token))
             break;
     
-        if(aug_lexer_tokenize_symbol(lexer, token))
+        if(aug_lexer_tokenize_symbol(lexer, &token))
             break;
-        AUG_INPUT_ERROR(lexer->input, "invalid character %c", c);
+        
         break;
     }
 
@@ -1242,7 +1087,7 @@ inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_container* op_stack, aug_co
             aug_ast* expr = (aug_ast*)aug_container_pop(expr_stack);
             aug_ast_delete(expr);
         }
-        AUG_INPUT_ERROR(lexer->input, "Invalid number of arguments to operator %s", next_op->detail->label);
+        
         
         AUG_FREE(next_op);
         return false;
@@ -1339,7 +1184,7 @@ inline aug_ast* aug_parse_expr(aug_lexer* lexer)
     if(expr_stack.length == 0 || expr_stack.length > 1)
     {
         aug_parse_expr_stack_cleanup(&op_stack, &expr_stack);
-        AUG_INPUT_ERROR(lexer->input, "Invalid expression syntax");
+        
         return NULL;
     }
 
@@ -1381,7 +1226,7 @@ inline aug_ast* aug_parse_funccall(aug_lexer* lexer)
     if(lexer->curr.id != AUG_TOKEN_RPAREN)
     {
         aug_ast_delete(funccall);
-        AUG_INPUT_ERROR(lexer->input, "Function call missing closing parentheses");
+        
         return NULL;
     }
 
@@ -1415,7 +1260,7 @@ inline aug_ast* aug_parse_array(aug_lexer* lexer)
     if(lexer->curr.id != AUG_TOKEN_RBRACKET)
     {
         aug_ast_delete(array);
-        AUG_INPUT_ERROR(lexer->input, "List missing closing bracket");
+        
         return NULL;
     }
 
@@ -1436,7 +1281,7 @@ inline aug_ast* aug_parse_get_element(aug_lexer* lexer)
     aug_ast* expr = aug_parse_expr(lexer);
     if(expr == NULL)
     {
-        AUG_INPUT_ERROR(lexer->input, "Index operator missing index value");
+        
         return NULL;
     }
 
@@ -1450,7 +1295,7 @@ inline aug_ast* aug_parse_get_element(aug_lexer* lexer)
     if(lexer->curr.id != AUG_TOKEN_RBRACKET)
     {
         aug_ast_delete(element);
-        AUG_INPUT_ERROR(lexer->input, "Index operator missing closing bracket");
+        
         return NULL;
     }
 
@@ -1512,7 +1357,7 @@ inline aug_ast* aug_parse_value(aug_lexer* lexer)
         }
         else
         {
-            AUG_INPUT_ERROR(lexer->input, "Expression missing closing parentheses");
+            
             aug_ast_delete(value);    
             value = NULL;
         }
@@ -1532,7 +1377,7 @@ aug_ast* aug_parse_stmt_expr(aug_lexer* lexer)
     if(lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(expr);
-        AUG_INPUT_ERROR(lexer->input,  "Missing semicolon at end of expression");
+        
         return NULL;
     }
 
@@ -1552,7 +1397,7 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
 
     if(lexer->curr.id != AUG_TOKEN_NAME)
     {
-        AUG_INPUT_ERROR(lexer->input,  "Variable assignment expected name");
+        
         return NULL;
     }
 
@@ -1570,7 +1415,7 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
     if(lexer->curr.id != AUG_TOKEN_ASSIGN)
     {
         aug_token_reset(&name_token);
-        AUG_INPUT_ERROR(lexer->input,  "Variable assignment expected \"=\" or ;");
+        
         return NULL;
     }
 
@@ -1580,14 +1425,14 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
     if(expr == NULL)
     {
         aug_token_reset(&name_token);
-        AUG_INPUT_ERROR(lexer->input,  "Variable assignment expected expression after \"=\"");
+        
         return NULL;
     }
     if(lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_token_reset(&name_token);
         aug_ast_delete(expr);
-        AUG_INPUT_ERROR(lexer->input,  "Variable assignment missing semicolon at end of expression");
+        
         return NULL;
     }
 
@@ -1626,7 +1471,7 @@ aug_ast* aug_parse_stmt_assign_var(aug_lexer* lexer)
     if(expr == NULL)
     {
         aug_token_reset(&name_token);
-        AUG_INPUT_ERROR(lexer->input,  "Assignment expected expression after \"=\"");
+        
         return NULL;
     }
 
@@ -1634,7 +1479,7 @@ aug_ast* aug_parse_stmt_assign_var(aug_lexer* lexer)
     {
         aug_token_reset(&name_token);
         aug_ast_delete(expr);
-        AUG_INPUT_ERROR(lexer->input,  "Missing semicolon at end of expression");
+        
         return NULL;
     }
 
@@ -1694,7 +1539,7 @@ aug_ast* aug_parse_stmt_if_else(aug_lexer* lexer, aug_ast* expr, aug_ast* block)
         if(else_block == NULL)
         {
             aug_ast_delete(if_else_stmt);
-            AUG_INPUT_ERROR(lexer->input,  "If Else statement missing block");
+            
             return NULL;
         }
         if_else_stmt->children[2] = else_block;
@@ -1713,7 +1558,7 @@ aug_ast* aug_parse_stmt_if(aug_lexer* lexer)
     aug_ast* expr = aug_parse_expr(lexer);
     if(expr == NULL)
     {
-        AUG_INPUT_ERROR(lexer->input,  "If statement missing expression");
+        
         return NULL;      
     }
 
@@ -1721,7 +1566,7 @@ aug_ast* aug_parse_stmt_if(aug_lexer* lexer)
     if(block == NULL)
     {
         aug_ast_delete(expr);
-        AUG_INPUT_ERROR(lexer->input,  "If statement missing block");
+        
         return NULL;
     }
 
@@ -1746,7 +1591,7 @@ aug_ast* aug_parse_stmt_while(aug_lexer* lexer)
     aug_ast* expr = aug_parse_expr(lexer);
     if(expr == NULL)
     {
-        AUG_INPUT_ERROR(lexer->input,  "While statement missing expression");
+        
         return NULL;
     }
 
@@ -1754,7 +1599,7 @@ aug_ast* aug_parse_stmt_while(aug_lexer* lexer)
     if(block == NULL)
     {
         aug_ast_delete(expr);
-        AUG_INPUT_ERROR(lexer->input,  "While statement missing block");
+        
         return NULL;
     }
 
@@ -1769,7 +1614,7 @@ inline aug_ast* aug_parse_param_list(aug_lexer* lexer)
 {
     if(lexer->curr.id != AUG_TOKEN_LPAREN)
     {
-        AUG_INPUT_ERROR(lexer->input,  "Missing opening parentheses in function parameter list");
+        
         return NULL;
     }
 
@@ -1789,7 +1634,7 @@ inline aug_ast* aug_parse_param_list(aug_lexer* lexer)
 
             if(lexer->curr.id != AUG_TOKEN_NAME)
             {
-                AUG_INPUT_ERROR(lexer->input,  "Invalid function parameter. Expected parameter name");
+                
                 aug_ast_delete(param_list);
                 return NULL;
             }
@@ -1803,7 +1648,7 @@ inline aug_ast* aug_parse_param_list(aug_lexer* lexer)
 
     if(lexer->curr.id != AUG_TOKEN_RPAREN)
     {
-        AUG_INPUT_ERROR(lexer->input,  "Missing closing parentheses in function parameter list");
+        
         aug_ast_delete(param_list);
         return NULL;
     }
@@ -1822,7 +1667,7 @@ aug_ast* aug_parse_stmt_func(aug_lexer* lexer)
 
     if(lexer->curr.id != AUG_TOKEN_NAME)
     {
-        AUG_INPUT_ERROR(lexer->input,  "Missing name in function definition");
+        
         return NULL;
     }
 
@@ -1868,7 +1713,7 @@ aug_ast* aug_parse_stmt_return(aug_lexer* lexer)
     if(lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(return_stmt);
-        AUG_INPUT_ERROR(lexer->input,  "Missing semicolon at end of expression");
+        
         return NULL;
     }
 
@@ -1919,7 +1764,7 @@ aug_ast* aug_parse_block(aug_lexer* lexer)
 {
     if(lexer->curr.id != AUG_TOKEN_LBRACE)
     {
-        AUG_INPUT_ERROR(lexer->input,  "Block missing opening \"{\"");
+        
         return NULL;
     }
     aug_lexer_move(lexer); // eat LBRACE
@@ -1930,7 +1775,7 @@ aug_ast* aug_parse_block(aug_lexer* lexer)
 
     if(lexer->curr.id != AUG_TOKEN_RBRACE)
     {
-        AUG_INPUT_ERROR(lexer->input,  "Block missing closing \"}\"");
+        
         aug_ast_delete(block);
         return NULL;
     }
@@ -2955,7 +2800,6 @@ inline bool aug_gte(aug_value* result, aug_value* lhs, aug_value* rhs)
 
 inline bool aug_eq(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
-    // TODO: add a special case for object equivalence (per field)
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_bool(result, lhs->i == rhs->i),
         return aug_set_bool(result, lhs->i == rhs->f),
@@ -2969,7 +2813,6 @@ inline bool aug_eq(aug_value* result, aug_value* lhs, aug_value* rhs)
 
 inline bool aug_neq(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
-    // TODO: add a special case for object equivalence (per field)
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_bool(result, lhs->i != rhs->i),
         return aug_set_bool(result, lhs->i != rhs->f),
@@ -3673,14 +3516,14 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir& ir)
             if(symbol.type == AUG_SYM_NONE)
             {
                 ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Variable %s not defined in current block", token_data->buffer);
+                
                 return;
             }
 
             if(symbol.type == AUG_SYM_FUNC)
             {
                 ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function %s can not be used as a variable", token_data->buffer);
+                
                 return;
             }
 
@@ -3778,7 +3621,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir& ir)
             else if(symbol.type == AUG_SYM_FUNC)
             {
                 ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Can not assign function %s as a variable", token_data->buffer);
+                
                 return;
             }
 
@@ -3800,7 +3643,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir& ir)
             if(symbol.offset != AUG_OPCODE_INVALID)
             {
                 ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Variable %s already defined in block", token_data->buffer);
+                
                 return;
             }
 
@@ -3905,7 +3748,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir& ir)
             if(symbol.type == AUG_SYM_VAR)
             {
                 ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Can not call variable %s as a function", token_data->buffer);
+                
                 break;
             }
 
@@ -3915,7 +3758,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir& ir)
                 if(symbol.argc != arg_count)
                 {
                     ir.valid = false;
-                    AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function Call %s passed %d arguments, expected %d", token_data->buffer, arg_count, symbol.argc);
+                    
                 }
                 else
                 {
@@ -3951,13 +3794,13 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir& ir)
             if(func_index == -1)
             {
                 ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function %s not defined", token_data->buffer);
+                
                 break;
             }
             if(vm->extensions[func_index] == nullptr)
             {
                 ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "External Function %s was not properly registered.", token_data->buffer);
+                
                 break;
             }
 
@@ -4015,7 +3858,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir& ir)
             if(!aug_ir_set_func(ir, token_data, param_count))
             {
                 ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function %s already defined", token_data->buffer);
+                
                 break;
             }
 
@@ -4595,7 +4438,7 @@ aug_value print(int argc, const aug_value* args)
 	return aug_none();
 }
 
-int aug_test(int argc, char** argv)
+int main(int argc, char** argv)
 {
 	aug_vm* vm = aug_startup(aug_error);
 	aug_register(vm, "print", print);
