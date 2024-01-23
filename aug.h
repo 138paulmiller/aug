@@ -182,7 +182,7 @@ aug_value* aug_array_at(const aug_array* array, size_t index);
 aug_value* aug_array_back(const aug_array* array);
 
 #ifdef __cplusplus
-}
+} // extern C
 #endif
 
 template <class type>
@@ -352,7 +352,11 @@ aug_value aug_call_args(aug_vm& vm, aug_script& script, const char* func_name, i
 #include <sstream>
 
 // --------------------------------------- Generic Containers -----------------------------------------//
-#if 0// Container
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct
 {
 	void** buffer;
@@ -366,13 +370,16 @@ void aug_container_incref(aug_container* array);
 aug_container* aug_container_decref (aug_container* array);
 bool aug_container_index_valid(aug_array* array, size_t index);
 void  aug_container_resize(aug_container* array, size_t size);
-void* aug_container_push(aug_container* array);
+void aug_container_push(aug_container* array, void* data);
 void* aug_container_pop (aug_container* array);
 void* aug_container_at(const aug_container* array, size_t index);
-void* aug_container_at_ptr(const aug_container* array, size_t index);
 void* aug_container_back(const aug_container* array);
 
-#endif // Container
+
+#ifdef __cplusplus
+} // extern C
+#endif
+
 // --------------------------------------- Input/Logging ---------------------------------------//
 
 void aug_log_error_internal(aug_error_function* error_callback, const char* format, ...)
@@ -749,7 +756,7 @@ aug_token aug_token_new()
     return token;
 }
 
-void aug_token_delete(aug_token* token)
+void aug_token_reset(aug_token* token)
 {
     aug_string_decref(token->data);
     *token = aug_token_new();
@@ -776,8 +783,8 @@ aug_lexer* aug_lexer_new(aug_input* input)
 
 void aug_lexer_delete(aug_lexer* lexer)
 {
-    aug_token_delete(&lexer->curr);
-    aug_token_delete(&lexer->next);
+    aug_token_reset(&lexer->curr);
+    aug_token_reset(&lexer->next);
 
     AUG_DELETE(lexer);
 }
@@ -1224,7 +1231,7 @@ bool aug_lexer_move(aug_lexer* lexer)
         lexer->next = aug_lexer_tokenize(lexer);        
 
 
-    aug_token_delete(&lexer->curr);
+    aug_token_reset(&lexer->curr);
 
     lexer->curr = lexer->next;
     lexer->next = aug_lexer_tokenize(lexer);
@@ -1261,7 +1268,9 @@ struct aug_ast
 {
     aug_ast_id id;
     aug_token token;
-    aug_std_array<aug_ast*> children;
+    aug_ast** children;
+    int children_size;
+    int children_capacity;
 };
 
 aug_ast* aug_parse_value(aug_lexer* lexer); 
@@ -1272,6 +1281,9 @@ inline aug_ast* aug_ast_new(aug_ast_id id)
     aug_ast* node = AUG_NEW(aug_ast);
     node->id = id;
     node->token = aug_token_new();
+    node->children = NULL;
+    node->children_size = 0;
+    node->children_capacity = 0;
     return node;
 }
 
@@ -1280,89 +1292,88 @@ inline aug_ast* aug_ast_new(aug_ast_id id, aug_token token)
     aug_ast* node = AUG_NEW(aug_ast);
     node->id = id;
     node->token = token;
+    node->children = NULL;
+    node->children_size = 0;
+    node->children_capacity = 0;
     return node;
 }
-
-# if 0
-
-#include <libunwind.h>
-#include <stdio.h>
-void do_backtrace()
-{
-    unw_cursor_t    cursor;
-    unw_context_t   context;
-
-    unw_getcontext(&context);
-    unw_init_local(&cursor, &context);
-
-    while (unw_step(&cursor) > 0) 
-    {
-        unw_word_t  offset, pc;
-        char        fname[64];
-
-        unw_get_reg(&cursor, UNW_REG_IP, &pc);
-
-        fname[0] = '\0';
-        (void) unw_get_proc_name(&cursor, fname, sizeof(fname), &offset);
-
-        printf ("%p : (%s+0x%x) [%p]\n", pc, fname, offset, pc);
-    }
-}
-#endif
 
 inline void aug_ast_delete(aug_ast* node)
 {
     if (node == NULL)
         return;
-    
-    for(aug_ast* child : node->children)
-        aug_ast_delete(child);
-
-    aug_token_delete(&node->token);
-
+    if(node->children)
+    {
+        int i;
+        for(i = 0; i < node->children_size; ++i)
+            aug_ast_delete(node->children[i]);
+        free(node->children);
+    }    
+    aug_token_reset(&node->token);
     delete node;
 }
 
-inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_std_array<aug_token>& op_stack, aug_std_array<aug_ast*>& expr_stack)
-{
-    aug_token next_op = op_stack.back();
-    op_stack.pop_back();
+inline void aug_ast_resize(aug_ast* node, int size)
+{    
+    node->children_capacity = size == 0 ? 1 : size;
+    node->children = (aug_ast**)realloc(node->children, sizeof(aug_ast*) * node->children_capacity);
+    node->children_size = size;
+}
 
-    const int op_argc = next_op.detail->argc;
+inline void aug_ast_add(aug_ast* node, aug_ast* child)
+{
+    if(node->children_size + 1 >= node->children_capacity)
+    {
+        node->children_capacity = node->children_capacity == 0 ? 1 : node->children_capacity * 2;
+        node->children = (aug_ast**)realloc(node->children, sizeof(aug_ast*) * node->children_capacity);
+
+    }
+    node->children[node->children_size++] = child;
+}
+
+inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_container* op_stack, aug_container* expr_stack)
+{
+    //op_stack : aug_token*
+    //expr_stack : aug_ast*
+    
+    aug_token* next_op = (aug_token*)aug_container_pop(op_stack);
+
+    const int op_argc = next_op->detail->argc;
     assert(op_argc == 1 || op_argc == 2); // Only supported operator types
 
-    if(expr_stack.size() < (size_t)op_argc)
+    if(expr_stack->length < (size_t)op_argc)
     {
-        while(expr_stack.size() > 0)
+        while(expr_stack->length > 0)
         {
-            aug_ast_delete(expr_stack.back());
-            expr_stack.pop_back();
+            aug_ast* expr = (aug_ast*)aug_container_pop(expr_stack);
+            aug_ast_delete(expr);
         }
-        AUG_INPUT_ERROR(lexer->input, "Invalid number of arguments to operator %s", next_op.detail->label);
+        AUG_INPUT_ERROR(lexer->input, "Invalid number of arguments to operator %s", next_op->detail->label);
+        
+        free(next_op);
         return false;
     }
 
     // Push binary op onto stack
     aug_ast_id id = (op_argc == 2) ? AUG_AST_BINARY_OP : AUG_AST_UNARY_OP;
-    aug_ast* binaryop = aug_ast_new(id, next_op);
-    binaryop->children.resize(op_argc);
-
+    aug_ast* binaryop = aug_ast_new(id, *next_op);
+    aug_ast_resize(binaryop, op_argc);
     for(int i = 0; i < op_argc; ++i)
     {
-        aug_ast* expr = expr_stack.back();
-        expr_stack.pop_back();
+        aug_ast* expr = (aug_ast*)aug_container_pop(expr_stack);
         binaryop->children[(op_argc-1) - i] = expr; // add in reverse
     }
 
-    expr_stack.push_back(binaryop);
+    (aug_ast*)aug_container_push(expr_stack) = binaryop; 
+    free(next_op);
     return true;
 }
 
 inline aug_ast* aug_parse_expr(aug_lexer* lexer)
 {
     // Shunting yard algorithm
-    aug_std_array<aug_token> op_stack;
-    aug_std_array<aug_ast*> expr_stack;
+    aug_container* op_stack = aug_container_new(1);
+    aug_container* expr_stack = aug_container_new(1);
     
     while(lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
@@ -1371,17 +1382,18 @@ inline aug_ast* aug_parse_expr(aug_lexer* lexer)
         if(op.detail->prec > 0)
         {
             // left associate by default (for right, <= becomes <)
-            while(op_stack.size())
+            while(op_stack->length)
             {
-                aug_token next_op = op_stack.back();
+                aug_token* next_op = (aug_token*)aug_container_back(op_stack));
 
-                if(next_op.detail->prec < op.detail->prec)
+                if(next_op->detail->prec < op.detail->prec)
                     break;
                 if(!aug_parse_expr_pop(lexer, op_stack, expr_stack))
                     return NULL;
             }
-
-            op_stack.push_back(op);
+            aug_token* new_op = (aug_token* ) malloc(sizeof(aug_token*));
+            *new_op = op;
+            (aug_token*)aug_container_push(op_stack) = new_op;
             aug_lexer_move(lexer);
         }
         else
@@ -1389,33 +1401,49 @@ inline aug_ast* aug_parse_expr(aug_lexer* lexer)
             aug_ast* value = aug_parse_value(lexer);
             if(value == NULL)
                 break;
-            expr_stack.push_back(value);
+
+            aug_container_push(expr_stack, value);
         }
     }
 
     // Not an expression
-    if(op_stack.size() == 0 && expr_stack.size() == 0)
+    if(op_stack->length == 0 && expr_stack->length == 0)
         return NULL;
 
-    while(op_stack.size())
+    while(op_stack->length)
     {
         if(!aug_parse_expr_pop(lexer, op_stack, expr_stack))
+        {
+            aug_container_decref(op_stack);
+            aug_container_decref(expr_stack);
             return NULL;
+        }
     }
 
     // Not a valid expression. Either malformed or missing semicolon 
-    if(expr_stack.size() == 0 || expr_stack.size() > 1)
+    if(expr_stack->length == 0 || expr_stack->length > 1)
     {
-        while(expr_stack.size() > 0)
+        while(op_stack->length > 0)
         {
-            aug_ast_delete(expr_stack.back());
-            expr_stack.pop_back();
+            aug_token* token = (aug_token*) aug_container_pop(op_stack);
+            aug_token_reset(&token);
+            free(token);
         }
+        while(expr_stack->length > 0)
+        {
+            aug_ast* expr = (aug_ast*) aug_container_pop(expr_stack);
+            aug_ast_delete(expr);
+        }
+        aug_container_decref(op_stack);
+        aug_container_decref(expr_stack);
         AUG_INPUT_ERROR(lexer->input, "Invalid expression syntax");
         return NULL;
     }
 
-    return expr_stack.back();
+    aug_ast* expr = (aug_ast*) aug_container_back(expr_stack);
+    aug_container_decref(op_stack);
+    aug_container_decref(expr_stack);
+    return expr;
 }
 
 inline aug_ast* aug_parse_funccall(aug_lexer* lexer)
@@ -1432,16 +1460,18 @@ inline aug_ast* aug_parse_funccall(aug_lexer* lexer)
     aug_lexer_move(lexer); // eat LPAREN
 
     aug_ast* funccall = aug_ast_new(AUG_AST_FUNC_CALL, name_token);
-    if (aug_ast* expr = aug_parse_expr(lexer))
+    aug_ast* expr = aug_parse_expr(lexer);
+    if (expr != NULL)
     {
-        funccall->children.push_back(expr);
+        aug_ast_add(funccall, expr);
 
-        while (expr && lexer->curr.id == AUG_TOKEN_COMMA)
+        while (expr != NULL && lexer->curr.id == AUG_TOKEN_COMMA)
         {
             aug_lexer_move(lexer); // eat COMMA
 
-            if((expr = aug_parse_expr(lexer)))
-                funccall->children.push_back(expr);
+            expr = aug_parse_expr(lexer);
+            if(expr != NULL)
+                aug_ast_add(funccall, expr);
         }
     }
 
@@ -1464,16 +1494,18 @@ inline aug_ast* aug_parse_array(aug_lexer* lexer)
     aug_lexer_move(lexer); // eat LBRACKET
 
     aug_ast* array = aug_ast_new(AUG_AST_ARRAY);
-    if (aug_ast* expr = aug_parse_expr(lexer))
+    aug_ast* expr = aug_parse_expr(lexer);
+    if (expr != NULL)
     {
-        array->children.push_back(expr);
+        aug_ast_add(array, expr);
 
-        while (expr && lexer->curr.id == AUG_TOKEN_COMMA)
+        while (expr != NULL && lexer->curr.id == AUG_TOKEN_COMMA)
         {
             aug_lexer_move(lexer); // eat COMMA
 
-            if((expr = aug_parse_expr(lexer)))
-                array->children.push_back(expr);
+            expr = aug_parse_expr(lexer);
+            if (expr != NULL)
+                aug_ast_add(array, expr);
         }
     }
 
@@ -1505,11 +1537,12 @@ inline aug_ast* aug_parse_get_element(aug_lexer* lexer)
         return NULL;
     }
 
-    aug_ast* element = aug_ast_new(AUG_AST_ELEMENT);
     aug_ast* container = aug_ast_new(AUG_AST_VARIABLE, name_token);
     
-    element->children.push_back(container);
-    element->children.push_back(expr);
+    aug_ast* element = aug_ast_new(AUG_AST_ELEMENT);
+    aug_ast_resize(element, 2);
+    element->children[0] = container;
+    element->children[1] = expr;
 
     if (lexer->curr.id != AUG_TOKEN_RBRACKET)
     {
@@ -1603,7 +1636,7 @@ aug_ast* aug_parse_stmt_expr(aug_lexer* lexer)
     aug_lexer_move(lexer); // eat SEMICOLON
     
     aug_ast* stmt_expr = aug_ast_new(AUG_AST_STMT_EXPR);
-    stmt_expr->children.push_back(expr);
+    aug_ast_add(stmt_expr, expr);
     return stmt_expr;
 }
 
@@ -1633,7 +1666,7 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
 
     if (lexer->curr.id != AUG_TOKEN_ASSIGN)
     {
-        aug_token_delete(&name_token);
+        aug_token_reset(&name_token);
         AUG_INPUT_ERROR(lexer->input,  "Variable assignment expected \"=\" or ;");
         return NULL;
     }
@@ -1643,13 +1676,13 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
     aug_ast* expr = aug_parse_expr(lexer);
     if (expr == NULL)
     {
-        aug_token_delete(&name_token);
+        aug_token_reset(&name_token);
         AUG_INPUT_ERROR(lexer->input,  "Variable assignment expected expression after \"=\"");
         return NULL;
     }
     if (lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
-        aug_token_delete(&name_token);
+        aug_token_reset(&name_token);
         aug_ast_delete(expr);
         AUG_INPUT_ERROR(lexer->input,  "Variable assignment missing semicolon at end of expression");
         return NULL;
@@ -1658,7 +1691,7 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
     aug_lexer_move(lexer); // eat SEMICOLON
 
     aug_ast* stmt_define = aug_ast_new(AUG_AST_STMT_DEFINE_VAR, name_token);
-    stmt_define->children.push_back(expr);
+    aug_ast_add(stmt_define, expr);
     return stmt_define;
 }
 
@@ -1689,14 +1722,14 @@ aug_ast* aug_parse_stmt_assign_var(aug_lexer* lexer)
     aug_ast* expr = aug_parse_expr(lexer);
     if (expr == NULL)
     {
-        aug_token_delete(&name_token);
+        aug_token_reset(&name_token);
         AUG_INPUT_ERROR(lexer->input,  "Assignment expected expression after \"=\"");
         return NULL;
     }
 
     if (lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
-        aug_token_delete(&name_token);
+        aug_token_reset(&name_token);
         aug_ast_delete(expr);
         AUG_INPUT_ERROR(lexer->input,  "Missing semicolon at end of expression");
         return NULL;
@@ -1715,16 +1748,17 @@ aug_ast* aug_parse_stmt_assign_var(aug_lexer* lexer)
         aug_ast* value = aug_ast_new(AUG_AST_VARIABLE, expr_name_token);
 
         // add in reverse order
-        binaryop->children.push_back(value);
-        binaryop->children.push_back(expr);
+        aug_ast_resize(binaryop, 2);
+        binaryop->children[0] = value;
+        binaryop->children[1] = expr;
 
         aug_ast* stmt_assign = aug_ast_new(AUG_AST_STMT_ASSIGN_VAR, name_token);
-        stmt_assign->children.push_back(binaryop);
+        aug_ast_add(stmt_assign, binaryop);
         return stmt_assign;
     }
 
     aug_ast* stmt_assign = aug_ast_new(AUG_AST_STMT_ASSIGN_VAR, name_token);
-    stmt_assign->children.push_back(expr);
+    aug_ast_add(stmt_assign, expr);
     return stmt_assign;
 }
 
@@ -1735,8 +1769,10 @@ aug_ast* aug_parse_stmt_if_else(aug_lexer* lexer, aug_ast* expr, aug_ast* block)
     aug_lexer_move(lexer); // eat ELSE
 
     aug_ast* if_else_stmt = aug_ast_new(AUG_AST_STMT_IF_ELSE);
-    if_else_stmt->children.push_back(expr);
-    if_else_stmt->children.push_back(block);
+    aug_ast_resize(if_else_stmt, 3);
+    if_else_stmt->children[0] = expr;
+    if_else_stmt->children[1] = block;
+
 
     // Handling else if becomes else { if ... }
     if (lexer->curr.id == AUG_TOKEN_IF)
@@ -1747,7 +1783,7 @@ aug_ast* aug_parse_stmt_if_else(aug_lexer* lexer, aug_ast* expr, aug_ast* block)
             aug_ast_delete(if_else_stmt);
             return NULL;
         }
-        if_else_stmt->children.push_back(trailing_if_stmt);
+        if_else_stmt->children[2] = trailing_if_stmt;
     }
     else
     {
@@ -1758,7 +1794,7 @@ aug_ast* aug_parse_stmt_if_else(aug_lexer* lexer, aug_ast* expr, aug_ast* block)
             AUG_INPUT_ERROR(lexer->input,  "If Else statement missing block");
             return NULL;
         }
-        if_else_stmt->children.push_back(else_block);
+        if_else_stmt->children[2] = else_block;
     }
 
     return if_else_stmt;
@@ -1791,8 +1827,9 @@ aug_ast* aug_parse_stmt_if(aug_lexer* lexer)
         return aug_parse_stmt_if_else(lexer, expr, block);
 
     aug_ast* if_stmt = aug_ast_new(AUG_AST_STMT_IF);
-    if_stmt->children.push_back(expr);
-    if_stmt->children.push_back(block);
+    aug_ast_resize(if_stmt, 2);
+    if_stmt->children[0] = expr;
+    if_stmt->children[1] = block;
     return if_stmt;
 }
 
@@ -1819,9 +1856,9 @@ aug_ast* aug_parse_stmt_while(aug_lexer* lexer)
     }
 
     aug_ast* while_stmt = aug_ast_new(AUG_AST_STMT_WHILE);
-    while_stmt->children.push_back(expr);
-    while_stmt->children.push_back(block);
-
+    aug_ast_resize(while_stmt, 2);
+    while_stmt->children[0] = expr;
+    while_stmt->children[1] = block;
     return while_stmt;
 }
 
@@ -1840,7 +1877,7 @@ inline aug_ast* aug_parse_param_list(aug_lexer* lexer)
     {
         aug_token param_name = aug_token_copy(lexer->curr);
         aug_ast* param = aug_ast_new(AUG_AST_PARAM, param_name);
-        param_list->children.push_back(param);
+        aug_ast_add(param_list, param);
 
         aug_lexer_move(lexer); // eat NAME
 
@@ -1857,7 +1894,7 @@ inline aug_ast* aug_parse_param_list(aug_lexer* lexer)
 
             aug_token param_name = aug_token_copy(lexer->curr);
             aug_ast* param = aug_ast_new(AUG_AST_PARAM, param_name);
-            param_list->children.push_back(param);
+            aug_ast_add(param_list, param);
 
             aug_lexer_move(lexer); // eat NAME
         }
@@ -1895,22 +1932,22 @@ aug_ast* aug_parse_stmt_func(aug_lexer* lexer)
     aug_ast* param_list = aug_parse_param_list(lexer);
     if (param_list == NULL)
     {
-        aug_token_delete(&func_name_token);
+        aug_token_reset(&func_name_token);
         return NULL;
     }
 
     aug_ast* block = aug_parse_block(lexer);
     if (block == NULL)
     {
-        aug_token_delete(&func_name_token);
+        aug_token_reset(&func_name_token);
         aug_ast_delete(param_list);
         return NULL;
     }
 
     aug_ast* func_def = aug_ast_new(AUG_AST_FUNC_DEF, func_name_token);
-    func_def->children.push_back(param_list);
-    func_def->children.push_back(block);
-
+    aug_ast_resize(func_def, 2);
+    func_def->children[0] = param_list;
+    func_def->children[1] = block;
     return func_def;
 }
 
@@ -1925,7 +1962,7 @@ aug_ast* aug_parse_stmt_return(aug_lexer* lexer)
 
     aug_ast* expr = aug_parse_expr(lexer);
     if (expr != NULL)
-        return_stmt->children.push_back(expr);
+        aug_ast_add(return_stmt, expr);
 
     if (lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
@@ -1988,7 +2025,7 @@ aug_ast* aug_parse_block(aug_lexer* lexer)
 
     aug_ast* block = aug_ast_new(AUG_AST_BLOCK);
     while(aug_ast* stmt = aug_parse_stmt(lexer))
-        block->children.push_back(stmt);
+        aug_ast_add(block, stmt);
 
     if (lexer->curr.id != AUG_TOKEN_RBRACE)
     {
@@ -2010,9 +2047,9 @@ aug_ast* aug_parse_root(aug_lexer* lexer)
 
     aug_ast* root = aug_ast_new(AUG_AST_ROOT);
     while (aug_ast* stmt = aug_parse_stmt(lexer))
-        root->children.push_back(stmt);
+        aug_ast_add(root, stmt);
 
-    if (root->children.size() == 0)
+    if (root->children_size == 0)
     {
         aug_ast_delete(root);
         return NULL;
@@ -2168,7 +2205,7 @@ struct aug_ir_frame
 {
     int base_index;
     int arg_count;
-    aug_std_array< aug_ir_scope> scope_stack;
+    aug_std_array<aug_ir_scope> scope_stack;
 };
 
 // All the blocks within a compilation/translation unit (i.e. file, code literal)
@@ -3722,20 +3759,20 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
     if(node == NULL || !ir.valid)
         return;
 
-    const aug_token& token = node->token;
-    const aug_string* token_data = token.data; 
-    const aug_std_array<aug_ast*>& children = node->children;
+    const aug_token token = node->token;
+    aug_string* token_data = token.data; 
+    aug_ast** children = node->children;
+    const int children_size = node->children_size;
 
     switch(node->id)
     {
         case AUG_AST_ROOT:
         {
-            const aug_std_array<aug_ast*>& children = node->children;
-
             aug_ir_push_frame(ir, 0); // push a global frame
 
-            for (aug_ast* stmt : children)
-                aug_ast_to_ir(vm, stmt, ir);
+            int i;
+            for (i = 0; i < children_size; ++ i)
+                aug_ast_to_ir(vm, children[i], ir);
 
             aug_ir_add_operation(ir, AUG_OPCODE_EXIT);
 
@@ -3744,8 +3781,10 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_BLOCK: 
         {
-            for (aug_ast* stmt : children)
-                aug_ast_to_ir(vm, stmt, ir);
+            int i;
+            for (i = 0; i < children_size; ++ i)
+                aug_ast_to_ir(vm, children[i], ir);
+
             break;
         }
         case AUG_AST_LITERAL:
@@ -3819,6 +3858,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         case AUG_AST_VARIABLE:
         {
             assert(token_data != NULL);
+
             const aug_symbol& symbol = aug_ir_symbol_relative(ir, token_data);
             if (symbol.type == AUG_SYM_NONE)
             {
@@ -3843,7 +3883,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_UNARY_OP:
         {
-            assert(children.size() == 1); // token [0]
+            assert(children_size == 1); // token [0]
 
             aug_ast_to_ir(vm, children[0], ir);
 
@@ -3858,7 +3898,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_BINARY_OP:
         {
-            assert(children.size() == 2); // [0] token [1]
+            assert(children_size == 2); // [0] token [1]
 
             aug_ast_to_ir(vm, children[0], ir); // LHS
             aug_ast_to_ir(vm, children[1], ir); // RHS
@@ -3886,17 +3926,16 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_ARRAY:
         {
-            const int expr_count = children.size();
-            for (int i = expr_count - 1; i >= 0; --i)
+            for (int i = children_size - 1; i >= 0; --i)
                 aug_ast_to_ir(vm, children[i], ir);
 
-            const aug_ir_operand& count_operand = aug_ir_operand_from_int(expr_count);
+            const aug_ir_operand& count_operand = aug_ir_operand_from_int(children_size);
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_ARRAY, count_operand);
             break;
         }
         case AUG_AST_ELEMENT:
         {
-            assert(children.size() == 2); // 0[1]
+            assert(children_size == 2); // 0[1]
             aug_ast_to_ir(vm, children[0], ir); // push container var
             aug_ast_to_ir(vm, children[1], ir); // push index
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_ELEMENT);
@@ -3904,7 +3943,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_STMT_EXPR:
         {
-            if (children.size() == 1)
+            if (children_size == 1)
             {
                 aug_ast_to_ir(vm, children[0], ir);
                 // discard the top if a non-assignment binop
@@ -3915,7 +3954,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         case AUG_AST_STMT_ASSIGN_VAR:
         {
             assert(token_data != NULL);
-            assert(children.size() == 1); // token = [0]
+            assert(children_size == 1); // token = [0]
             
             aug_ast_to_ir(vm, children[0], ir);
 
@@ -3941,7 +3980,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_STMT_DEFINE_VAR:
         {
-            if (children.size() == 1) // token = [0]
+            if (children_size == 1) // token = [0]
                 aug_ast_to_ir(vm, children[0], ir);
             else
                 aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
@@ -3960,7 +3999,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_STMT_IF:
         {
-            assert(children.size() == 2); //if ([0]) {[1]}
+            assert(children_size == 2); //if ([0]) {[1]}
 
             const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
 
@@ -3985,7 +4024,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_STMT_IF_ELSE:
         {
-            assert(children.size() == 3); //if ([0]) {[1]} else {[2]}
+            assert(children_size == 3); //if ([0]) {[1]} else {[2]}
 
             const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
 
@@ -4023,7 +4062,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_STMT_WHILE:
         {
-            assert(children.size() == 2); //while ([0]) {[1]}
+            assert(children_size == 2); //while ([0]) {[1]}
 
             const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
 
@@ -4055,7 +4094,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         case AUG_AST_FUNC_CALL:
         {
             assert(token_data != NULL); // func name is token data
-            const int arg_count = children.size();
+            const int arg_count = children_size;
             const aug_symbol& symbol = aug_ir_get_symbol(ir, token_data);
 
             if (symbol.type == AUG_SYM_VAR)
@@ -4078,8 +4117,10 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
                     // offset to account for the pushed base
                     size_t push_frame = aug_ir_add_operation(ir, AUG_OPCODE_PUSH_CALL_FRAME, aug_ir_operand_from_int(0));
 
-                    for (const aug_ast* arg : children)
-                        aug_ast_to_ir(vm, arg, ir);
+                    // push args
+                    int i;
+                    for (i = 0; i < children_size; ++ i)
+                        aug_ast_to_ir(vm, children[i], ir);
 
                     const aug_ir_operand& func_addr = aug_ir_operand_from_int(symbol.offset); // func addr
                     aug_ir_add_operation(ir, AUG_OPCODE_CALL, func_addr);
@@ -4114,7 +4155,8 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
                 break;
             }
 
-            for (int i = arg_count - 1; i >= 0; --i)
+            int i;
+            for (i = arg_count - 1; i >= 0; --i)
                 aug_ast_to_ir(vm, children[i], ir);
 
             const aug_ir_operand& func_index_operand = aug_ir_operand_from_int(func_index);
@@ -4127,7 +4169,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         case AUG_AST_RETURN:
         {
             const aug_ir_operand& offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
-            if (children.size() == 1) //return [0];
+            if (children_size == 1) //return [0];
             {
                 aug_ast_to_ir(vm, children[0], ir);
                 aug_ir_add_operation(ir, AUG_OPCODE_RETURN, offset);
@@ -4147,15 +4189,15 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_PARAM_LIST:
         {
-            // start stack offset at beginning of parameter (this will be nagative relative to the current frame)
-            for (const aug_ast* param : children)
-                aug_ast_to_ir(vm, param, ir);
+            int i;
+            for (i = 0; i < children_size; ++ i)
+                aug_ast_to_ir(vm, children[i], ir);
             break;
         }
         case AUG_AST_FUNC_DEF:
         {
             assert(token_data != NULL); // func name is token
-            assert(children.size() == 2); //func token [0] {[1]};
+            assert(children_size == 2); //func token [0] {[1]};
 
             // Jump over the func def
             const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
@@ -4163,7 +4205,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
 
             aug_ast* params = children[0];
             assert(params && params->id == AUG_AST_PARAM_LIST);
-            const int param_count = params->children.size();
+            const int param_count = params->children_size;
 
             if (!aug_ir_set_func(ir, token_data, param_count))
             {
@@ -4495,7 +4537,6 @@ aug_value aug_from_string(const char* data)
 extern "C" {
 #endif
 
-
 aug_string* aug_string_new(size_t size) 
 {
 	aug_string* string = (aug_string*)malloc(sizeof(aug_string));
@@ -4657,7 +4698,6 @@ aug_value* aug_array_back(const aug_array* array)
 }
 
 // ------------------------------- Generic Containers ------------------------------------//
-#if 0// Container
 
 aug_container* aug_container_new(size_t size)
 { 
@@ -4697,267 +4737,30 @@ void aug_container_reserve(aug_container* array, size_t size)
 	array->capacity = size; 
 }
  
-void* aug_container_push(aug_container* array)  
+void aug_container_push(aug_container* array, void* data)  
 {
 	if (array->length + 1 >= array->capacity) 
         aug_container_reserve(array, 2 * array->capacity);
-    return &array->buffer[array->length++];
+    array->buffer[array->length++] = data;
 }
  
 void* aug_container_pop(aug_container* array)
 {
-	return array->length > 0 ? &array->buffer[--array->length] : NULL; 
+	return array->length > 0 ? array->buffer[--array->length] : NULL; 
 }
  
 void* aug_container_at(const aug_container* array, size_t index) 
 {
-	return index >= 0 && index < array->length ? &array->buffer[index] : NULL;
+	return index >= 0 && index < array->length ? array->buffer[index] : NULL;
 }
  
 void* aug_container_back(const aug_container* array)
 {
-	return array->length > 0 ? &array->buffer[array->length-1] : NULL; 
+	return array->length > 0 ? array->buffer[array->length-1] : NULL; 
 }
-
-#endif // Container
-
-// ------------------------------- Hashmap ---------------------------------------------------//
-
-#if 0// HASHMAP
-
-#define HASHMAP_DEFAULT_CAPACITY 20
-#define HASHMAP_MAX_LOAD 0.75f
-#define HASHMAP_RESIZE_FACTOR 2
-#define HASHMAP_HASH_INIT 2166136261u
-
-typedef struct hashmap_bucket
-{
-	hashmap_bucket* next;
-	const char* key;
-	size_t key_size;
-	uint32_t hash;
-	void* value;
-} hashmap_bucket;
-
-typedef struct hashmap
-{
-	hashmap_bucket* hashmap_buckets;
-
-	int capacity;
-	int count;
-
-	int removed_count;
-	
-	hashmap_bucket* first;
-	hashmap_bucket* last;
-} hashmap;
-
-typedef void (*hashmap_callback)(const char *key, size_t key_size, void* value, void *usr);
-
-int hashmap_size(hashmap* m)
-{
-	return map->count - map->removed_count;
-}
-
-hashmap* hashmap_new()
-{
-	hashmap* m = malloc(sizeof(hashmap));
-	if (m == NULL)
-	{
-		return NULL;
-	}
-
-	map->capacity = HASHMAP_DEFAULT_CAPACITY;
-	map->count = 0;
-	map->removed_count = 0;
-	map->hashmap_buckets = malloc(HASHMAP_DEFAULT_CAPACITY * sizeof(hashmap_bucket));
-	map->first = NULL;
-	map->last = (hashmap_bucket*)&map->first;
-	return m;
-}
-
-void hashmap_free(hashmap* m)
-{
-	free(map->hashmap_buckets);
-	free(m);
-}
-
-static hashmap_bucket* resize_entry(hashmap* map, hashmap_bucket* old_entry)
-{
-	uint32_t index = old_entry->hash % map->capacity;
-	for (;;)
-	{
-		hashmap_bucket* entry = &map->hashmap_buckets[index];
-
-		if (entry->key == NULL)
-		{
-			*entry = *old_entry; // copy data from old entry
-			return entry;
-		}
-
-		index = (index + 1) % map->capacity;
-	}
-}
-
-static void hashmap_resize(hashmap* map)
-{
-	hashmap_bucket* old_hashmap_buckets = map->hashmap_buckets;
-
-	map->capacity *= HASHMAP_RESIZE_FACTOR;
-	map->hashmap_buckets = malloc(map->capacity * sizeof(hashmap_bucket));
-	map->last = (hashmap_bucket*)&map->first;
-	map->count -= map->removed_count;
-	map->removed_count = 0;
-
-	do
-	{
-		hashmap_bucket* current = map->last->next;
-		if (current->key == NULL)
-		{
-			map->last->next = current->next;
-			// skip to loop condition
-			continue;
-		}
-		
-		map->last->next = resize_entry(m, map->last->next);
-		map->last = map->last->next;
-	} while (map->last->next != NULL);
-
-	free(old_hashmap_buckets);
-}
-
-// FNV-1a hash function
-static inline uint32_t hash_data(const char* data, size_t size)
-{
-	size_t nblocks = size / 8;
-	uint64_t hash = HASHMAP_HASH_INIT;
-	for (size_t i = 0; i < nblocks; ++i)
-	{
-		hash ^= (uint64_t)data[0] << 0 | (uint64_t)data[1] << 8 |
-			 (uint64_t)data[2] << 16 | (uint64_t)data[3] << 24 |
-			 (uint64_t)data[4] << 32 | (uint64_t)data[5] << 40 |
-			 (uint64_t)data[6] << 48 | (uint64_t)data[7] << 56;
-		hash *= 0xbf58476d1ce4e5b9;
-		data += 8;
-	}
-
-	uint64_t last = size & 0xff;
-	switch (size % 8)
-	{
-	case 7:
-		last |= (uint64_t)data[6] << 56; /* fallthrough */
-	case 6:
-		last |= (uint64_t)data[5] << 48; /* fallthrough */
-	case 5:
-		last |= (uint64_t)data[4] << 40; /* fallthrough */
-	case 4:
-		last |= (uint64_t)data[3] << 32; /* fallthrough */
-	case 3:
-		last |= (uint64_t)data[2] << 24; /* fallthrough */
-	case 2:
-		last |= (uint64_t)data[1] << 16; /* fallthrough */
-	case 1:
-		last |= (uint64_t)data[0] << 8;
-		hash ^= last;
-		hash *= 0xd6e8feb86659fd93;
-	}
-
-	// compress to a 32-bit result.
-	// also serves as a finalizer.
-	return (uint32_t)(hash ^ hash >> 32);
-}
-
-hashmap_bucket* hashmap_find_entry(hashmap* map, const void* key, size_t key_size, uint32_t hash)
-{
-    uint32_t hash = hash_data(key, key_size);
-	uint32_t index = hash % map->capacity;
-
-	while(true)
-	{
-		hashmap_bucket* entry = &map->hashmap_buckets[index];
-
-		bool null_key = ;
-		bool null_value = entry->value == 0;
-        if(entry->key == NULL && entry->value == 0)
-            return entry;
-
-        if(entry->hash != hash)
-            continue;
-
-        // if hash and key are equivalent
-		if (entry->key_size == key_size && strncmp(entry->key, key, key_size) == 0))
-			return entry;
-
-		index = (index + 1) % map->capacity;
-	}
-}
-
-void hashmap_set(hashmap* map, const void* key, size_t key_size, void* val)
-{
-	if (map->count + 1 > HASHMAP_MAX_LOAD * map->capacity)
-		hashmap_resize(m);
-
-	hashmap_bucket* entry = hashmap_find_entry(m, key, key_size);
-	if (entry->key == NULL)
-	{
-		map->last->next = entry;
-		map->last = entry;
-		entry->next = NULL;
-
-		++map->count;
-
-		entry->key = key;
-		entry->key_size = key_size;
-		entry->hash = hash;
-	}
-	entry->value = val;
-}
-
-void* hashmap_get(hashmap* map, const void* key, size_t key_size)
-{
-	uint32_t hash = hash_data(key, key_size);
-	hashmap_bucket* entry = hashmap_find_entry(m, key, key_size, hash);
-
-	return entry->value;
-}
-
-// before removing, must free any allocated data
-void hashmap_remove(hashmap* map, const void* key, size_t key_size)
-{
-	uint32_t hash = hash_data(key, key_size);
-	hashmap_bucket* entry = hashmap_find_entry(m, key, key_size, hash);
-
-	if (entry->key != NULL)
-	{
-		entry->key = NULL;
-		entry->value = NULL; 
-
-		++map->removed_count;
-	}
-}
-
-void hashmap_iterate(hashmap* map, hashmap_callback callback, void* user_ptr)
-{
-	hashmap_bucket* current = map->first;
-	
-	while (current != NULL)
-	{
-		#ifdef __HASHMAP_REMOVABLE
-		// "tombstone" check
-		if (current->key != NULL)
-		#endif
-			callback(current->key, current->key_size, current->value, user_ptr);
-		
-		current = current->next;
-	}
-}
-
-#endif // HASHMAP
-
 
 #ifdef __cplusplus
-}
+} // extern C
 #endif
-
 
 #endif //AUG_IMPLEMENTATION

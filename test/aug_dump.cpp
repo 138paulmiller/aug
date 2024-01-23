@@ -32,7 +32,7 @@ void dump_lexer(const char* filename)
 	printf("End Tokenizing File: %s\n", filename);
 }
 
-void dump_ast_tree(aug_ast* node, std::string prefix, bool is_leaf)
+void dump_ast_tree(const aug_ast* node, std::string prefix, bool is_leaf)
 {
 	static const char* space = "  ";// char(192);
 	static const char* pipe = "| ";// char(192);
@@ -52,8 +52,9 @@ void dump_ast_tree(aug_ast* node, std::string prefix, bool is_leaf)
 		prefix += pipe;
 	}
 
-	const aug_token& token = node->token;
-	const aug_std_array<aug_ast*>& children = node->children;
+	aug_token token = node->token;
+	aug_ast** children = node->children;
+	const int children_size = node->children_size;
 
 	printf("[%d]", node->id);
 
@@ -61,21 +62,21 @@ void dump_ast_tree(aug_ast* node, std::string prefix, bool is_leaf)
 	{
 		case AUG_AST_ROOT:
 			printf("AST\n");
-			for (size_t i = 0; i < children.size(); ++i)
-				dump_ast_tree(children[i], prefix, i == children.size() - 1);
+			for (int i = 0; i < children_size; ++i)
+				dump_ast_tree(children[i], prefix, i == children_size-1);
 			break;
 		case AUG_AST_BLOCK:
 			printf("BLOCK\n");
-			for (size_t i = 0; i < children.size(); ++i)
-				dump_ast_tree(children[i], prefix, i == children.size()-1);
+			for (int i = 0; i < children_size; ++i)
+				dump_ast_tree(children[i], prefix, i == children_size-1);
 			break;
 		case AUG_AST_STMT_DEFINE_VAR:
 			printf("DEFINE: %s\n", token.data ?  token.data->buffer : "(null)");
-			if(children.size()==1)
+			if(children_size==1)
 				dump_ast_tree(children[0], prefix, true);
 			break;
 		case AUG_AST_STMT_ASSIGN_VAR:
-			assert(children.size() == 1);
+			assert(children_size == 1);
 			printf("ASSIGN: %s\n", token.data ?  token.data->buffer : "(null)");
 			dump_ast_tree(children[0], prefix, false);
 			break;
@@ -97,50 +98,50 @@ void dump_ast_tree(aug_ast* node, std::string prefix, bool is_leaf)
 			break;
 		case AUG_AST_STMT_WHILE:
 			printf("WHILE\n");
-			for (size_t i = 0; i < children.size(); ++i)
-				dump_ast_tree(children[i], prefix, i == children.size()-1);
+			for (int i = 0; i < children_size; ++i)
+				dump_ast_tree(children[i], prefix, i == children_size-1);
 			break;
 		case AUG_AST_UNARY_OP:
-			assert(children.size() == 1);
+			assert(children_size == 1);
 			printf("%s\n", token.detail->label);
 			dump_ast_tree(children[0], prefix, true);
 			break;
 		case AUG_AST_BINARY_OP:
-			assert(children.size() == 2);
+			assert(children_size == 2);
 			printf("%s\n", token.detail->label);
 			dump_ast_tree(children[0], prefix, false);
 			dump_ast_tree(children[1], prefix, true);
 			break;
 		case AUG_AST_FUNC_CALL:
 			printf("FUNCCALL: %s\n", token.data ?  token.data->buffer : "(null)");
-			for (size_t i = 0; i < children.size(); ++i)
-				dump_ast_tree(children[i], prefix, i == children.size()-1);
+			for (int i = 0; i < children_size; ++i)
+				dump_ast_tree(children[i], prefix, i == children_size-1);
 			break;
 		case AUG_AST_FUNC_DEF:
-			assert(children.size() == 2);
+			assert(children_size == 2);
 			printf("FUNCDEF: %s\n",token.data ?  token.data->buffer : "(null)");
-			for (size_t i = 0; i < children.size(); ++i)
-				dump_ast_tree(children[i], prefix, i == children.size() - 1);
+			for (int i = 0; i < children_size; ++i)
+				dump_ast_tree(children[i], prefix, i == children_size - 1);
 			break;
 		case AUG_AST_PARAM_LIST:
 			printf("PARAMS\n");
-			for (size_t i = 0; i < children.size(); ++i)
-				dump_ast_tree(children[i], prefix, i == children.size() - 1);
+			for (int i = 0; i < children_size; ++i)
+				dump_ast_tree(children[i], prefix, i == children_size - 1);
 			break;
 		case AUG_AST_RETURN:
 			printf("RETURN\n");
-			if(children.size() == 1)
+			if(children_size == 1)
 			dump_ast_tree(children[0], prefix, true);
 			break;
 		case AUG_AST_ARRAY:
 			printf("ARRAY\n");
-			for (size_t i = 0; i < children.size(); ++i)
-				dump_ast_tree(children[i], prefix, i == children.size() - 1);
+			for (int i = 0; i < children_size; ++i)
+				dump_ast_tree(children[i], prefix, i == children_size - 1);
 			break;
 		case AUG_AST_ELEMENT:
 			printf("ELEMENT\n");
-			for (size_t i = 0; i < children.size(); ++i)
-				dump_ast_tree(children[i], prefix, i == children.size() - 1);
+			for (int i = 0; i < children_size; ++i)
+				dump_ast_tree(children[i], prefix, i == children_size - 1);
 			break;
 		case AUG_AST_PARAM:
 		case AUG_AST_VARIABLE:

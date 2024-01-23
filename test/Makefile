@@ -5,7 +5,7 @@ SRC = $(wildcard *.cpp)
 CC = g++
 CFLAGS = -Wall -O3
 LIBS = -I../ -std=c++11
-LD = -lunwind -lunwind-x86_64
+LD =
 
 all: $(OUT_DIR) $(TARGET)
 	echo "Done"
