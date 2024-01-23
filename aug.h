@@ -275,7 +275,7 @@ struct aug_script
     aug_string* bytecode;
 
     // If the script
-    aug_std_array<aug_value> stack_state;
+    aug_array* stack_state;
 };
 
 // Calling frames are used to preserve and access parameters and local variables from the stack within a calling context
@@ -332,7 +332,7 @@ void aug_compile(aug_vm& vm, aug_script& script, const char* filename);
 void aug_load(aug_vm& vm, aug_script& script);
 void aug_unload(aug_vm& vm, aug_script& script);
 aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name);
-aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name, const aug_std_array<aug_value>& args);
+aug_value aug_call_args(aug_vm& vm, aug_script& script, const char* func_name, int argc, aug_value* args);
 
 // Types
 aug_value aug_none();
@@ -405,8 +405,8 @@ if (input->valid)                          \
 
 struct aug_pos
 {
-    size_t filepos;
-    size_t linepos;
+    int filepos;
+    int linepos;
     int line;
     int col;
 };
@@ -419,7 +419,7 @@ struct aug_input
     aug_error_callback* error_callback;
     bool valid;
 
-    std::streampos track_pos;
+    int track_pos;
     int pos_buffer_index;
     aug_pos pos_buffer[4];
 };
@@ -548,8 +548,8 @@ inline aug_string* aug_input_end_tracking(aug_input* input)
     const std::fstream::iostate state = input->file->rdstate();
     input->file->clear();
 
-    const std::streampos pos_end = input->file->tellg();
-    const std::streamoff len = (pos_end - input->track_pos);
+    const int pos_end = input->file->tellg();
+    const int len = (pos_end - input->track_pos);
 
     aug_string* string = aug_string_new(len+1);
     string->length = len;
@@ -1310,7 +1310,7 @@ inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_std_array<aug_token>& op_st
     aug_token next_op = op_stack.back();
     op_stack.pop_back();
 
-    const int op_argc = (size_t)next_op.detail->argc;
+    const int op_argc = next_op.detail->argc;
     assert(op_argc == 1 || op_argc == 2); // Only supported operator types
 
     if(expr_stack.size() < (size_t)op_argc)
@@ -2362,7 +2362,7 @@ inline void aug_ir_pop_scope(aug_ir& ir)
 inline bool aug_ir_set_var(aug_ir& ir, const aug_string* var_name)
 {
     std::string name;
-    for(int i = 0; i < var_name->length; ++i)
+    for(size_t i = 0; i < var_name->length; ++i)
         name.push_back(var_name->buffer[i]);
 
     aug_ir_scope& scope = aug_ir_current_scope(ir);
@@ -2388,7 +2388,7 @@ inline bool aug_ir_set_var(aug_ir& ir, const aug_string* var_name)
 inline bool aug_ir_set_param(aug_ir& ir, const aug_string* param_name)
 {
     std::string name;
-    for(int i = 0; i < param_name->length; ++i)
+    for(size_t i = 0; i < param_name->length; ++i)
         name.push_back(param_name->buffer[i]);
 
     aug_ir_scope& scope = aug_ir_current_scope(ir);
@@ -2414,7 +2414,7 @@ inline bool aug_ir_set_param(aug_ir& ir, const aug_string* param_name)
 inline bool aug_ir_set_func(aug_ir& ir, const aug_string* func_name, int param_count)
 {
     std::string name;
-    for(int i = 0; i < func_name->length; ++i)
+    for(size_t i = 0; i < func_name->length; ++i)
         name.push_back(func_name->buffer[i]);
 
     aug_ir_scope& scope = aug_ir_current_scope(ir);
@@ -2439,7 +2439,7 @@ inline bool aug_ir_set_func(aug_ir& ir, const aug_string* func_name, int param_c
 inline aug_symbol aug_ir_get_symbol(aug_ir& ir, const aug_string* symbol_name)
 {
     std::string name;
-    for(int i = 0; i < symbol_name->length; ++i)
+    for(size_t i = 0; i < symbol_name->length; ++i)
         name.push_back(symbol_name->buffer[i]);
 
     for (int i = ir.frame_stack.size() - 1; i >= 0; --i)
@@ -2464,7 +2464,7 @@ inline aug_symbol aug_ir_get_symbol(aug_ir& ir, const aug_string* symbol_name)
 inline aug_symbol aug_ir_symbol_relative(aug_ir& ir, const aug_string* symbol_name)
 {
     std::string name;
-    for(int i = 0; i < symbol_name->length; ++i)
+    for(size_t i = 0; i < symbol_name->length; ++i)
         name.push_back(symbol_name->buffer[i]);
 
     for (int i = ir.frame_stack.size() - 1; i >= 0; --i)
@@ -2511,7 +2511,7 @@ inline aug_symbol aug_ir_symbol_relative(aug_ir& ir, const aug_string* symbol_na
 inline aug_symbol aug_ir_get_symbol_local(aug_ir& ir, const aug_string* symbol_name)
 {
     std::string name;
-    for(int i = 0; i < symbol_name->length; ++i)
+    for(size_t i = 0; i < symbol_name->length; ++i)
         name.push_back(symbol_name->buffer[i]);
 
     const aug_ir_scope& scope = aug_ir_current_scope(ir);
@@ -2682,7 +2682,7 @@ inline void aug_decref(aug_value* value)
     case AUG_ARRAY:
         if(value->array)
         {
-            for(int i = 0; i < value->array->length; ++i)
+            for(size_t i = 0; i < value->array->length; ++i)
             {
                 aug_decref(aug_array_at_ptr(value->array, i));
             }
@@ -3161,30 +3161,43 @@ void aug_vm_load_script(aug_vm& vm, const aug_script& script)
     vm.valid = (vm.bytecode != NULL);
 
     // Load the script state
-    for (size_t i = 0; i < script.stack_state.size(); ++i)
+    if(script.stack_state != NULL)
     {
-        aug_value* top = aug_vm_push(vm);
-        if (top)
-            *top = script.stack_state[i];
+        for (size_t i = 0; i < script.stack_state->length; ++i)
+        {
+            aug_value* top = aug_vm_push(vm);
+            if (top)
+                *top = aug_array_at(script.stack_state, i);
+        }
     }
 }
 
 void aug_vm_unload_script(aug_vm& vm, aug_script& script)
 {
-    for (size_t i = 0; i < script.stack_state.size(); ++i)
-        aug_decref(&script.stack_state[i]);
+    // Unload the script state
+    if(script.stack_state != NULL)
+    {
+        for (size_t i = 0; i < script.stack_state->length; ++i)
+        {   
+            aug_value* value = aug_array_at_ptr(script.stack_state, i);
+            aug_decref(value);
+        }
+    }
 }
 
 void aug_vm_save_script(aug_vm& vm, aug_script& script)
 {
-    script.stack_state.clear();
+    script.stack_state = aug_array_decref(script.stack_state);
+    if(vm.stack_index > 0)
+        script.stack_state = aug_array_new(1);
+
     while (vm.stack_index > 0)
     {
         aug_value* top = aug_vm_pop(vm);
         if (top)
         {
             aug_incref(top);
-            script.stack_state.push_back(*top);
+            aug_array_push(script.stack_state, *top);
         }
     }
 }
@@ -3503,9 +3516,7 @@ void aug_vm_execute(aug_vm& vm)
             {
                 const int delta = aug_vm_read_int(vm);
                 for(int i = 0; i < delta; ++i)
-                {
                     aug_decref(aug_vm_pop(vm));
-                }
                 break;
             }
             case AUG_OPCODE_PUSH_CALL_FRAME:
@@ -3529,9 +3540,7 @@ void aug_vm_execute(aug_vm& vm)
                 // Free locals
                 const int delta = aug_vm_read_int(vm);
                 for(int i = 0; i < delta; ++i)
-                {
                     aug_decref(aug_vm_pop(vm));
-                }
                 
                 // Restore base index
                 aug_value* ret_base = aug_vm_pop(vm);
@@ -3622,7 +3631,7 @@ void aug_vm_execute(aug_vm& vm)
 
 #if AUG_DEBUG_VM
         printf("OP:   %s\n", aug_opcode_labels[(int)opcode]);
-        for(int i = 0; i < 16; ++i)
+        for(size_t i = 0; i < 16; ++i)
         {
             aug_value val = vm.stack[i];
             printf("%s %d: %s ", (vm.stack_index-1) == i ? ">" : " ", i, aug_value_type_labels[(int)val.type]);
@@ -3642,7 +3651,7 @@ void aug_vm_execute(aug_vm& vm)
     }
 }
 
-aug_value aug_vm_execute_from_frame(aug_vm& vm, int func_addr, const aug_std_array<aug_value>& args)
+aug_value aug_vm_execute_from_frame(aug_vm& vm, int func_addr, int argc, aug_value* args)
 {
     // Manually set expected call frame
     aug_vm_push_call_frame(vm, AUG_OPCODE_INVALID);
@@ -3650,8 +3659,7 @@ aug_value aug_vm_execute_from_frame(aug_vm& vm, int func_addr, const aug_std_arr
     // Jump to function call
     vm.instruction = vm.bytecode + func_addr;
 
-    const size_t arg_count = args.size();
-    for (size_t i = 0; i < arg_count; ++i)
+    for (int i = 0; i < argc; ++i)
     {
         aug_value* value = aug_vm_push(vm);
         if (value)
@@ -3701,9 +3709,6 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
             for (aug_ast* stmt : children)
                 aug_ast_to_ir(vm, stmt, ir);
 
-            // Restore stack
-            //const aug_ir_operand delta = aug_ir_operand_from_int(aug_ir_current_scope_local_offset(ir));
-            //aug_ir_add_operation(ir, AUG_OPCODE_DEC_STACK, delta);
             aug_ir_add_operation(ir, AUG_OPCODE_EXIT);
 
             aug_ir_pop_frame(ir); // pop global frame
@@ -4059,7 +4064,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
 
             // Check if the symbol is a registered function
             int func_index = -1;
-            for (int i = 0; i < (int)vm.external_function_names.size(); ++i)
+            for (size_t i = 0; i < vm.external_function_names.size(); ++i)
             {
                 if (aug_string_equal(vm.external_function_names[i], token_data))
                 {
@@ -4208,17 +4213,22 @@ aug_script aug_script_new()
 {
     aug_script script;
     script.bytecode = NULL;
+    script.stack_state = NULL;
     return script;
 }
 
 void aug_script_delete(aug_script& script)
 {
-    for (size_t i = 0; i < script.stack_state.size(); ++i)
+    if(script.stack_state != NULL)
     {
-        aug_decref(&script.stack_state[i]);
+        for (size_t i = 0; i < script.stack_state->length; ++i)
+        {
+            aug_value* value = aug_array_at_ptr( script.stack_state, i );
+            aug_decref(value);
+        }
     }
+    script.stack_state = aug_array_decref(script.stack_state);
 
-    script.stack_state.clear();
     script.globals.clear();
     script.bytecode = aug_string_decref(script.bytecode);
 }
@@ -4248,7 +4258,7 @@ void aug_startup(aug_vm& vm, aug_error_callback* error_callback)
     vm.error_callback = NULL;
     vm.external_functions.clear();
     vm.external_function_names.clear();
-    for(int i = 0; i < AUG_STACK_SIZE; ++i)
+    for(size_t i = 0; i < AUG_STACK_SIZE; ++i)
         vm.stack[i] = aug_none();
 
     // Initialize
@@ -4271,7 +4281,7 @@ void aug_shutdown(aug_vm& vm)
 void aug_register(aug_vm& vm, const char* func_name, aug_function_callback *callback)
 {
     aug_string* func_name_string = aug_string_create(func_name);
-    for (int i = 0; i < (int)vm.external_functions.size(); ++i)
+    for (size_t i = 0; i < vm.external_functions.size(); ++i)
     {
         if (vm.external_functions[i] == NULL)
         {
@@ -4286,7 +4296,7 @@ void aug_register(aug_vm& vm, const char* func_name, aug_function_callback *call
 
 void aug_unregister(aug_vm& vm, const char* func_name)
 {
-    for (int i = 0; i < (int)vm.external_functions.size(); ++i)
+    for (size_t i = 0; i < vm.external_functions.size(); ++i)
     {
         if (aug_string_bytes_equal(vm.external_function_names[i], func_name))
         {
@@ -4362,7 +4372,7 @@ void aug_unload(aug_vm& vm, aug_script& script)
     aug_vm_unload_script(vm, script);
 }
 
-aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name, const aug_std_array<aug_value>& args)
+aug_value aug_call_args(aug_vm& vm, aug_script& script, const char* func_name, int argc, aug_value* args)
 {
     aug_value ret_value = aug_none();
     if (script.bytecode == NULL)
@@ -4390,9 +4400,9 @@ aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name, const 
             return ret_value;
         }
     }
-    if (symbol.argc != (int)args.size())
+    if (symbol.argc != argc)
     {
-        AUG_LOG_ERROR(vm.error_callback, "Function %s passed %d arguments, expected %d", func_name, (int)args.size(), symbol.argc);
+        AUG_LOG_ERROR(vm.error_callback, "Function %s passed %d arguments, expected %d", func_name, argc, symbol.argc);
         return ret_value;
     }
 
@@ -4401,7 +4411,7 @@ aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name, const 
 
     // Setup base index to be current stack index
     const int func_addr = symbol.offset;
-    ret_value = aug_vm_execute_from_frame(vm, func_addr, args);
+    ret_value = aug_vm_execute_from_frame(vm, func_addr, argc, args);
 
     aug_vm_save_script(vm, script);
     aug_vm_shutdown(vm);
@@ -4411,8 +4421,7 @@ aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name, const 
 
 aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name)
 {
-    const aug_std_array<aug_value> args;
-    return aug_call(vm, script, func_name, args);
+    return aug_call_args(vm, script, func_name, 0, NULL);
 }
 
 aug_value aug_from_bool(bool data)

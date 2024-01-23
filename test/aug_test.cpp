@@ -125,7 +125,7 @@ std::string to_string(const aug_value& value)
         std::string str = "[ ";
 		if(value.array)
 		{
-			for( int i = 0; i < value.array->length; ++i)
+			for( size_t i = 0; i < value.array->length; ++i)
 			{
 				const aug_value& entry = aug_array_at(value.array, i);
 				str += to_string(entry);
@@ -169,7 +169,7 @@ void print(const aug_value& value)
 		printf("[ ");
 		if(value.array)
 		{
-			for( int i = 0; i < value.array->length; ++i)
+			for( size_t i = 0; i < value.array->length; ++i)
 			{
 				const aug_value& entry = aug_array_at(value.array, i);
 				print(entry);
@@ -204,7 +204,7 @@ float sum(const aug_value& value, aug_value_type& type)
 		float  total = 0;
 		if(value.array)
 		{
-			for( int i = 0; i < value.array->length; ++i)
+			for( size_t i = 0; i < value.array->length; ++i)
 			{
 				const aug_value& entry = aug_array_at(value.array, i);
 				total += sum(entry, type);
@@ -268,7 +268,7 @@ void aug_test_native(aug_vm& vm)
 		args.push_back(aug_from_int(5));
 		//args.push_back(aug_from_int(30));
 
-		aug_value value = aug_call(vm, script, "fibonacci", args);
+		aug_value value = aug_call_args(vm, script, "fibonacci", args.size(), args.data());
 		
 		bool success = value.i == 5;
 		//bool success = value.i == 832040;
@@ -280,7 +280,7 @@ void aug_test_native(aug_vm& vm)
 		aug_std_array<aug_value> args;
 		args.push_back(aug_from_int(n));
 
-		aug_value value = aug_call(vm, script, "count", args);
+		aug_value value = aug_call_args(vm, script, "count", args.size(), args.data());
 		
 		bool success = value.i == n;
 		const std::string message = "count = " + to_string(value);

@@ -13,3 +13,4 @@ valgrind  --main-stacksize=1048576 --tool=memcheck --leak-check=full \
 --test ../examples/test_stackoverflow  \
 --test ../examples/test_array          \
 --test_native ../examples/test_native  \
+--test_game ../examples/test_game  \
