@@ -38,14 +38,6 @@ SOFTWARE. */
     - Create bespoke hashmap symtable.
     - Implement objects 
 */
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#ifndef __AUG_HEADER__
-#define __AUG_HEADER__
-
-#define AUG_DEBUG_VM 0 // for console debug
 
 // Size of the virtual machine's value stack 
 #ifndef AUG_STACK_SIZE
@@ -150,13 +142,10 @@ typedef enum aug_value_type
     AUG_NONE,
 } aug_value_type;
 
-#if defined(AUG_IMPLEMENTATION)
 const char* aug_value_type_labels[] =
 {
     "bool", "char", "int", "float", "string", "array", "object", "none"
 };
-static_assert(sizeof(aug_value_type_labels) / sizeof(aug_value_type_labels[0]) == (int)AUG_NONE + 1, "Type labels must be up to date with enum");
-#endif //AUG_IMPLEMENTATION
 
 // Values instance 
 typedef struct aug_value
@@ -175,14 +164,6 @@ typedef struct aug_value
 } aug_value;
 
 aug_value aug_none();
-bool aug_get_bool(const aug_value* value);
-int aug_get_int(const aug_value* value);
-float aug_get_float(const aug_value* value);
-aug_value aug_from_bool(bool data);
-aug_value aug_from_int(int data);
-aug_value aug_from_char(char data);
-aug_value aug_from_float(float data);
-aug_value aug_from_string(const char* data);
 
 // Symbol types
 typedef enum aug_symbol_type
@@ -2609,39 +2590,41 @@ aug_value aug_none()
     return value;
 }
 
-bool aug_get_bool(const aug_value* value)
+bool aug_condition(const aug_value* value)
 {
     if(value == NULL)
         return false;
 
-    switch (value->type)
+    return aug_get_bool(*value);
+}
+
+bool aug_get_bool(const aug_value& value)
+{
+    switch (value.type)
     {
     case AUG_NONE:
         return false;
     case AUG_BOOL:
-        return value->b;
+        return value.b;
     case AUG_INT:
-        return value->i != 0;
+        return value.i != 0;
     case AUG_CHAR:
-        return value->c != 0;
+        return value.c != 0;
     case AUG_FLOAT:
-        return value->f != 0.0f;
+        return value.f != 0.0f;
     case AUG_STRING:
-        return value->str != NULL;
+        return value.str != NULL;
     case AUG_OBJECT:
-        return value->obj != NULL;
+        return value.obj != NULL;
     case AUG_ARRAY:
-        return value->array != NULL;
+        return value.array != NULL;
     }
     return false;
 }
 
-int aug_get_int(const aug_value* value)
-{    
-    if(value == NULL)
-        return false;
-
-    switch (value->type)
+int aug_get_int(const aug_value& value)
+{
+    switch (value.type)
     {
     case AUG_NONE:
     case AUG_STRING:
@@ -2649,23 +2632,20 @@ int aug_get_int(const aug_value* value)
     case AUG_ARRAY:
         return 0;
     case AUG_BOOL:
-        return value->b ? 1 : 0;
+        return value.b ? 1 : 0;
     case AUG_INT:
-        return value->i;
+        return value.i;
     case AUG_CHAR:
-        return (int)value->c;
+        return (int)value.c;
     case AUG_FLOAT:
-        return (int)value->f;
+        return (int)value.f;
     }
     return 0;
 }
 
-float aug_get_float(const aug_value* value)
+float aug_get_float(const aug_value& value)
 {
-    if(value == NULL)
-        return false;
-
-    switch (value->type)
+    switch (value.type)
     {
     case AUG_NONE:
     case AUG_STRING:
@@ -2673,13 +2653,13 @@ float aug_get_float(const aug_value* value)
     case AUG_ARRAY:
        return 0.0f;
     case AUG_BOOL:
-        return value->b ? 1.0f : 0.0f;
+        return value.b ? 1.0f : 0.0f;
     case AUG_INT:
-        return (float)value->i;
+        return (float)value.i;
     case AUG_CHAR:
-        return (float)value->c;
+        return (float)value.c;
     case AUG_FLOAT:
-        return value->f;
+        return value.f;
     }
     return 0.0f;
 }
@@ -2767,7 +2747,7 @@ inline bool aug_get_element(aug_value* container, aug_value* index, aug_value* e
     if(container == NULL || index == NULL || element == NULL)
         return false;
 
-    int i = aug_get_int(index);
+    int i = aug_get_int(*index);
     if(i < 0)
         return false;
 
@@ -2775,7 +2755,8 @@ inline bool aug_get_element(aug_value* container, aug_value* index, aug_value* e
     {
     case AUG_STRING:
     {
-        *element = aug_from_char(aug_string_at(container->str, i));
+        char c = aug_string_at(container->str, i);
+        aug_set_char(element, c);
         return true;
     }
     case AUG_ARRAY:
@@ -3015,12 +2996,12 @@ inline bool aug_approxeq(aug_value* result, aug_value* lhs, aug_value* rhs)
 
 inline bool aug_and(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
-    return aug_set_bool(result, aug_get_bool(lhs) && aug_get_bool(rhs));
+    return aug_set_bool(result, aug_condition(lhs) && aug_condition(rhs));
 }
 
 inline bool aug_or(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
-    return aug_set_bool(result, aug_get_bool(lhs) || aug_get_bool(rhs));
+    return aug_set_bool(result, aug_condition(lhs) || aug_condition(rhs));
 }
 
 #undef AUG_DEFINE_BINOP
@@ -3037,30 +3018,6 @@ union aug_vm_bytecode_value
     unsigned char bytes[sizeof(float)]; //Used to access raw byte data to bool, float and int types
 };
 
-static_assert(sizeof(float) >= sizeof(int), "Ensure bytes array has enough space to contain both int and float data types");
-
-#define AUG_VM_ERROR(vm, ...)                         \
-{                                                     \
-    AUG_LOG_ERROR(vm->error_callback, __VA_ARGS__);    \
-    vm->valid = false;                                 \
-    vm->instruction = NULL;                            \
-}
-
-#define AUG_VM_UNOP_ERROR(vm, arg, op)                              \
-{                                                                   \
-    AUG_VM_ERROR(vm, "%s %s not defined",                           \
-        op,                                                         \
-        arg ? aug_value_type_labels[(int)arg->type] : "(null)");    \
-}
-
-#define AUG_VM_BINOP_ERROR(vm, lhs, rhs, op)                        \
-{                                                                   \
-    AUG_VM_ERROR(vm, "%s %s %s not defined",                        \
-        lhs ? aug_value_type_labels[(int)lhs->type] : "(null)",     \
-        op,                                                         \
-        rhs ? aug_value_type_labels[(int)rhs->type] : "(null)")     \
-}
-
 inline aug_value* aug_vm_top(aug_vm* vm)
 {
     return &vm->stack[vm->stack_index -1];
@@ -3070,9 +3027,7 @@ inline aug_value* aug_vm_push(aug_vm* vm)
 {
     if(vm->stack_index >= AUG_STACK_SIZE)
     {                                              
-        if(vm->valid)
-            AUG_VM_ERROR(vm, "Stack overflow");      
-        return NULL;                           
+              return NULL;                           
     }
     aug_value* top = &vm->stack[vm->stack_index++];
     return top;
@@ -3088,15 +3043,10 @@ inline aug_value* aug_vm_pop(aug_vm* vm)
 inline aug_value* aug_vm_get_global(aug_vm* vm, int stack_offset)
 {
     if(stack_offset < 0)
-    {
-        if(vm->instruction)
-            AUG_VM_ERROR(vm, "Stack underflow");
         return NULL;
-    }
     else if(stack_offset >= AUG_STACK_SIZE)
     {
-        if(vm->instruction)
-            AUG_VM_ERROR(vm, "Stack overflow");
+        if(vm->instruction) printf("Stack overflow");
         return NULL;
     }
 
@@ -3169,7 +3119,6 @@ void aug_vm_startup(aug_vm* vm)
     vm->instruction = NULL;
     vm->stack_index = 0;
     vm->base_index = 0;
-    vm->valid = false; 
 }
 
 void aug_vm_shutdown(aug_vm* vm)
@@ -3196,7 +3145,6 @@ void aug_vm_load_script(aug_vm* vm, const aug_script* script)
         vm->bytecode = script->bytecode;
     
     vm->instruction = vm->bytecode;
-    vm->valid = (vm->bytecode != NULL);
 
     // Load the script state
     if(script->stack_state != NULL)
@@ -3364,7 +3312,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value value;
                 if(!aug_get_element(container, index_expr, &value))    
                 {
-                    AUG_VM_ERROR(vm, "Index error"); // TODO: more descriptive
+                    vm.instruction = NULL;
                     break;  
                 }
 
@@ -3392,148 +3340,25 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* top = aug_vm_pop(vm);
                 aug_move(local, top);
                 break;
-            }            
-            case AUG_OPCODE_ADD:
-            {
-                aug_value* rhs = aug_vm_pop(vm);
-                aug_value* lhs = aug_vm_pop(vm);
-                aug_value* target = aug_vm_push(vm);    
-                if(!aug_add(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "+");
-                break;
-            }
-            case AUG_OPCODE_SUB:
-            {
-                aug_value* rhs = aug_vm_pop(vm);
-                aug_value* lhs = aug_vm_pop(vm);
-                aug_value* target = aug_vm_push(vm);    
-                if(!aug_sub(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "-");
-                break;
-            }
-            case AUG_OPCODE_MUL:
-            {
-                aug_value* rhs = aug_vm_pop(vm);
-                aug_value* lhs = aug_vm_pop(vm);
-                aug_value* target = aug_vm_push(vm);    
-                if(!aug_mul(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "*");
-                break;
-            }
-            case AUG_OPCODE_DIV:
-            {
-                aug_value* rhs = aug_vm_pop(vm);
-                aug_value* lhs = aug_vm_pop(vm);
-                aug_value* target = aug_vm_push(vm);    
-                if(!aug_div(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "/");
-                break;
-            }
-            case AUG_OPCODE_POW:
-            {
-                aug_value* rhs = aug_vm_pop(vm);
-                aug_value* lhs = aug_vm_pop(vm);
-                aug_value* target = aug_vm_push(vm);
-                if(!aug_pow(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "^");
-                break;
-            }
-            case AUG_OPCODE_MOD:
-            {
-                aug_value* rhs = aug_vm_pop(vm);
-                aug_value* lhs = aug_vm_pop(vm);
-                aug_value* target = aug_vm_push(vm);
-                if(!aug_mod(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "%%");
-                break;
-            }
+            }   
+
+#define VM_BINOP(a, b)\         
+case AUG_OPCODE_##a:{\
+    aug_value* rhs = aug_vm_pop(vm);\
+    aug_value* lhs = aug_vm_pop(vm);\
+    aug_value* target = aug_vm_push(vm);\
+    if(!aug_##b(target, lhs, rhs)) vm.instruction = NULL;\
+    break;}
+            VM_BINOP(ADD, add) VM_BINOP(SUB, sub)  VM_BINOP(MUL, mul)  VM_BINOP(DIV, div) 
+            VM_BINOP(POW, pow) VM_BINOP(MOD, mod) VM_BINOP(LT, lt) VM_BINOP(LTE, lte)
+            VM_BINOP(GT, gt) VM_BINOP(GTE, gte) VM_BINOP(EQ, eq) VM_BINOP(NEQ, neq) VM_BINOP(APPROXEQ, approxeq) VM_BINOP(AND, and) VM_BINOP(OR, or)
+
             case AUG_OPCODE_NOT:
             {
                 aug_value* arg = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
-                if(!aug_set_bool(target, !aug_get_bool(arg)))
-                    AUG_VM_UNOP_ERROR(vm, arg, "!");
-                break;
-            }
-            case AUG_OPCODE_AND:
-            {
-                aug_value* rhs = aug_vm_pop(vm);
-                aug_value* lhs = aug_vm_pop(vm);
-                aug_value* target = aug_vm_push(vm);
-                if(!aug_and(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "&");
-                break;
-            }
-            case AUG_OPCODE_OR:
-            {
-                aug_value* rhs = aug_vm_pop(vm);
-                aug_value* lhs = aug_vm_pop(vm);
-                aug_value* target = aug_vm_push(vm);
-                if(!aug_or(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "|");
-                break;
-            }
-            case AUG_OPCODE_LT:
-            {
-                aug_value* rhs = aug_vm_pop(vm);
-                aug_value* lhs = aug_vm_pop(vm);
-                aug_value* target = aug_vm_push(vm);
-                if(!aug_lt(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "<");
-                break;
-            }
-            case AUG_OPCODE_LTE:
-            {
-                aug_value* rhs = aug_vm_pop(vm);
-                aug_value* lhs = aug_vm_pop(vm);
-                aug_value* target = aug_vm_push(vm);
-                if(!aug_lte(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "<=");
-                break;
-            }
-            case AUG_OPCODE_GT:
-            {
-                aug_value* rhs = aug_vm_pop(vm);
-                aug_value* lhs = aug_vm_pop(vm);
-                aug_value* target = aug_vm_push(vm);
-                if(!aug_gt(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, ">");
-                break;
-            }
-            case AUG_OPCODE_GTE:
-            {
-                aug_value* rhs = aug_vm_pop(vm);
-                aug_value* lhs = aug_vm_pop(vm);
-                aug_value* target = aug_vm_push(vm);
-                if(!aug_gte(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, ">=");
-                break;
-            }
-            case AUG_OPCODE_EQ:
-            {
-                aug_value* rhs = aug_vm_pop(vm);
-                aug_value* lhs = aug_vm_pop(vm);
-                aug_value* target = aug_vm_push(vm);
-                if(!aug_eq(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "==");
-                break;
-            }
-            case AUG_OPCODE_NEQ:
-            {
-                aug_value* rhs = aug_vm_pop(vm);
-                aug_value* lhs = aug_vm_pop(vm);
-                aug_value* target = aug_vm_push(vm);
-                if(!aug_neq(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "!=");
-                break;
-            }
-            case AUG_OPCODE_APPROXEQ:
-            {
-                aug_value* rhs = aug_vm_pop(vm);
-                aug_value* lhs = aug_vm_pop(vm);
-                aug_value* target = aug_vm_push(vm);
-                if(!aug_approxeq(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "~=");
+                if(!aug_set_bool(target, !aug_condition(arg)))
+                    vm.instruction = NULL;
                 break;
             }
             case AUG_OPCODE_JUMP:
@@ -3546,7 +3371,7 @@ void aug_vm_execute(aug_vm* vm)
             {
                 const int instruction_offset = aug_vm_read_int(vm);
                 aug_value* top = aug_vm_pop(vm);
-                if(aug_get_bool(top) != 0)
+                if(aug_condition(top) != 0)
                     vm->instruction = vm->bytecode + instruction_offset;
                 aug_decref(top);
                 break;
@@ -3555,7 +3380,7 @@ void aug_vm_execute(aug_vm* vm)
             {
                 const int instruction_offset = aug_vm_read_int(vm);
                 aug_value* top = aug_vm_pop(vm);
-                if(aug_get_bool(top) == 0)
+                if(aug_condition(top) == 0)
                     vm->instruction = vm->bytecode + instruction_offset;
                 aug_decref(top);
                 break;
@@ -4477,43 +4302,6 @@ aug_value aug_call(aug_vm* vm, aug_script* script, const char* func_name)
     return aug_call_args(vm, script, func_name, 0, NULL);
 }
 
-aug_value aug_from_bool(bool data)
-{
-    aug_value value;
-    aug_set_bool(&value, data);
-    return value;
-}
-
-aug_value aug_from_int(int data)
-{
-    aug_value value;
-    aug_set_int(&value, data);
-    return value;
-}
-
-aug_value aug_from_char(char data)
-{
-    aug_value value;
-    aug_set_char(&value, data);
-    return value;
-}
-
-aug_value aug_from_float(float data)
-{
-    aug_value value;
-    aug_set_float(&value, data);
-    return value;
-}
-
-aug_value aug_from_string(const char* data)
-{
-    aug_value value;
-    aug_set_string(&value, data);
-    return value;
-}
-
-// ------------------------------- Data Structures --------------------------------//
-
 aug_string* aug_string_new(size_t size) 
 {
 	aug_string* string = AUG_ALLOC(aug_string);
@@ -4606,8 +4394,6 @@ aug_string* aug_string_decref(aug_string* string)
     }
     return string;
 }
-
-// -------------------------------- Array ----------------------------------------------------//
                  
 aug_array* aug_array_new(size_t size)
 {                
@@ -4668,8 +4454,6 @@ aug_value* aug_array_back(const aug_array* array)
 {
 	return array->length > 0 ? &array->buffer[array->length-1] : NULL; 
 }
-
-// ------------------------------- Generic Containers ------------------------------------//
 
 aug_container aug_container_new(size_t size)
 { 
@@ -4803,8 +4587,19 @@ aug_symbol aug_symtable_get_bytes(aug_symtable* symtable, const char* name)
     return symbol;
 }
 
-#ifdef __cplusplus
-} // extern C
-#endif
+aug_value print(int argc, const aug_value* args)
+{
+	for( int i = 0; i < argc; ++i)
+		print(args[i]);
+	printf("\n");
+	return aug_none();
+}
 
-#endif //AUG_IMPLEMENTATION
+int aug_test(int argc, char** argv)
+{
+	aug_vm* vm = aug_startup(aug_error);
+	aug_register(vm, "print", print);
+	while(argc-->1) aug_execute(vm, ++argv);
+	aug_shutdown(vm);
+	return 0;
+}

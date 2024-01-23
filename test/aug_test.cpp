@@ -246,7 +246,7 @@ aug_value expect(int argc, const aug_value* args)
 	if (argc == 0)
 		return aug_none();
 
-	bool success = aug_get_bool(args[0]);
+	bool success = aug_get_bool(&args[0]);
 	std::string message;
 	for( int i = 1; i < argc; ++i)
 		message += to_string(args[i]);
