@@ -158,13 +158,17 @@ void dump_ast(aug_ast* root)
 	dump_ast_tree(root, "", false);
 }
 
-void dump_ir(const aug_ir& ir)
+void dump_ir(aug_ir* ir)
 {
 	printf("Bytecode\n");
-	for(const aug_ir_operation& operation : ir.operations)
-	{
-		printf("%d\t\t%s", (int)operation.bytecode_offset, aug_opcode_labels[(int)operation.opcode]);
-		aug_ir_operand operand = operation.operand;
+
+    size_t i;
+   	for(i = 0; i < ir->operations.length; ++i)
+    {
+        aug_ir_operation* operation = (aug_ir_operation*)aug_container_at(&ir->operations, i);
+
+		printf("%d\t\t%s", (int)operation->bytecode_offset, aug_opcode_labels[(int)operation->opcode]);
+		aug_ir_operand operand = operation->operand;
 		switch (operand.type)
 		{
 		case AUG_IR_OPERAND_BOOL:
@@ -201,13 +205,12 @@ void aug_dump_file(aug_vm vm, const char* filename)
 	dump_ast(root);
 
 	// Generate IR
-	aug_ir ir;
-    aug_ir_init(ir, input);
+	aug_ir ir = aug_ir_new(input);
 	aug_ast_to_ir(vm, root, ir);
 
-	dump_ir(ir);
+	dump_ir(&ir);
 
-	// Cleanup
 	aug_ast_delete(root);
+	aug_ir_delete(&ir);
 	aug_input_close(input);
 }
