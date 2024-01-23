@@ -368,13 +368,11 @@ typedef struct
 aug_container* aug_container_new(size_t size);
 void aug_container_incref(aug_container* array);
 aug_container* aug_container_decref (aug_container* array);
-bool aug_container_index_valid(aug_array* array, size_t index);
 void  aug_container_resize(aug_container* array, size_t size);
 void aug_container_push(aug_container* array, void* data);
 void* aug_container_pop (aug_container* array);
 void* aug_container_at(const aug_container* array, size_t index);
 void* aug_container_back(const aug_container* array);
-
 
 #ifdef __cplusplus
 } // extern C
@@ -1364,7 +1362,7 @@ inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_container* op_stack, aug_co
         binaryop->children[(op_argc-1) - i] = expr; // add in reverse
     }
 
-    (aug_ast*)aug_container_push(expr_stack) = binaryop; 
+    aug_container_push(expr_stack, binaryop); 
     free(next_op);
     return true;
 }
@@ -1384,7 +1382,7 @@ inline aug_ast* aug_parse_expr(aug_lexer* lexer)
             // left associate by default (for right, <= becomes <)
             while(op_stack->length)
             {
-                aug_token* next_op = (aug_token*)aug_container_back(op_stack));
+                aug_token* next_op = (aug_token*)aug_container_back(op_stack);
 
                 if(next_op->detail->prec < op.detail->prec)
                     break;
@@ -1393,7 +1391,8 @@ inline aug_ast* aug_parse_expr(aug_lexer* lexer)
             }
             aug_token* new_op = (aug_token* ) malloc(sizeof(aug_token*));
             *new_op = op;
-            (aug_token*)aug_container_push(op_stack) = new_op;
+            
+            aug_container_push(op_stack, new_op);
             aug_lexer_move(lexer);
         }
         else
@@ -1426,7 +1425,7 @@ inline aug_ast* aug_parse_expr(aug_lexer* lexer)
         while(op_stack->length > 0)
         {
             aug_token* token = (aug_token*) aug_container_pop(op_stack);
-            aug_token_reset(&token);
+            aug_token_reset(token);
             free(token);
         }
         while(expr_stack->length > 0)
@@ -4725,11 +4724,6 @@ aug_container* aug_container_decref(aug_container* array)
     }
     return array;
 } 
-
-bool aug_container_index_valid(aug_container* array, size_t index)    
-{
-    return index >= 0 && index < array->length;
-}
 
 void aug_container_reserve(aug_container* array, size_t size)    
 {
