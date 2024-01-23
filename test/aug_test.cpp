@@ -1,12 +1,13 @@
 #define AUG_LOG_VERBOSE
 #include <aug.h>
 
-#include <string.h>
+#include <string>
+#include <cstring>
 
-void aug_dump_file(aug_vm vm, const char* filename);
+void aug_dump_file(aug_vm* vm, const char* filename);
 
 struct aug_tester;
-typedef void(aug_tester_func)(aug_vm&);
+typedef void(aug_tester_func)(aug_vm*);
 
 #ifdef __linux__
 	#define STDOUT_RED(txt)   "\u001b[31m" txt "\u001b[0m"
@@ -55,7 +56,7 @@ public:
 			printf("[TEST]\t%s\n", filename.c_str());
 	}
 
-	void run(aug_vm& vm, aug_tester_func* func = nullptr)
+	void run(aug_vm* vm, aug_tester_func* func = nullptr)
 	{
 		if (dump)
 			aug_dump_file(vm, filename.c_str());
@@ -255,20 +256,19 @@ aug_value expect(int argc, const aug_value* args)
 	return aug_none();
 }
 
-void aug_test_native(aug_vm& vm)
+void aug_test_native(aug_vm* vm)
 {
-	aug_script script = aug_script_new();
+	aug_script* script = aug_script_new();
 	aug_compile(vm, script, aug_tester::get().filename.c_str());
 	
 	// store script state into VM
 	aug_load(vm, script);
 
 	{	
-		aug_std_array<aug_value> args;
-		args.push_back(aug_from_int(5));
-		//args.push_back(aug_from_int(30));
+		aug_value args[1];
+		args[0] = aug_from_int(5);
 
-		aug_value value = aug_call_args(vm, script, "fibonacci", args.size(), args.data());
+		aug_value value = aug_call_args(vm, script, "fibonacci", 1, &args[0]);
 		
 		bool success = value.i == 5;
 		//bool success = value.i == 832040;
@@ -277,10 +277,10 @@ void aug_test_native(aug_vm& vm)
 	}
 	{
 		const int n = 5000;
-		aug_std_array<aug_value> args;
-		args.push_back(aug_from_int(n));
+		aug_value args[1];
+		args[0] = aug_from_int(n);
 
-		aug_value value = aug_call_args(vm, script, "count", args.size(), args.data());
+		aug_value value = aug_call_args(vm, script, "count", 1, &args[0]);
 		
 		bool success = value.i == n;
 		const std::string message = "count = " + to_string(value);
@@ -293,9 +293,9 @@ void aug_test_native(aug_vm& vm)
 
 }
 
-void aug_test_gameloop(aug_vm& vm)
+void aug_test_gameloop(aug_vm* vm)
 {	
-	aug_script script = aug_script_new();
+	aug_script* script = aug_script_new();
 	aug_compile(vm, script, aug_tester::get().filename.c_str());
 	aug_load(vm, script);
 
@@ -316,8 +316,7 @@ void aug_error(const char* msg)
 
 int aug_test(int argc, char** argv)
 {
-	aug_vm vm;
-	aug_startup(vm, aug_error);
+	aug_vm* vm = aug_startup(aug_error);
 	
 	aug_register(vm, "print", print);
 	aug_register(vm, "expect", expect);

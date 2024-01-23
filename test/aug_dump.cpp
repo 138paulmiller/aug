@@ -2,10 +2,11 @@
 #define AUG_LOG_VERBOSE
 #define AUG_DEBUG
 #include <aug.h>
+#include <string>
 
 void dump_token(aug_token* token)
 {
-	printf("\tCURR: %s (%s) %d:%d\n", 
+	printf("\tCURR: %s (%s) %ld:%ld\n", 
 		token->detail ? token->detail->label : "", 
 		token->data ? token->data->buffer : "", 
 		token->pos.line, 
@@ -18,7 +19,7 @@ void dump_lexer(const char* filename)
 	return;
 	printf("Tokens \n");
 
-	aug_input* input = aug_input_open(filename, nullptr, true);
+	aug_input* input = aug_input_open(filename, nullptr);
 
 	aug_lexer* lexer = aug_lexer_new(input);
 	while (lexer && aug_lexer_move(lexer) && lexer->curr.id != AUG_TOKEN_END)
@@ -146,7 +147,12 @@ void dump_ast_tree(const aug_ast* node, std::string prefix, bool is_leaf)
 		case AUG_AST_PARAM:
 		case AUG_AST_VARIABLE:
 		case AUG_AST_LITERAL:
-			printf("%s\n", token.data->buffer);
+			if(token.id == AUG_TOKEN_TRUE)
+				printf("true\n");
+			else if(token.id == AUG_TOKEN_FALSE)
+				printf("false\n");
+			else
+				printf("%s\n", token.data->buffer);
 			break;
 	}
 }
@@ -193,13 +199,13 @@ void dump_ir(aug_ir* ir)
 	}
 }
 
-void aug_dump_file(aug_vm vm, const char* filename)
+void aug_dump_file(aug_vm* vm, const char* filename)
 {
 	printf("----------%s------------\n", filename);
 
 	dump_lexer(filename);
 
-	aug_input* input = aug_input_open(filename, vm.error_callback, true);
+	aug_input* input = aug_input_open(filename, vm->error_callback);
 	aug_ast* root = aug_parse(vm, input);
 
 	dump_ast(root);
