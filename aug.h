@@ -1167,7 +1167,7 @@ bool aug_lexer_move(aug_lexer* lexer)
 
 typedef enum aug_ast_id
 {
-    AUG_AST_ROOT,
+    AUG_AST_ROOT = 0,
     AUG_AST_BLOCK, 
     AUG_AST_STMT_EXPR,
     AUG_AST_STMT_DEFINE_VAR,
@@ -1942,9 +1942,13 @@ aug_ast* aug_parse_block(aug_lexer* lexer)
     }
     aug_lexer_move(lexer); // eat LBRACE
 
-    aug_ast* block = aug_ast_new(AUG_AST_BLOCK, aug_token_new());
-    while(aug_ast* stmt = aug_parse_stmt(lexer))
+    aug_ast* block = aug_ast_new(AUG_AST_BLOCK, aug_token_new());    
+    aug_ast* stmt = aug_parse_stmt(lexer);
+    while(stmt)
+    {
         aug_ast_add(block, stmt);
+        stmt = aug_parse_stmt(lexer);
+    }   
 
     if(lexer->curr.id != AUG_TOKEN_RBRACE)
     {
@@ -1965,8 +1969,12 @@ aug_ast* aug_parse_root(aug_lexer* lexer)
     aug_lexer_move(lexer); // move to first token
 
     aug_ast* root = aug_ast_new(AUG_AST_ROOT, aug_token_new());
-    while(aug_ast* stmt = aug_parse_stmt(lexer))
+    aug_ast* stmt = aug_parse_stmt(lexer);
+    while(stmt)
+    {
         aug_ast_add(root, stmt);
+        stmt = aug_parse_stmt(lexer);
+    }   
 
     if(root->children_size == 0)
     {
@@ -2095,8 +2103,9 @@ aug_ast* aug_parse(aug_vm* vm, aug_input* input)
 
 // Special value used in bytecode to denote an invalid vm offset
 #define AUG_OPCODE_INVALID -1
+#define aug_opcode_repr uint8_t
 
-typedef enum aug_opcode : uint8_t
+typedef enum aug_opcode
 { 
 #define AUG_OPCODE(opcode) AUG_OPCODE_##opcode,
 	AUG_OPCODE_LIST
@@ -2117,7 +2126,7 @@ static const char* aug_opcode_labels[] =
 
 // -------------------------------------- IR --------------------------------------------// 
 
-typedef enum aug_ir_operand_type : uint8_t
+typedef enum aug_ir_operand_type
 {
     // type if operand is constant or literal
     AUG_IR_OPERAND_NONE = 0,
@@ -2236,7 +2245,7 @@ inline size_t aug_ir_operation_size(const aug_ir_operation* operation)
 {
     if(operation == 0)
         return 0;
-    size_t size = sizeof(operation->opcode);
+    size_t size = sizeof(aug_opcode_repr);
     size += aug_ir_operand_size(operation->operand);
     return size;
 }
@@ -3251,9 +3260,7 @@ void aug_vm_execute(aug_vm* vm)
 
     while(vm->instruction)
     {
-        aug_opcode opcode = (aug_opcode) (*vm->instruction);
-        ++vm->instruction;
-
+        aug_opcode_repr opcode = (aug_opcode_repr)(*vm->instruction++);
         switch(opcode)
         {
             case AUG_OPCODE_NO_OP:
@@ -4238,7 +4245,7 @@ char* aug_ir_to_bytecode(aug_ir* ir)
         aug_ir_operand operand = operation->operand;
 
         // push operation opcode
-        *(instruction++) = (char)operation->opcode;
+        (*instruction++) = (aug_opcode_repr)operation->opcode;
 
         // push operation arguments
         switch (operand.type)
@@ -4259,6 +4266,8 @@ char* aug_ir_to_bytecode(aug_ir* ir)
             break;
         }
     }
+
+    assert((size_t) (instruction - bytecode) == ir->bytecode_offset);
     return bytecode;
 }
 

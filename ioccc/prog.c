@@ -222,10 +222,6 @@ void aug_execute(aug_vm* vm, const char* filename);
 bool aug_compile(aug_vm* vm, aug_script* script, const char* filename);
 aug_script* aug_script_new();
 void aug_script_delete(aug_script* script);
-void aug_load(aug_vm* vm, aug_script* script);
-void aug_unload(aug_vm* vm, aug_script* script);
-aug_value aug_call(aug_vm* vm, aug_script* script, const char* func_name);
-aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, int argc, aug_value* args);
 
 typedef struct aug_container
 {
@@ -260,52 +256,6 @@ typedef struct aug_input
     aug_pos pos_buffer[4];
     char c;
 }aug_input;
-
-inline void aug_input_error_hint(aug_input* input, const aug_pos* pos)
-{
-    assert(input != NULL && input->file != NULL);
-    
-    // save state
-    int curr_pos = ftell(input->file);
-
-    // go to line
-    fseek(input->file, pos->linepos, SEEK_SET);
-
-    char buffer[4096];
-    size_t n = 0;
-
-    char c = fgetc(input->file);
-    // skip leading whitespace
-    while(isspace(c))
-        c = fgetc(input->file);
-
-    while(c != EOF && c != '\n' && n < (int)(sizeof(buffer) / sizeof(buffer[0]) - 1))
-    {
-        buffer[n++] = c;
-        c = fgetc(input->file);
-    }
-    buffer[n] = '\0';
-
-    AUG_LOG_ERROR(input->error_callback, "Error %s:(%d,%d) ",
-        input->filename->buffer, pos->line + 1, pos->col + 1);
-
-    AUG_LOG_ERROR(input->error_callback, "%s", buffer);
-
-    // Draw arrow to the error if within buffer
-    if(pos->col < n-1)
-    {
-        size_t i;
-        for(i = 0; i < pos->col; ++i)
-            buffer[i] = ' ';
-        buffer[pos->col] = '^';
-        buffer[pos->col+1] = '\0';
-    }
-
-    AUG_LOG_ERROR(input->error_callback, "%s", buffer);
-
-    // restore state
-    fseek(input->file, curr_pos, SEEK_SET);
-}
 
 inline aug_pos* aug_input_pos(aug_input* input)
 {
@@ -376,7 +326,6 @@ aug_input* aug_input_open(const char* filename, aug_error_function* error_callba
     }
 
     aug_input* input = AUG_ALLOC(aug_input);
-    input->valid = true;
     input->error_callback = error_callback;
     input->file = file;
     input->filename = aug_string_create(filename);
@@ -580,26 +529,26 @@ void aug_lexer_delete(aug_lexer* lexer)
     AUG_FREE(lexer);
 }
 
-inline bool aug_lexer_tokenize_char(aug_lexer* lexer, aug_token& token)
+inline bool aug_lexer_tokenize_char(aug_lexer* lexer, aug_token* token)
 {
     char c = aug_input_get(lexer->input);
     assert(c == '\'');
 
-    token.id = AUG_TOKEN_CHAR;
-    token.data = aug_string_new(1);
+    token->id = AUG_TOKEN_CHAR;
+    token->data = aug_string_new(1);
 
     c = aug_input_get(lexer->input);
     if(c != '\'')
     {
-        aug_string_push(token.data, c);
+        aug_string_push(token->data, c);
         c = aug_input_get(lexer->input); // eat 
     }
     else
-        aug_string_push(token.data, 0);
+        aug_string_push(token->data, 0);
 
     if(c != '\'')
     {
-        token.data = aug_string_decref(token.data);        
+        token->data = aug_string_decref(token->data);        
         return false;
     }
     return true;
@@ -947,8 +896,8 @@ aug_token aug_lexer_tokenize(aug_lexer* lexer)
             default:
                 break;
         }
-        if(!allow_sign || !aug_lexer_tokenize_number(lexer, token))
-            aug_lexer_tokenize_symbol(lexer, token);
+        if(!allow_sign || !aug_lexer_tokenize_number(lexer, &token))
+            aug_lexer_tokenize_symbol(lexer, &token);
         break;
     }
     case '\"':
@@ -1770,8 +1719,13 @@ aug_ast* aug_parse_block(aug_lexer* lexer)
     aug_lexer_move(lexer); // eat LBRACE
 
     aug_ast* block = aug_ast_new(AUG_AST_BLOCK, aug_token_new());
-    while(aug_ast* stmt = aug_parse_stmt(lexer))
+    
+    aug_ast* stmt = aug_parse_stmt(lexer);
+    while(stmt)
+    {
         aug_ast_add(block, stmt);
+        stmt = aug_parse_stmt(lexer);
+    }   
 
     if(lexer->curr.id != AUG_TOKEN_RBRACE)
     {
@@ -1792,8 +1746,12 @@ aug_ast* aug_parse_root(aug_lexer* lexer)
     aug_lexer_move(lexer); // move to first token
 
     aug_ast* root = aug_ast_new(AUG_AST_ROOT, aug_token_new());
-    while(aug_ast* stmt = aug_parse_stmt(lexer))
+    aug_ast* stmt = aug_parse_stmt(lexer);
+    while(stmt)
+    {
         aug_ast_add(root, stmt);
+        stmt = aug_parse_stmt(lexer);
+    }   
 
     if(root->children_size == 0)
     {
@@ -1923,15 +1881,13 @@ aug_ast* aug_parse(aug_vm* vm, aug_input* input)
 // Special value used in bytecode to denote an invalid vm offset
 #define AUG_OPCODE_INVALID -1
 
-typedef enum aug_opcode : uint8_t
+typedef enum aug_opcode
 { 
 #define AUG_OPCODE(opcode) AUG_OPCODE_##opcode,
 	AUG_OPCODE_LIST
 #undef AUG_OPCODE
     AUG_OPCODE_COUNT
 }aug_opcode;
-
-static_assert(AUG_OPCODE_COUNT < 255, "AUG Opcode count too large. This will affect bytecode instruction set");
 
 static const char* aug_opcode_labels[] =
 {
@@ -2966,15 +2922,8 @@ void aug_vm_startup(aug_vm* vm)
 
 void aug_vm_shutdown(aug_vm* vm)
 {
-    //Cleanup stack values. Free any outstanding values
     while(vm->stack_index > 0)
-    {
         aug_decref(aug_vm_pop(vm));
-    }
-
-    // Ensure that stack has returned to beginning state
-    if(vm->stack_index != 0)
-        AUG_LOG_ERROR(vm->error_callback, "Virtual machine shutdown error. Invalid stack state");
 }
 
 void aug_vm_load_script(aug_vm* vm, const aug_script* script)
@@ -4076,73 +4025,6 @@ bool aug_compile(aug_vm* vm, aug_script* script, const char* filename)
     aug_input_close(input);
     
     return true;
-}
-
-void aug_load(aug_vm* vm, aug_script* script)
-{
-    aug_vm_load_script(vm, script);
-    aug_vm_execute(vm);
-    aug_vm_save_script(vm, script);
-}
-
-void aug_unload(aug_vm* vm, aug_script* script)
-{
-    aug_vm_unload_script(vm, script);
-}
-
-aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, int argc, aug_value* args)
-{
-    if(vm == NULL)
-        return aug_none();
-
-    aug_value ret_value = aug_none();
-    if(script->bytecode == NULL)
-        return ret_value;
-    
-    aug_symbol symbol = aug_symtable_get_bytes(script->globals, func_name);
-    if(symbol.type == AUG_SYM_NONE)
-    {
-        AUG_LOG_ERROR(vm->error_callback, "Function %s not defined", func_name);
-        return ret_value;
-    }
-
-    switch(symbol.type)
-    {
-        case AUG_SYM_FUNC:
-            break;
-        case AUG_SYM_VAR:
-        {
-            AUG_LOG_ERROR(vm->error_callback, "Can not call variable %s a function", func_name);
-            return ret_value;
-        }
-        default:
-        {
-            AUG_LOG_ERROR(vm->error_callback, "Symbol %s not defined as a function", func_name);
-            return ret_value;
-        }
-    }
-    if(symbol.argc != argc)
-    {
-        AUG_LOG_ERROR(vm->error_callback, "Function %s passed %d arguments, expected %d", func_name, argc, symbol.argc);
-        return ret_value;
-    }
-
-    aug_vm_startup(vm);
-    aug_vm_load_script(vm, script);
-
-    // Setup base index to be current stack index
-    const int func_addr = symbol.offset;
-    ret_value = aug_vm_execute_from_frame(vm, func_addr, argc, args);
-
-    aug_vm_save_script(vm, script);
-    aug_vm_shutdown(vm);
-
-    return ret_value;
-}
-
-aug_value aug_call(aug_vm* vm, aug_script* script, const char* func_name)
-{
-    return aug_call_args(vm, script, func_name, 0, NULL);
 }
 
 aug_string* aug_string_new(size_t size) 
