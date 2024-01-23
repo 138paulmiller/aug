@@ -2695,7 +2695,7 @@ float aug_get_float(const aug_value* value)
 
 inline void aug_decref(aug_value* value)
 {
-    if(value == nullptr)
+    if(value == NULL)
         return;
 
     switch (value->type)
@@ -2731,7 +2731,7 @@ inline void aug_decref(aug_value* value)
 
 inline void aug_incref(aug_value* value)
 {
-    if(value == nullptr)
+    if(value == NULL)
         return;
 
     switch (value->type)
@@ -3037,14 +3037,14 @@ inline bool aug_or(aug_value* result, aug_value* lhs, aug_value* rhs)
 // -------------------------------------- Virtual Machine / Bytecode ----------------------------------------------// 
 
 // Used to convert values to/from bytes for constant values
-union aug_vm_bytecode_value
+typedef union aug_vm_bytecode_value
 {
     bool b;
     int i;
     char c;
     float f;
     unsigned char bytes[sizeof(float)]; //Used to access raw byte data to bool, float and int types
-};
+} aug_vm_bytecode_value;
 
 static_assert(sizeof(float) >= sizeof(int), "Ensure bytes array has enough space to contain both int and float data types");
 
@@ -3787,7 +3787,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 {
                     assert(token_data && token_data->length == 1);
                     const char data = token_data->buffer[0];
-                    const aug_ir_operand& operand = aug_ir_operand_from_char(data);
+                    const aug_ir_operand operand = aug_ir_operand_from_char(data);
                     aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_CHAR, operand);
                     break;
                 }
@@ -3795,7 +3795,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 {
                     assert(token_data && token_data->length > 0);
                     const int data = strtol(token_data->buffer, NULL, 10);
-                    const aug_ir_operand& operand = aug_ir_operand_from_int(data);
+                    const aug_ir_operand operand = aug_ir_operand_from_int(data);
                     aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_INT, operand);
                     break;
                 }
@@ -3803,7 +3803,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 {
                     assert(token_data && token_data->length > 0);
                     const unsigned int data = strtoul(token_data->buffer, NULL, 16);
-                    const aug_ir_operand& operand = aug_ir_operand_from_int(data);
+                    const aug_ir_operand operand = aug_ir_operand_from_int(data);
                     aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_INT, operand);
                     break;
                 }
@@ -3811,7 +3811,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 {
                     assert(token_data && token_data->length > 0);
                     const unsigned int data = strtoul(token_data->buffer, NULL, 2);
-                    const aug_ir_operand& operand = aug_ir_operand_from_int(data);
+                    const aug_ir_operand operand = aug_ir_operand_from_int(data);
                     aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_INT, operand);
                     break;
                 }
@@ -3819,25 +3819,25 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 {
                     assert(token_data && token_data->length > 0);
                     const float data = strtof(token_data->buffer, NULL);
-                    const aug_ir_operand& operand = aug_ir_operand_from_float(data);
+                    const aug_ir_operand operand = aug_ir_operand_from_float(data);
                     aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_FLOAT, operand);
                     break;
                 }
                 case AUG_TOKEN_STRING:
                 {
-                    const aug_ir_operand& operand = aug_ir_operand_from_str(token_data->buffer);
+                    const aug_ir_operand operand = aug_ir_operand_from_str(token_data->buffer);
                     aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_STRING, operand);
                     break;
                 }
                 case AUG_TOKEN_TRUE:
                 {
-                    const aug_ir_operand& operand = aug_ir_operand_from_bool(true);
+                    const aug_ir_operand operand = aug_ir_operand_from_bool(true);
                     aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_BOOL, operand);
                     break;
                 }
                 case AUG_TOKEN_FALSE:
                 {
-                    const aug_ir_operand& operand = aug_ir_operand_from_bool(false);
+                    const aug_ir_operand operand = aug_ir_operand_from_bool(false);
                     aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_BOOL, operand);
                     break;
                 }
@@ -3851,7 +3851,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
         {
             assert(token_data != NULL);
 
-            const aug_symbol& symbol = aug_ir_symbol_relative(ir, token_data);
+            const aug_symbol symbol = aug_ir_symbol_relative(ir, token_data);
             if(symbol.type == AUG_SYM_NONE)
             {
                 ir->valid = false;
@@ -3866,7 +3866,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 return;
             }
 
-            const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+            const aug_ir_operand address_operand = aug_ir_operand_from_int(symbol.offset);
             if(symbol.scope == AUG_SYM_SCOPE_GLOBAL)
                 aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_GLOBAL, address_operand);
             else
@@ -3922,7 +3922,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             for(i = children_size - 1; i >= 0; --i)
                 aug_ast_to_ir(vm, children[i], ir);
 
-            const aug_ir_operand& count_operand = aug_ir_operand_from_int(children_size);
+            const aug_ir_operand count_operand = aug_ir_operand_from_int(children_size);
             aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_ARRAY, count_operand);
             break;
         }
@@ -3951,7 +3951,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             
             aug_ast_to_ir(vm, children[0], ir);
 
-            const aug_symbol& symbol = aug_ir_symbol_relative(ir, token_data);
+            const aug_symbol symbol = aug_ir_symbol_relative(ir, token_data);
             if(symbol.type == AUG_SYM_NONE)
             {
                 aug_ir_set_var(ir, token_data);
@@ -3964,7 +3964,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 return;
             }
 
-            const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+            const aug_ir_operand address_operand = aug_ir_operand_from_int(symbol.offset);
             if(symbol.scope == AUG_SYM_SCOPE_GLOBAL)
                 aug_ir_add_operation_arg(ir, AUG_OPCODE_LOAD_GLOBAL, address_operand);
             else
@@ -4055,7 +4055,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
 
             const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
 
-            const aug_ir_operand& begin_block_operand = aug_ir_operand_from_int(ir->bytecode_offset);
+            const aug_ir_operand begin_block_operand = aug_ir_operand_from_int(ir->bytecode_offset);
 
             // Evaluate expression. 
             aug_ast_to_ir(vm, children[0], ir);
@@ -4083,7 +4083,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             assert(token_data != NULL); // func name is token data
             const int arg_count = children_size;
 
-            const aug_symbol& symbol = aug_ir_get_symbol(ir, token_data);
+            const aug_symbol symbol = aug_ir_get_symbol(ir, token_data);
             if(symbol.type == AUG_SYM_VAR)
             {
                 ir->valid = false;
@@ -4109,7 +4109,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                     for(i = 0; i < children_size; ++ i)
                         aug_ast_to_ir(vm, children[i], ir);
 
-                    const aug_ir_operand& func_addr = aug_ir_operand_from_int(symbol.offset); // func addr
+                    aug_ir_operand func_addr = aug_ir_operand_from_int(symbol.offset); // func addr
                     aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL, func_addr);
 
                     // fixup the return address to after the call
@@ -4136,7 +4136,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Function %s not defined", token_data->buffer);
                 break;
             }
-            if(vm->extensions[func_index] == nullptr)
+            if(vm->extensions[func_index] == NULL)
             {
                 ir->valid = false;
                 AUG_INPUT_ERROR_AT(ir->input, &token.pos, "External Function %s was not properly registered.", token_data->buffer);
@@ -4146,16 +4146,16 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             for(i = arg_count - 1; i >= 0; --i)
                 aug_ast_to_ir(vm, children[i], ir);
 
-            const aug_ir_operand& func_index_operand = aug_ir_operand_from_int(func_index);
+            const aug_ir_operand func_index_operand = aug_ir_operand_from_int(func_index);
             aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_INT, func_index_operand);
 
-            const aug_ir_operand& arg_count_operand = aug_ir_operand_from_int(arg_count);
+            const aug_ir_operand arg_count_operand = aug_ir_operand_from_int(arg_count);
             aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL_EXT, arg_count_operand);
             break;
         }
         case AUG_AST_RETURN:
         {
-            const aug_ir_operand& offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
+            const aug_ir_operand offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
             if(children_size == 1) //return [0];
             {
                 aug_ast_to_ir(vm, children[0], ir);
@@ -4212,7 +4212,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             // Ensure there is a return
             if(aug_ir_last_operation(ir)->opcode != AUG_OPCODE_RETURN)
             {
-                const aug_ir_operand& offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
+                const aug_ir_operand offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
                 aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
                 aug_ir_add_operation_arg(ir, AUG_OPCODE_RETURN, offset);
             }

@@ -1,0 +1,21 @@
+func fibonacci(n) {
+    a = 0;
+    b = 1;
+    c = 0;
+    sum = 0;
+    count = n;
+
+    while count > 0 {
+        count = count - 1; 
+        a = b ;
+        b = sum; 
+        sum = a + b;
+    }
+    return sum;
+}
+
+i = 1;
+while i < 100 {
+    printf("fibonacci(i) = ", fibonacci(i), "\n");
+    i += 1;
+} 
