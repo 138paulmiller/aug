@@ -367,7 +367,7 @@ typedef struct
 
 aug_container* aug_container_new(size_t size);
 void aug_container_incref(aug_container* array);
-aug_container* aug_container_decref (aug_container* array);
+aug_container* aug_container_decref(aug_container* array);
 void  aug_container_resize(aug_container* array, size_t size);
 void aug_container_push(aug_container* array, void* data);
 void* aug_container_pop (aug_container* array);
@@ -1389,7 +1389,7 @@ inline aug_ast* aug_parse_expr(aug_lexer* lexer)
                 if(!aug_parse_expr_pop(lexer, op_stack, expr_stack))
                     return NULL;
             }
-            aug_token* new_op = (aug_token* ) malloc(sizeof(aug_token*));
+            aug_token* new_op = (aug_token*)malloc(sizeof(aug_token));
             *new_op = op;
             
             aug_container_push(op_stack, new_op);
@@ -1407,27 +1407,29 @@ inline aug_ast* aug_parse_expr(aug_lexer* lexer)
 
     // Not an expression
     if(op_stack->length == 0 && expr_stack->length == 0)
+    {
+        aug_container_decref(op_stack);
+        aug_container_decref(expr_stack);
         return NULL;
+    }
 
     while(op_stack->length)
     {
         if(!aug_parse_expr_pop(lexer, op_stack, expr_stack))
         {
+            while(expr_stack->length > 0)
+            {
+                aug_ast* expr = (aug_ast*) aug_container_pop(expr_stack);
+                aug_ast_delete(expr);
+            }
             aug_container_decref(op_stack);
             aug_container_decref(expr_stack);
-            return NULL;
         }
     }
 
     // Not a valid expression. Either malformed or missing semicolon 
     if(expr_stack->length == 0 || expr_stack->length > 1)
     {
-        while(op_stack->length > 0)
-        {
-            aug_token* token = (aug_token*) aug_container_pop(op_stack);
-            aug_token_reset(token);
-            free(token);
-        }
         while(expr_stack->length > 0)
         {
             aug_ast* expr = (aug_ast*) aug_container_pop(expr_stack);
@@ -4700,57 +4702,57 @@ aug_value* aug_array_back(const aug_array* array)
 
 aug_container* aug_container_new(size_t size)
 { 
-	aug_container* array = (aug_container*)malloc(sizeof(aug_container));  
-	array->ref_count = 1;   
-	array->length = 0;
-	array->capacity = size; 
-	array->buffer = (void**)malloc(array->capacity * sizeof(void*));
-	return array;
+	aug_container* container = (aug_container*)malloc(sizeof(aug_container));  
+	container->ref_count = 1;   
+	container->length = 0;
+	container->capacity = size; 
+	container->buffer = (void**)malloc(container->capacity * sizeof(void*));
+	return container;
 }
 
-void aug_container_incref(aug_container* array) 
+void aug_container_incref(aug_container* container) 
 {
-    if(array != NULL)
-	    array->ref_count++; 
+    if(container != NULL)
+	    container->ref_count++; 
 }
  
-aug_container* aug_container_decref(aug_container* array)
+aug_container* aug_container_decref(aug_container* container)
 {
-	if(array != NULL && --array->ref_count == 0)
+	if(container != NULL && --container->ref_count == 0)
     {
-        free(array->buffer);
-        free(array);
+        free(container->buffer);
+        free(container);
         return NULL;
     }
-    return array;
+    return container;
 } 
 
-void aug_container_reserve(aug_container* array, size_t size)    
+void aug_container_reserve(aug_container* container, size_t size)    
 {
-	array->buffer = (void**)realloc(array->buffer, size * sizeof(void*));
-	array->capacity = size; 
+	container->buffer = (void**)realloc(container->buffer, size * sizeof(void*));
+	container->capacity = size; 
 }
  
-void aug_container_push(aug_container* array, void* data)  
+void aug_container_push(aug_container* container, void* data)  
 {
-	if (array->length + 1 >= array->capacity) 
-        aug_container_reserve(array, 2 * array->capacity);
-    array->buffer[array->length++] = data;
+	if (container->length + 1 >= container->capacity) 
+        aug_container_reserve(container, 2 * container->capacity);
+    container->buffer[container->length++] = data;
 }
  
-void* aug_container_pop(aug_container* array)
+void* aug_container_pop(aug_container* container)
 {
-	return array->length > 0 ? array->buffer[--array->length] : NULL; 
+	return container->length > 0 ? container->buffer[--container->length] : NULL; 
 }
  
-void* aug_container_at(const aug_container* array, size_t index) 
+void* aug_container_at(const aug_container* container, size_t index) 
 {
-	return index >= 0 && index < array->length ? array->buffer[index] : NULL;
+	return index >= 0 && index < container->length ? container->buffer[index] : NULL;
 }
  
-void* aug_container_back(const aug_container* array)
+void* aug_container_back(const aug_container* container)
 {
-	return array->length > 0 ? array->buffer[array->length-1] : NULL; 
+	return container->length > 0 ? container->buffer[container->length-1] : NULL; 
 }
 
 #ifdef __cplusplus
