@@ -127,8 +127,8 @@ std::string to_string(const aug_value& value)
 		{
 			for( size_t i = 0; i < value.array->length; ++i)
 			{
-				const aug_value& entry = aug_array_at(value.array, i);
-				str += to_string(entry);
+				const aug_value* entry = aug_array_at(value.array, i);
+				str += to_string(*entry);
 				str += " ";
 			}
 		}
@@ -171,8 +171,8 @@ void print(const aug_value& value)
 		{
 			for( size_t i = 0; i < value.array->length; ++i)
 			{
-				const aug_value& entry = aug_array_at(value.array, i);
-				print(entry);
+				const aug_value* entry = aug_array_at(value.array, i);
+				print(*entry);
 				printf(" ");
 			}
 		}
@@ -206,8 +206,8 @@ float sum(const aug_value& value, aug_value_type& type)
 		{
 			for( size_t i = 0; i < value.array->length; ++i)
 			{
-				const aug_value& entry = aug_array_at(value.array, i);
-				total += sum(entry, type);
+				const aug_value* entry = aug_array_at(value.array, i);
+				total += sum(*entry, type);
 			}
 		}
 		return total;

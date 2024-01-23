@@ -94,11 +94,17 @@ SOFTWARE. */
 
 #define AUG_DEBUG_VM 0 // for console debug
 
-// Max size of the virtual machine stack
+// Size of the virtual machine's value stack 
 #ifndef AUG_STACK_SIZE
 #define AUG_STACK_SIZE (1024 * 16)
 #endif//AUG_STACK_SIZE
 
+// MAx number of user-provided external functions
+#ifndef AUG_EXTENSION_SIZE
+#define AUG_EXTENSION_SIZE 64
+#endif//AUG_EXTENSION_SIZE
+
+// Threshold of the nearly equal operator
 #ifndef AUG_APPROX_THRESHOLD
 #define AUG_APPROX_THRESHOLD 0.0000001
 #endif//AUG_APPROX_THRESHOLD 
@@ -154,26 +160,26 @@ void aug_string_push(aug_string* string, char c);
 char aug_string_pop (aug_string* string);
 char aug_string_at(const aug_string* string, size_t index);
 char aug_string_back(const aug_string* string);
-bool aug_string_equal(const aug_string* a, const aug_string* b);
-bool aug_string_bytes_equal(const aug_string* a, const char* bytes);
+bool aug_string_compare(const aug_string* a, const aug_string* b);
+bool aug_string_compare_bytes(const aug_string* a, const char* bytes);
 
 typedef struct
 {
-	aug_value *buffer;
+	aug_value* buffer;
 	int ref_count;
 	size_t capacity;
 	size_t length;
 } aug_array;
 
-aug_array*aug_array_new(size_t size);
-void aug_array_incref(aug_array* array);
+aug_array* aug_array_new(size_t size);
+void  aug_array_incref(aug_array* array);
 aug_array* aug_array_decref (aug_array* array);
-void aug_array_reserve(aug_array* array, size_t size);
-void aug_array_push(aug_array* array, aug_value value);
-aug_value aug_array_pop (aug_array* array);
-aug_value aug_array_at(const aug_array* array, size_t index);
-aug_value* aug_array_at_ptr(const aug_array* array, size_t index);
-aug_value aug_array_back(const aug_array* array);
+void  aug_array_resize(aug_array* array, size_t size);
+bool aug_array_index_valid(aug_array* array, size_t index);
+aug_value* aug_array_push(aug_array* array);
+aug_value* aug_array_pop (aug_array* array);
+aug_value* aug_array_at(const aug_array* array, size_t index);
+aug_value* aug_array_back(const aug_array* array);
 
 #ifdef __cplusplus
 }
@@ -185,8 +191,8 @@ using aug_std_array = std::vector<type>;
 template <class key, class type>
 using aug_std_map = std::unordered_map<key, type>;
 
-typedef void(aug_error_callback)(const char* /*msg*/);
-typedef aug_value /*return_value*/ (aug_function_callback)(int argc, const aug_value* /*args*/);
+typedef void(aug_error_function)(const char* /*msg*/);
+typedef aug_value /*return*/ (aug_extension)(int argc, const aug_value* /*args*/);
 
 // Value Types
 enum aug_value_type : char
@@ -200,14 +206,6 @@ enum aug_value_type : char
     AUG_OBJECT,
     AUG_NONE,
 };
-
-#if defined(AUG_IMPLEMENTATION)
-const char* aug_value_type_labels[] =
-{
-    "bool", "char", "int", "float", "string", "array", "object", "none"
-};
-static_assert(sizeof(aug_value_type_labels) / sizeof(aug_value_type_labels[0]) == (int)AUG_NONE + 1, "Type labels must be up to date with enum");
-#endif //AUG_IMPLEMENTATION
 
 // Values instance 
 struct aug_value
@@ -225,19 +223,22 @@ struct aug_value
     };
 };
 
-// Object attributes
-struct aug_attribute
-{
-    aug_string id;
-    aug_value value;
-};
+aug_value aug_none();
+bool aug_get_bool(const aug_value& value);
+int aug_get_int(const aug_value& value);
+float aug_get_float(const aug_value& value);
+aug_value aug_from_bool(bool data);
+aug_value aug_from_int(int data);
+aug_value aug_from_char(char data);
+aug_value aug_from_float(float data);
+aug_value aug_from_string(const char* data);
 
 // Object instance
 struct aug_object
 {
     int ref_count;
-
-    aug_std_array<aug_attribute> attribs;
+    // Value Hash map aug_string -> aug_value
+    //aug_std_array<aug_attribute> attribs;
 };
 
 // Symbol types
@@ -293,7 +294,7 @@ struct aug_frame
 // Running instance of the virtual machine
 struct aug_vm
 {
-    aug_error_callback* error_callback;
+    aug_error_function* error_callback;
     bool valid;
 
     const char* instruction;
@@ -303,22 +304,23 @@ struct aug_vm
     int stack_index;
     int base_index;
 
-    // External functions are native functions that can be called from scripts   
+    // Extensions are external functions are native functions that can be called from scripts   
     // This external function map contains the user's registered functions. 
     // Use aug_register/aug_unregister to modify these fields
-    aug_std_array<aug_function_callback*> external_functions;
-    aug_std_array<aug_string*>            external_function_names;
+    aug_extension* extensions[AUG_EXTENSION_SIZE];      
+    aug_string* extension_names[AUG_EXTENSION_SIZE]; 
+    int extension_count;
 
     // TODO: debug symtable from addr to func name / variable offsets
 };
 
 // VM Must call both startup before using the VM. When done, must call shutdown.
-void aug_startup(aug_vm& vm, aug_error_callback* error_callback);
+void aug_startup(aug_vm& vm, aug_error_function* on_error);
 void aug_shutdown(aug_vm& vm);
 
 // Extend the script functions via external functions. 
 // NOTE: changing the registered functions will require a script recompilation. Can not guarantee the external function call will work. 
-void aug_register(aug_vm& vm, const char* func_name, aug_function_callback* callback);
+void aug_register(aug_vm& vm, const char* func_name, aug_extension* extension);
 void aug_unregister(aug_vm& vm, const char* func_name);
 
 // Will reboot the VM to execute the standalone script or code
@@ -333,19 +335,6 @@ void aug_load(aug_vm& vm, aug_script& script);
 void aug_unload(aug_vm& vm, aug_script& script);
 aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name);
 aug_value aug_call_args(aug_vm& vm, aug_script& script, const char* func_name, int argc, aug_value* args);
-
-// Types
-aug_value aug_none();
-
-bool aug_get_bool(const aug_value& value);
-int aug_get_int(const aug_value& value);
-float aug_get_float(const aug_value& value);
-
-aug_value aug_from_bool(bool data);
-aug_value aug_from_int(int data);
-aug_value aug_from_char(char data);
-aug_value aug_from_float(float data);
-aug_value aug_from_string(const char* data);
 
 #endif //__AUG_HEADER__
 
@@ -362,9 +351,31 @@ aug_value aug_from_string(const char* data);
 #include <iostream>
 #include <sstream>
 
+// --------------------------------------- Generic Containers -----------------------------------------//
+#if 0// Container
+typedef struct
+{
+	void** buffer;
+	int ref_count;
+	size_t capacity;
+	size_t length;
+} aug_container;
+
+aug_container* aug_container_new(size_t size);
+void aug_container_incref(aug_container* array);
+aug_container* aug_container_decref (aug_container* array);
+bool aug_container_index_valid(aug_array* array, size_t index);
+void  aug_container_resize(aug_container* array, size_t size);
+void* aug_container_push(aug_container* array);
+void* aug_container_pop (aug_container* array);
+void* aug_container_at(const aug_container* array, size_t index);
+void* aug_container_at_ptr(const aug_container* array, size_t index);
+void* aug_container_back(const aug_container* array);
+
+#endif // Container
 // --------------------------------------- Input/Logging ---------------------------------------//
 
-void aug_log_error_internal(aug_error_callback* error_callback, const char* format, ...)
+void aug_log_error_internal(aug_error_function* error_callback, const char* format, ...)
 {
     // TODO: make thread safe
     static char log_buffer[4096];
@@ -385,16 +396,16 @@ void aug_log_error_internal(aug_error_callback* error_callback, const char* form
     va_end(args);
 }
 
-#define AUG_LOG_ERROR(error_callback, ...)\
+#define AUG_LOG_ERROR(error_callback, ...)   \
     aug_log_error_internal(error_callback, __VA_ARGS__);
 
-#define AUG_INPUT_ERROR_AT(input, pos, ...)\
-if (input->valid)                          \
-{                                          \
-    input->valid = false;                  \
-    aug_input_error_hint(input, pos);      \
-    AUG_LOG_ERROR(input->error_callback,   \
-        __VA_ARGS__);                      \
+#define AUG_INPUT_ERROR_AT(input, pos, ...) \
+if (input->valid)                           \
+{                                           \
+    input->valid = false;                   \
+    aug_input_error_hint(input, pos);       \
+    AUG_LOG_ERROR(input->error_callback,    \
+        __VA_ARGS__);                       \
 }
 
 #define AUG_INPUT_ERROR(input, ...) \
@@ -402,6 +413,13 @@ if (input->valid)                          \
         aug_input_prev_pos(input),  \
         __VA_ARGS__);
 
+#if defined(AUG_IMPLEMENTATION)
+const char* aug_value_type_labels[] =
+{
+    "bool", "char", "int", "float", "string", "array", "object", "none"
+};
+static_assert(sizeof(aug_value_type_labels) / sizeof(aug_value_type_labels[0]) == (int)AUG_NONE + 1, "Type labels must be up to date with enum");
+#endif //AUG_IMPLEMENTATION
 
 struct aug_pos
 {
@@ -416,7 +434,7 @@ struct aug_input
     bool is_file; // True if input source is a file. If false, file is string stream and filename is raw source code
     std::istream* file;
     std::string filename;
-    aug_error_callback* error_callback;
+    aug_error_function* error_callback;
     bool valid;
 
     int track_pos;
@@ -445,7 +463,7 @@ inline aug_pos* aug_input_next_pos(aug_input* input)
     return aug_input_pos(input);
 }
 
-aug_input* aug_input_open(const char* filename_or_code, aug_error_callback* error_callback, bool is_file)
+aug_input* aug_input_open(const char* filename_or_code, aug_error_function* error_callback, bool is_file)
 {
     std::istream* stream = NULL;
     if (is_file)
@@ -626,7 +644,7 @@ struct aug_token_detail
     /* State */                                    \
     AUG_TOKEN(NONE,           0, 0, 0, NULL)       \
     AUG_TOKEN(END,            0, 0, 0, NULL)       \
-    /* Symbols */			                       \
+    /* Symbols */		                           \
     AUG_TOKEN(DOT,            0, 0, 0, NULL)       \
     AUG_TOKEN(COMMA,          0, 0, 0, NULL)       \
     AUG_TOKEN(COLON,          0, 0, 0, NULL)       \
@@ -988,7 +1006,7 @@ inline bool aug_lexer_tokenize_name(aug_lexer* lexer, aug_token& token)
     for (size_t i = 0; i < (size_t)AUG_TOKEN_COUNT; ++i)
     {
         const aug_token_detail& detail = aug_token_details[i];
-        if (aug_string_bytes_equal(token.data, detail.keyword))
+        if (aug_string_compare_bytes(token.data, detail.keyword))
         {
             token.id = (aug_token_id)i;
             token.data = aug_string_decref(token.data); // keyword is static, free allocation
@@ -2684,7 +2702,7 @@ inline void aug_decref(aug_value* value)
         {
             for(size_t i = 0; i < value->array->length; ++i)
             {
-                aug_decref(aug_array_at_ptr(value->array, i));
+                aug_decref(aug_array_at(value->array, i));
             }
             value->array = aug_array_decref(value->array);
         }
@@ -2759,12 +2777,18 @@ inline bool aug_get_element(aug_value* container, aug_value* index, aug_value* e
     }
     case AUG_ARRAY:
     {
-        *element = aug_array_at(container->array, i);
-        return true;
+        aug_value* value = aug_array_at(container->array, i);
+        if(value)
+        {
+            *element = *value;
+            return true;
+        }    
+         
     }
     default:
         break;
     }
+    *element = aug_none();
     return false;
 }
 
@@ -3002,28 +3026,28 @@ union aug_vm_bytecode_value
 
 static_assert(sizeof(float) >= sizeof(int), "Ensure bytes array has enough space to contain both int and float data types");
 
-#define AUG_VM_ERROR(vm, ...)                      \
-{                                                  \
-    AUG_LOG_ERROR(vm.error_callback, __VA_ARGS__); \
-    vm.valid = false;                              \
-    vm.instruction = NULL;                         \
+#define AUG_VM_ERROR(vm, ...)                         \
+{                                                     \
+    AUG_LOG_ERROR(vm.error_callback, __VA_ARGS__);    \
+    vm.valid = false;                                 \
+    vm.instruction = NULL;                            \
 }
 
-#define AUG_VM_UNOP_ERROR(vm, arg, op)               \
-{                                                    \
-    if (arg != NULL)                                 \
-        AUG_VM_ERROR(vm, "%s %s not defined",        \
-            op,                                      \
-            aug_value_type_labels[(int)arg->type]);  \
+#define AUG_VM_UNOP_ERROR(vm, arg, op)                \
+{                                                     \
+    if (arg != NULL)                                  \
+        AUG_VM_ERROR(vm, "%s %s not defined",         \
+            op,                                       \
+            aug_value_type_labels[(int)arg->type]);   \
 }
 
-#define AUG_VM_BINOP_ERROR(vm, lhs, rhs, op)           \
-{                                                      \
-    if (lhs != NULL && rhs != NULL)                    \
-        AUG_VM_ERROR(vm, "%s %s %s not defined",  \
-            aug_value_type_labels[(int)lhs->type],     \
-            op,                                        \
-            aug_value_type_labels[(int)rhs->type]);    \
+#define AUG_VM_BINOP_ERROR(vm, lhs, rhs, op)          \
+{                                                     \
+    if (lhs != NULL && rhs != NULL)                   \
+        AUG_VM_ERROR(vm, "%s %s %s not defined",      \
+            aug_value_type_labels[(int)lhs->type],    \
+            op,                                       \
+            aug_value_type_labels[(int)rhs->type]);   \
 }
 
 inline aug_value* aug_vm_top(aug_vm& vm)
@@ -3167,7 +3191,7 @@ void aug_vm_load_script(aug_vm& vm, const aug_script& script)
         {
             aug_value* top = aug_vm_push(vm);
             if (top)
-                *top = aug_array_at(script.stack_state, i);
+                *top = *aug_array_at(script.stack_state, i);
         }
     }
 }
@@ -3179,7 +3203,7 @@ void aug_vm_unload_script(aug_vm& vm, aug_script& script)
     {
         for (size_t i = 0; i < script.stack_state->length; ++i)
         {   
-            aug_value* value = aug_array_at_ptr(script.stack_state, i);
+            aug_value* value = aug_array_at(script.stack_state, i);
             aug_decref(value);
         }
     }
@@ -3197,7 +3221,9 @@ void aug_vm_save_script(aug_vm& vm, aug_script& script)
         if (top)
         {
             aug_incref(top);
-            aug_array_push(script.stack_state, *top);
+            aug_value* element = aug_array_push(script.stack_state);
+            if(element != NULL) 
+                *element =  *top;
         }
     }
 }
@@ -3280,9 +3306,12 @@ void aug_vm_execute(aug_vm& vm)
                 int count = aug_vm_read_int(vm);
                 while(count-- > 0)
                 {
-                    aug_value entry = aug_none();
-                    aug_move(&entry, aug_vm_pop(vm));
-                    aug_array_push(value.array, entry);
+                    aug_value* element = aug_array_push(value.array);
+                    if(element != NULL) 
+                    {
+                        *element = aug_none();
+                        aug_move(element, aug_vm_pop(vm));
+                    }
                 }
 
                 aug_value* top = aug_vm_push(vm);          
@@ -3603,18 +3632,17 @@ void aug_vm_execute(aug_vm& vm)
                 }
           
                 // Check function call
-                if (func_index < 0 || func_index >= (int)vm.external_functions.size() || vm.external_functions[func_index] == NULL)
-                {
-                    AUG_VM_ERROR(vm, "External Function Called at index %d not registered", func_index);
-                }
-                
-                if(vm.valid)
+                if (func_index >= 0 && func_index < AUG_EXTENSION_SIZE && vm.extensions[func_index] != NULL)
                 {
                     // Call the external function. Move return value on to top of stack
-                    aug_value ret_value = vm.external_functions[func_index](arg_count, args);
+                    aug_value ret_value = vm.extensions[func_index](arg_count, args);
                     aug_value* top = aug_vm_push(vm);
                     if (top)
                         aug_move(top, &ret_value);
+                }
+                else
+                {
+                    AUG_VM_ERROR(vm, "External Function Called at index %d not registered", func_index);
                 }
 
                 // Cleanup arguments
@@ -4064,9 +4092,9 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
 
             // Check if the symbol is a registered function
             int func_index = -1;
-            for (size_t i = 0; i < vm.external_function_names.size(); ++i)
+            for (int i = 0; i < AUG_EXTENSION_SIZE; ++i)
             {
-                if (aug_string_equal(vm.external_function_names[i], token_data))
+                if (aug_string_compare(vm.extension_names[i], token_data) && vm.extensions[i] != NULL)
                 {
                     func_index = i;
                     break;
@@ -4079,7 +4107,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
                 AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function %s not defined", token_data->buffer);
                 break;
             }
-            if (vm.external_functions[func_index] == nullptr)
+            if (vm.extensions[func_index] == nullptr)
             {
                 ir.valid = false;
                 AUG_INPUT_ERROR_AT(ir.input, &token.pos, "External Function %s was not properly registered.", token_data->buffer);
@@ -4223,7 +4251,7 @@ void aug_script_delete(aug_script& script)
     {
         for (size_t i = 0; i < script.stack_state->length; ++i)
         {
-            aug_value* value = aug_array_at_ptr( script.stack_state, i );
+            aug_value* value = aug_array_at( script.stack_state, i );
             aug_decref(value);
         }
     }
@@ -4253,11 +4281,14 @@ void aug_compile_script(aug_vm& vm, aug_input* input, aug_ast* root, aug_script&
     script.bytecode = aug_ir_to_bytecode(ir);
 }
 
-void aug_startup(aug_vm& vm, aug_error_callback* error_callback)
+void aug_startup(aug_vm& vm, aug_error_function* error_callback)
 {
-    vm.error_callback = NULL;
-    vm.external_functions.clear();
-    vm.external_function_names.clear();
+    for (int i = 0; i < AUG_EXTENSION_SIZE; ++i)
+    {
+        vm.extensions[i] = NULL;
+        vm.extension_names[i] = NULL;
+    }
+
     for(size_t i = 0; i < AUG_STACK_SIZE; ++i)
         vm.stack[i] = aug_none();
 
@@ -4270,38 +4301,37 @@ void aug_shutdown(aug_vm& vm)
 {
     aug_vm_shutdown(vm);
 
-    for (size_t i = 0; i < vm.external_functions.size(); ++i)
-        vm.external_function_names[i] = aug_string_decref(vm.external_function_names[i]);
+    for (int i = 0; i < AUG_EXTENSION_SIZE; ++i)
+    {
+        vm.extensions[i] = NULL;
+        vm.extension_names[i] = aug_string_decref(vm.extension_names[i]);
+    }
 
     vm.error_callback = NULL;
-    vm.external_functions.clear();
-    vm.external_function_names.clear();
+
 }
 
-void aug_register(aug_vm& vm, const char* func_name, aug_function_callback *callback)
+void aug_register(aug_vm& vm, const char* name, aug_extension *extension)
 {
-    aug_string* func_name_string = aug_string_create(func_name);
-    for (size_t i = 0; i < vm.external_functions.size(); ++i)
+    for (int i = 0; i < AUG_EXTENSION_SIZE; ++i)
     {
-        if (vm.external_functions[i] == NULL)
+        if (vm.extensions[i] == NULL)
         {
-            vm.external_functions[i] = callback;
-            vm.external_function_names[i] = func_name_string;
-            return;
+            vm.extensions[i] = extension;
+            vm.extension_names[i] =  aug_string_create(name);
+            break;
         }
     }
-    vm.external_functions.push_back(callback);
-    vm.external_function_names.push_back(func_name_string);
 }
 
 void aug_unregister(aug_vm& vm, const char* func_name)
 {
-    for (size_t i = 0; i < vm.external_functions.size(); ++i)
+    for (int i = 0; i < AUG_EXTENSION_SIZE; ++i)
     {
-        if (aug_string_bytes_equal(vm.external_function_names[i], func_name))
+        if (aug_string_compare_bytes(vm.extension_names[i], func_name))
         {
-            vm.external_functions[i] = NULL;
-            vm.external_function_names[i] = aug_string_decref(vm.external_function_names[i]);
+            vm.extensions[i] = NULL;
+            vm.extension_names[i] = aug_string_decref(vm.extension_names[i]);
             break;
         }
     }
@@ -4519,7 +4549,7 @@ char aug_string_back(const aug_string* string)
 	return string->length > 0 ? string->buffer[string->length-1] : -1;
 }
 
-bool aug_string_equal(const aug_string* a, const aug_string* b) 
+bool aug_string_compare(const aug_string* a, const aug_string* b) 
 {
 	if (a->length != b->length)
         return false; 
@@ -4527,7 +4557,7 @@ bool aug_string_equal(const aug_string* a, const aug_string* b)
     return strncmp(a->buffer, b->buffer, a->length) == 0;
 }
 
-bool aug_string_bytes_equal(const aug_string* a, const char* bytes) 
+bool aug_string_compare_bytes(const aug_string* a, const char* bytes) 
 {
     if(bytes == NULL)
         return a->buffer == NULL;
@@ -4565,69 +4595,131 @@ aug_string* aug_string_decref(aug_string* string)
 }
 
 // -------------------------------- Array ----------------------------------------------------//
-
-aug_array* aug_array_new(size_t size) 
-{
-	aug_array* array = (aug_array*)malloc(sizeof(aug_array));
-
-	array->ref_count = 1;
-	array->length = 0;
-	array->capacity = size;
+                 
+aug_array* aug_array_new(size_t size)
+{                
+	aug_array* array = (aug_array*)malloc(sizeof(aug_array));  
+	array->ref_count = 1;   
+	array->length = 0;      
+	array->capacity = size; 
 	array->buffer = (aug_value*)malloc(array->capacity * sizeof(aug_value));
-
 	return array;
-}
-
-void aug_array_reserve(aug_array* array, size_t size) 
-{
-	array->buffer = (aug_value*)realloc(array->buffer, size * sizeof(aug_value));
-	array->capacity = size;
-}
-
-void aug_array_push(aug_array* array, aug_value value) 
-{
-	if (array->length + 1 >= array->capacity) 
-        aug_array_reserve(array, 2 * array->capacity);
-    array->buffer[array->length++] = value;
-}
-
-aug_value aug_array_pop(aug_array* array) 
-{
-	return array->length > 0 ? array->buffer[--array->length] : aug_none();
-}
-
-aug_value aug_array_at(const aug_array* array, size_t index) 
-{
-	return index < array->length ? array->buffer[index] : aug_none();
-}
-
-aug_value* aug_array_at_ptr(const aug_array* array, size_t index) 
-{
-	return index < array->length ? &array->buffer[index] : NULL;
-}
-
-aug_value aug_array_back(const aug_array* array) 
-{
-	return array->length > 0 ? array->buffer[array->length-1] : aug_none();
 }
 
 void aug_array_incref(aug_array* array) 
 {
-    if(array != NULL)
-	    array->ref_count++;
+    if(array != NULL)       
+	    array->ref_count++; 
+}
+ 
+aug_array* aug_array_decref(aug_array* array)
+{
+	if(array != NULL && --array->ref_count == 0)
+    {            
+        free(array->buffer);
+        free(array);
+        return NULL;
+    }            
+    return array;
+}       
+
+bool aug_array_index_valid(aug_array* array, size_t index)    
+{
+    return index >= 0 && index < array->length;
 }
 
-aug_array* aug_array_decref(aug_array* array) 
+void aug_array_resize(aug_array* array, size_t size)    
+{
+	array->buffer = (aug_value*)realloc(array->buffer, size * sizeof(aug_value));
+	array->capacity = size; 
+}
+ 
+aug_value* aug_array_push(aug_array* array)  
+{
+	if (array->length + 1 >= array->capacity)   
+        aug_array_resize(array, 2 * array->capacity);     
+    return &array->buffer[array->length++];     
+}
+ 
+aug_value* aug_array_pop(aug_array* array)
+{
+	return array->length > 0 ? &array->buffer[--array->length] : NULL; 
+}
+ 
+aug_value* aug_array_at(const aug_array* array, size_t index) 
+{
+	return index < array->length ? &array->buffer[index] : NULL;       
+}
+ 
+aug_value* aug_array_back(const aug_array* array)             
+{
+	return array->length > 0 ? &array->buffer[array->length-1] : NULL; 
+}
+
+// ------------------------------- Generic Containers ------------------------------------//
+#if 0// Container
+
+aug_container* aug_container_new(size_t size)
+{ 
+	aug_container* array = (aug_container*)malloc(sizeof(aug_container));  
+	array->ref_count = 1;   
+	array->length = 0;
+	array->capacity = size; 
+	array->buffer = (void**)malloc(array->capacity * sizeof(void*));
+	return array;
+}
+
+void aug_container_incref(aug_container* array) 
+{
+    if(array != NULL)
+	    array->ref_count++; 
+}
+ 
+aug_container* aug_container_decref(aug_container* array)
 {
 	if(array != NULL && --array->ref_count == 0)
     {
         free(array->buffer);
         free(array);
-
         return NULL;
     }
     return array;
+} 
+
+bool aug_container_index_valid(aug_container* array, size_t index)    
+{
+    return index >= 0 && index < array->length;
 }
+
+void aug_container_reserve(aug_container* array, size_t size)    
+{
+	array->buffer = (void**)realloc(array->buffer, size * sizeof(void*));
+	array->capacity = size; 
+}
+ 
+void* aug_container_push(aug_container* array)  
+{
+	if (array->length + 1 >= array->capacity) 
+        aug_container_reserve(array, 2 * array->capacity);
+    return &array->buffer[array->length++];
+}
+ 
+void* aug_container_pop(aug_container* array)
+{
+	return array->length > 0 ? &array->buffer[--array->length] : NULL; 
+}
+ 
+void* aug_container_at(const aug_container* array, size_t index) 
+{
+	return index >= 0 && index < array->length ? &array->buffer[index] : NULL;
+}
+ 
+void* aug_container_back(const aug_container* array)
+{
+	return array->length > 0 ? &array->buffer[array->length-1] : NULL; 
+}
+
+#endif // Container
 
 // ------------------------------- Hashmap ---------------------------------------------------//
 
