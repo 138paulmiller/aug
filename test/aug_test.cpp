@@ -9,13 +9,8 @@ void aug_dump_file(aug_vm* vm, const char* filename);
 struct aug_tester;
 typedef void(aug_tester_func)(aug_vm*);
 
-#ifdef __linux__
-	#define STDOUT_RED(txt)   "\u001b[31m" txt "\u001b[0m"
-	#define STDOUT_GREEN(txt) "\u001b[32m" txt "\u001b[0m"
-#else 
-	#define STDOUT_RED(txt) txt  
-	#define STDOUT_GREEN(txt) txt 
-#endif
+#define STDOUT_RED(txt) "\u001b[31m" txt "\u001b[0m"
+#define STDOUT_GREEN(txt) "\u001b[32m" txt "\u001b[0m"
 
 struct aug_tester
 {

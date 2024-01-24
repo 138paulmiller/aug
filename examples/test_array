@@ -3,8 +3,6 @@ a1 = [ 1000, 10000];
 a = append(a0, a1);
 b = sum(a);
 expect(b == 11111, "sum(append(", a0, ",", a1, ")) = ", b);
-print(a0, a1);
-print(a);
 
 a = [ 0,1,2,3,4,5];
 b = sum(a);
