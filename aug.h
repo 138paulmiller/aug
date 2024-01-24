@@ -30,6 +30,7 @@ SOFTWARE. */
         #include "aug.h"
 
     Todo: 
+    - Create Programs for loading/unloading compiled code. The compiled scripts will also dump symtables to allow aug_call*s
     - Implement for loops
     - Serialize Bytecode to external file. Execute compiled bytecode from file
     - Serialize debug map to file. Link from bytecode to source file. 
@@ -245,7 +246,7 @@ typedef struct aug_frame
 } aug_frame;
 
 typedef void(aug_error_function)(const char* /*msg*/);
-typedef aug_value /*return*/ (aug_extension)(int argc, const aug_value* /*args*/);
+typedef aug_value /*return*/ (aug_extension)(int argc, aug_value* /*args*/);
 
 // Running instance of the virtual machine
 typedef struct aug_vm
@@ -281,11 +282,8 @@ void aug_unregister(aug_vm* vm, const char* func_name);
 
 // Will reboot the VM to execute the standalone script or code
 void aug_execute(aug_vm* vm, const char* filename);
-aug_script* aug_compile(aug_vm* vm, const char* filename);
 
-aug_script* aug_script_new(aug_symtable* globals, char* bytecode);
-void aug_script_delete(aug_script* script);
-void aug_load(aug_vm* vm, aug_script* script);
+aug_script* aug_load(aug_vm* vm, const char* filename);
 void aug_unload(aug_vm* vm, aug_script* script);
 
 aug_value aug_call(aug_vm* vm, aug_script* script, const char* func_name);
@@ -303,6 +301,10 @@ aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, i
 
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+#if defined(_WIN32) && defined(__STDC_WANT_SECURE_LIB__)
+#define AUG_SECURE
 #endif
 
 #include <ctype.h>
@@ -499,7 +501,12 @@ static inline void aug_input_unget(aug_input* input)
 
 aug_input* aug_input_open(const char* filename, aug_error_function* error_callback)
 {
+#ifdef AUG_SECURE
+    FILE* file;
+    fopen_s(&file, filename, "r");
+#else
     FILE* file = fopen(filename, "r");
+#endif //_WIN32
     if(file == NULL)
     {
         AUG_LOG_ERROR(error_callback, "Input failed to open file %s", filename);
@@ -2998,9 +3005,9 @@ static inline bool aug_approxeq(aug_value* result, aug_value* lhs, aug_value* rh
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_bool(result, lhs->i == rhs->i),
-        return aug_set_bool(result, abs(lhs->i - rhs->f) < AUG_APPROX_THRESHOLD),
-        return aug_set_bool(result, abs(lhs->f - rhs->i) < AUG_APPROX_THRESHOLD),
-        return aug_set_bool(result, abs(lhs->f - rhs->f) < AUG_APPROX_THRESHOLD),
+        return aug_set_bool(result, (float)fabs(lhs->i - rhs->f) < AUG_APPROX_THRESHOLD),
+        return aug_set_bool(result, (float)fabs(lhs->f - rhs->i) < AUG_APPROX_THRESHOLD),
+        return aug_set_bool(result, (float)fabs(lhs->f - rhs->f) < AUG_APPROX_THRESHOLD),
         return aug_set_bool(result, lhs->c == rhs->c),
         return aug_set_bool(result, lhs->b == rhs->b)
     )
@@ -3203,8 +3210,15 @@ void aug_vm_load_script(aug_vm* vm, const aug_script* script)
 
 void aug_vm_unload_script(aug_vm* vm, aug_script* script)
 {
-    if(script == NULL)
+    if(vm == NULL || script == NULL)
         return;
+
+    vm->instruction = vm->bytecode = NULL;
+    while (vm->stack_index > 0)
+    {
+        aug_value* top = aug_vm_pop(vm);
+        aug_decref(top);
+    }
 
     // Unload the script state
     if(script->stack_state != NULL)
@@ -3223,15 +3237,20 @@ void aug_vm_save_script(aug_vm* vm, aug_script* script)
         return;
 
     script->stack_state = aug_array_decref(script->stack_state);
-    if(vm->stack_index > 0)
+    if (vm->stack_index > 0)
+    {
         script->stack_state = aug_array_new(1);
 
-    while(vm->stack_index > 0)
-    {
-        aug_value* top = aug_vm_pop(vm);
-        aug_value* element = aug_array_push(script->stack_state);
-        *element = aug_none();
-        aug_assign(element, top);
+        aug_array_resize(script->stack_state, vm->stack_index);
+        script->stack_state->length = vm->stack_index;
+
+        while(vm->stack_index > 0)
+        {
+            aug_value* top = aug_vm_pop(vm);
+            aug_value* element = aug_array_at(script->stack_state, vm->stack_index);
+            *element = aug_none();
+            aug_assign(element, top);
+        }
     }
 }
 
@@ -4331,18 +4350,6 @@ void aug_unregister(aug_vm* vm, const char* func_name)
     }
 }
 
-void aug_execute(aug_vm* vm, const char* filename)
-{
-    aug_script* script = aug_compile(vm, filename);
-
-    aug_vm_startup(vm);
-    aug_vm_load_script(vm, script);
-    aug_vm_execute(vm);
-    aug_vm_shutdown(vm);
-
-    aug_script_delete(script);
-}
-
 aug_script* aug_compile(aug_vm* vm, const char* filename)
 {
     aug_input* input = aug_input_open(filename, vm->error_callback);
@@ -4374,16 +4381,32 @@ aug_script* aug_compile(aug_vm* vm, const char* filename)
     return script;
 }
 
-void aug_load(aug_vm* vm, aug_script* script)
+void aug_execute(aug_vm* vm, const char* filename)
 {
+    aug_script* script = aug_compile(vm, filename);
+
+    aug_vm_startup(vm);
+    aug_vm_load_script(vm, script);
+    aug_vm_execute(vm);
+    aug_vm_shutdown(vm);
+
+    aug_script_delete(script);
+}
+
+aug_script* aug_load(aug_vm* vm, const char* filename)
+{
+    // TODO: check file ext. If is a script, compile, else load bytecode
+    aug_script* script = aug_compile(vm, filename);
     aug_vm_load_script(vm, script);
     aug_vm_execute(vm);
     aug_vm_save_script(vm, script);
+    return script;
 }
 
 void aug_unload(aug_vm* vm, aug_script* script)
 {
     aug_vm_unload_script(vm, script);
+    aug_script_delete(script);
 }
 
 aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, int argc, aug_value* args)
@@ -4495,8 +4518,13 @@ aug_string* aug_string_create(const char* bytes)
 	string->length = strlen(bytes);
 	string->capacity = string->length + 1;
 	string->buffer = AUG_ALLOC_ARRAY(char, string->capacity);
+
+#ifdef AUG_SECURE
+    strcpy_s(string->buffer, string->capacity, bytes);
+#else
     strcpy(string->buffer, bytes);
-	return string;
+#endif
+    return string;
 }
 
 void aug_string_resize(aug_string* string, size_t size) 

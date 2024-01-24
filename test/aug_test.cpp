@@ -211,7 +211,7 @@ float sum(const aug_value& value, aug_value_type& type)
 	return 0.0f;
 }
 
-aug_value sum(int argc, const aug_value* args)
+aug_value sum(int argc, aug_value* args)
 {
 	aug_value_type type = AUG_INT;
 	float total = 0.0;
@@ -225,7 +225,7 @@ aug_value sum(int argc, const aug_value* args)
 	return aug_none();
 }
 
-aug_value print(int argc, const aug_value* args)
+aug_value print(int argc, aug_value* args)
 {
 	for( int i = 0; i < argc; ++i)
 		print(args[i]);
@@ -235,7 +235,7 @@ aug_value print(int argc, const aug_value* args)
 	return aug_none();
 }
 
-aug_value expect(int argc, const aug_value* args)
+aug_value expect(int argc, aug_value* args)
 {
 	if (argc == 0)
 		return aug_none();
@@ -252,10 +252,7 @@ aug_value expect(int argc, const aug_value* args)
 
 void aug_test_native(aug_vm* vm)
 {
-	aug_script* script = aug_compile(vm, aug_tester::get().filename.c_str());
-	
-	// store script state into VM
-	aug_load(vm, script);
+	aug_script* script = aug_load(vm, aug_tester::get().filename.c_str());
 	{	
 		aug_value args[1];
 		args[0] = aug_from_int(5);
@@ -281,13 +278,11 @@ void aug_test_native(aug_vm* vm)
 
 	// unload the script state and restore vm
 	aug_unload(vm, script);
-	aug_script_delete(script);
 }
 
 void aug_test_gameloop(aug_vm* vm)
 {	
-	aug_script* script = aug_compile(vm, aug_tester::get().filename.c_str());
-	aug_load(vm, script);
+	aug_script* script = aug_load(vm, aug_tester::get().filename.c_str());
 
 	const int test_count = 10;
 	for(int i = 0; i < test_count; ++i)
@@ -296,7 +291,6 @@ void aug_test_gameloop(aug_vm* vm)
 	}
 
 	aug_unload(vm, script);
-	aug_script_delete(script);
 }
 
 void aug_error(const char* msg)
