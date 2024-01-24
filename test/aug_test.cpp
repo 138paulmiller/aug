@@ -219,10 +219,41 @@ aug_value sum(int argc, aug_value* args)
 		total += sum(args[i], type);
 
 	if(type == AUG_FLOAT)
-		return  aug_from_float(total);
+		return  aug_create_float(total);
 	else if(type == AUG_INT)
-		return aug_from_int((int)total);
+		return aug_create_int((int)total);
 	return aug_none();
+}
+
+aug_value append(int argc, aug_value* args)
+{
+	if (argc == 0)
+		aug_none();
+	if (argc == 1)
+		return args[0];
+
+	aug_value value = aug_create_array();
+	for (int i = 0; i < argc; ++i)
+	{
+		aug_value arg = args[i];
+		if (arg.type == AUG_ARRAY)
+		{
+			for (size_t j = 0; j < arg.array->length; ++j)
+			{
+				const aug_value* entry = aug_array_at(arg.array, j);
+				aug_value* element = aug_array_push(value.array);
+				if (entry != NULL && element != NULL)
+					*element = *entry;
+			}
+		}
+		else
+		{
+			aug_value* element = aug_array_push(value.array);
+			if (element != NULL)
+				*element = arg;
+		}
+	}
+	return value;
 }
 
 aug_value print(int argc, aug_value* args)
@@ -255,7 +286,7 @@ void aug_test_native(aug_vm* vm)
 	aug_script* script = aug_load(vm, aug_tester::get().filename.c_str());
 	{	
 		aug_value args[1];
-		args[0] = aug_from_int(5);
+		args[0] = aug_create_int(5);
 
 		aug_value value = aug_call_args(vm, script, "fibonacci", 1, &args[0]);
 		
@@ -267,7 +298,7 @@ void aug_test_native(aug_vm* vm)
 	{
 		const int n = 5000;
 		aug_value args[1];
-		args[0] = aug_from_int(n);
+		args[0] = aug_create_int(n);
 
 		aug_value value = aug_call_args(vm, script, "count", 1, &args[0]);
 		
@@ -305,6 +336,7 @@ int aug_test(int argc, char** argv)
 	aug_register(vm, "print", print);
 	aug_register(vm, "expect", expect);
 	aug_register(vm, "sum", sum);
+	aug_register(vm, "append", append);
 
 	aug_tester::startup();
 	for(int i = 1; i < argc; ++i)

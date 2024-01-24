@@ -63,26 +63,6 @@ extern "C" {
 #define AUG_APPROX_THRESHOLD 0.0000001
 #endif//AUG_APPROX_THRESHOLD 
 
-#ifndef AUG_ALLOC
-#define AUG_ALLOC(type) (type*)(malloc(sizeof(type)))
-#endif//AUG_ALLOC
-
-#ifndef AUG_ALLOC_ARRAY
-#define AUG_ALLOC_ARRAY(type, count) (type*)(malloc(sizeof(type)*count))
-#endif//AUG_ALLOC_ARRAY
-
-#ifndef AUG_REALLOC_ARRAY
-#define AUG_REALLOC_ARRAY(ptr, type, count) (type*)(realloc(ptr, sizeof(type)*count))
-#endif//AUG_REALLOC_ARRAY
-
-#ifndef AUG_FREE
-#define AUG_FREE(ptr) free(ptr)
-#endif//AUG_FREE
-
-#ifndef AUG_FREE_ARRAY
-#define AUG_FREE_ARRAY(ptr) free(ptr)
-#endif//AUG_FREE_ARRAY
-
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -173,14 +153,17 @@ typedef struct aug_value
 } aug_value;
 
 aug_value aug_none();
+
 bool aug_get_bool(const aug_value* value);
 int aug_get_int(const aug_value* value);
 float aug_get_float(const aug_value* value);
-aug_value aug_from_bool(bool data);
-aug_value aug_from_int(int data);
-aug_value aug_from_char(char data);
-aug_value aug_from_float(float data);
-aug_value aug_from_string(const char* data);
+
+aug_value aug_create_array();
+aug_value aug_create_bool(bool data);
+aug_value aug_create_int(int data);
+aug_value aug_create_char(char data);
+aug_value aug_create_float(float data);
+aug_value aug_create_string(const char* data);
 
 // Symbol types
 typedef enum aug_symbol_type
@@ -306,6 +289,26 @@ extern "C" {
 #if defined(_WIN32) && defined(__STDC_WANT_SECURE_LIB__)
 #define AUG_SECURE
 #endif
+
+#ifndef AUG_ALLOC
+#define AUG_ALLOC(type) (type*)(malloc(sizeof(type)))
+#endif//AUG_ALLOC
+
+#ifndef AUG_ALLOC_ARRAY
+#define AUG_ALLOC_ARRAY(type, count) (type*)(malloc(sizeof(type)*count))
+#endif//AUG_ALLOC_ARRAY
+
+#ifndef AUG_REALLOC_ARRAY
+#define AUG_REALLOC_ARRAY(ptr, type, count) (type*)(realloc(ptr, sizeof(type)*count))
+#endif//AUG_REALLOC_ARRAY
+
+#ifndef AUG_FREE
+#define AUG_FREE(ptr) free(ptr)
+#endif//AUG_FREE
+
+#ifndef AUG_FREE_ARRAY
+#define AUG_FREE_ARRAY(ptr) free(ptr)
+#endif//AUG_FREE_ARRAY
 
 #include <ctype.h>
 #include <assert.h>
@@ -2610,6 +2613,13 @@ aug_value aug_none()
     return value;
 }
 
+aug_value aug_create_array()
+{
+    aug_value value;
+    aug_set_array(&value);
+    return value;
+}
+
 bool aug_get_bool(const aug_value* value)
 {
     if(value == NULL)
@@ -2776,7 +2786,7 @@ static inline bool aug_get_element(aug_value* container, aug_value* index, aug_v
     {
     case AUG_STRING:
     {
-        *element = aug_from_char(aug_string_at(container->str, i));
+        *element = aug_create_char(aug_string_at(container->str, i));
         return true;
     }
     case AUG_ARRAY:
@@ -4464,35 +4474,35 @@ aug_value aug_call(aug_vm* vm, aug_script* script, const char* func_name)
     return aug_call_args(vm, script, func_name, 0, NULL);
 }
 
-aug_value aug_from_bool(bool data)
+aug_value aug_create_bool(bool data)
 {
     aug_value value;
     aug_set_bool(&value, data);
     return value;
 }
 
-aug_value aug_from_int(int data)
+aug_value aug_create_int(int data)
 {
     aug_value value;
     aug_set_int(&value, data);
     return value;
 }
 
-aug_value aug_from_char(char data)
+aug_value aug_create_char(char data)
 {
     aug_value value;
     aug_set_char(&value, data);
     return value;
 }
 
-aug_value aug_from_float(float data)
+aug_value aug_create_float(float data)
 {
     aug_value value;
     aug_set_float(&value, data);
     return value;
 }
 
-aug_value aug_from_string(const char* data)
+aug_value aug_create_string(const char* data)
 {
     aug_value value;
     aug_set_string(&value, data);
