@@ -155,7 +155,6 @@ const char* aug_value_type_labels[] =
 {
     "bool", "char", "int", "float", "string", "array", "object", "none"
 };
-static_assert(sizeof(aug_value_type_labels) / sizeof(aug_value_type_labels[0]) == (int)AUG_NONE + 1, "Type labels must be up to date with enum");
 #endif //AUG_IMPLEMENTATION
 
 // Values instance 
@@ -232,9 +231,6 @@ typedef struct aug_script
 {
     aug_symtable* globals;
     char* bytecode;
-    size_t bytecode_size;
-
-    // If the script
     aug_array* stack_state;
 } aug_script;
 
@@ -400,7 +396,7 @@ typedef struct aug_input
     char c;
 }aug_input;
 
-inline void aug_input_error_hint(aug_input* input, const aug_pos* pos)
+static inline void aug_input_error_hint(aug_input* input, const aug_pos* pos)
 {
     assert(input != NULL && input->file != NULL);
     
@@ -446,12 +442,12 @@ inline void aug_input_error_hint(aug_input* input, const aug_pos* pos)
     fseek(input->file, curr_pos, SEEK_SET);
 }
 
-inline aug_pos* aug_input_pos(aug_input* input)
+static inline aug_pos* aug_input_pos(aug_input* input)
 {
     return &input->pos_buffer[input->pos_buffer_index];
 }
 
-inline aug_pos* aug_input_prev_pos(aug_input* input)
+static inline aug_pos* aug_input_prev_pos(aug_input* input)
 {
     assert(input != NULL);
     input->pos_buffer_index--;
@@ -460,14 +456,14 @@ inline aug_pos* aug_input_prev_pos(aug_input* input)
     return aug_input_pos(input);
 }
 
-inline aug_pos* aug_input_next_pos(aug_input* input)
+static inline aug_pos* aug_input_next_pos(aug_input* input)
 {
     assert(input != NULL);
     input->pos_buffer_index = (input->pos_buffer_index + 1) % (sizeof(input->pos_buffer) / sizeof(input->pos_buffer[0]));
     return aug_input_pos(input);
 }
 
-inline char aug_input_get(aug_input* input)
+static inline char aug_input_get(aug_input* input)
 {
     if(input == NULL || input->file == NULL)
         return -1;
@@ -491,7 +487,7 @@ inline char aug_input_get(aug_input* input)
     return input->c;
 }
 
-inline char aug_input_peek(aug_input* input)
+static inline char aug_input_peek(aug_input* input)
 {
     assert(input != NULL && input->file != NULL);
     char c = fgetc(input->file);
@@ -499,7 +495,7 @@ inline char aug_input_peek(aug_input* input)
     return c;
 }
 
-inline void aug_input_unget(aug_input* input)
+static inline void aug_input_unget(aug_input* input)
 {
     assert(input != NULL && input->file != NULL);
     ungetc(input->c, input->file);
@@ -540,13 +536,13 @@ void aug_input_close(aug_input* input)
     AUG_FREE(input);
 }
 
-inline void aug_input_start_tracking(aug_input* input)
+static inline void aug_input_start_tracking(aug_input* input)
 {
     assert(input != NULL && input->file != NULL);
     input->track_pos = ftell(input->file);
 }
 
-inline aug_string* aug_input_end_tracking(aug_input* input)
+static inline aug_string* aug_input_end_tracking(aug_input* input)
 {
     assert(input != NULL && input->file != NULL);
 
@@ -651,7 +647,7 @@ typedef enum aug_token_id
 } aug_token_id;
 
 // All token type info. Types map from id to type info
-static aug_token_detail aug_token_details[(int)AUG_TOKEN_COUNT] = 
+aug_token_detail aug_token_details[(int)AUG_TOKEN_COUNT] = 
 {
 #define AUG_TOKEN(id, ...) { #id, __VA_ARGS__},
     AUG_TOKEN_LIST
@@ -722,7 +718,7 @@ void aug_lexer_delete(aug_lexer* lexer)
     AUG_FREE(lexer);
 }
 
-inline bool aug_lexer_tokenize_char(aug_lexer* lexer, aug_token* token)
+bool aug_lexer_tokenize_char(aug_lexer* lexer, aug_token* token)
 {
     char c = aug_input_get(lexer->input);
     assert(c == '\'');
@@ -748,7 +744,7 @@ inline bool aug_lexer_tokenize_char(aug_lexer* lexer, aug_token* token)
     return true;
 }
 
-inline bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token* token)
+bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token* token)
 {
     char c = aug_input_get(lexer->input);
     assert(c == '\"');
@@ -823,7 +819,7 @@ inline bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token* token)
     return true;
 }
 
-inline bool aug_lexer_tokenize_symbol(aug_lexer* lexer, aug_token* token)
+bool aug_lexer_tokenize_symbol(aug_lexer* lexer, aug_token* token)
 {
     aug_token_id id = AUG_TOKEN_NONE;
 
@@ -916,7 +912,7 @@ inline bool aug_lexer_tokenize_symbol(aug_lexer* lexer, aug_token* token)
     return true;
 }
 
-inline bool aug_lexer_tokenize_name(aug_lexer* lexer, aug_token* token)
+bool aug_lexer_tokenize_name(aug_lexer* lexer, aug_token* token)
 {
     aug_input_start_tracking(lexer->input);
 
@@ -1200,7 +1196,7 @@ typedef struct aug_ast
 aug_ast* aug_parse_value(aug_lexer* lexer); 
 aug_ast* aug_parse_block(aug_lexer* lexer);
 
-inline aug_ast* aug_ast_new(aug_ast_id id, aug_token token)
+aug_ast* aug_ast_new(aug_ast_id id, aug_token token)
 {
     aug_ast* node = AUG_ALLOC(aug_ast);
     node->id = id;
@@ -1211,7 +1207,7 @@ inline aug_ast* aug_ast_new(aug_ast_id id, aug_token token)
     return node;
 }
 
-inline void aug_ast_delete(aug_ast* node)
+static inline void aug_ast_delete(aug_ast* node)
 {
     if(node == NULL)
         return;
@@ -1226,14 +1222,14 @@ inline void aug_ast_delete(aug_ast* node)
     AUG_FREE(node);
 }
 
-inline void aug_ast_resize(aug_ast* node, int size)
+static inline void aug_ast_resize(aug_ast* node, int size)
 {    
     node->children_capacity = size == 0 ? 1 : size;
     node->children = AUG_REALLOC_ARRAY(node->children, aug_ast*, node->children_capacity);
     node->children_size = size;
 }
 
-inline void aug_ast_add(aug_ast* node, aug_ast* child)
+static inline void aug_ast_add(aug_ast* node, aug_ast* child)
 {
     if(node->children_size + 1 >= node->children_capacity)
     {
@@ -1243,7 +1239,7 @@ inline void aug_ast_add(aug_ast* node, aug_ast* child)
     node->children[node->children_size++] = child;
 }
 
-inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_container* op_stack, aug_container* expr_stack)
+static inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_container* op_stack, aug_container* expr_stack)
 {
     //op_stack : aug_token*
     //expr_stack : aug_ast*
@@ -1283,7 +1279,7 @@ inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_container* op_stack, aug_co
     return true;
 }
 
-inline void aug_parse_expr_stack_cleanup(aug_container* op_stack, aug_container* expr_stack)
+static inline void aug_parse_expr_stack_cleanup(aug_container* op_stack, aug_container* expr_stack)
 {
     while(op_stack->length > 0)
     {
@@ -1299,7 +1295,7 @@ inline void aug_parse_expr_stack_cleanup(aug_container* op_stack, aug_container*
     aug_container_delete(expr_stack);
 }
 
-inline aug_ast* aug_parse_expr(aug_lexer* lexer)
+aug_ast* aug_parse_expr(aug_lexer* lexer)
 {
     // Shunting yard algorithm
     aug_container op_stack = aug_container_new(1);
@@ -1367,7 +1363,7 @@ inline aug_ast* aug_parse_expr(aug_lexer* lexer)
     return expr;
 }
 
-inline aug_ast* aug_parse_funccall(aug_lexer* lexer)
+aug_ast* aug_parse_funccall(aug_lexer* lexer)
 {
     if(lexer->curr.id != AUG_TOKEN_NAME)
         return NULL;
@@ -1407,7 +1403,7 @@ inline aug_ast* aug_parse_funccall(aug_lexer* lexer)
     return funccall;
 }
 
-inline aug_ast* aug_parse_array(aug_lexer* lexer)
+aug_ast* aug_parse_array(aug_lexer* lexer)
 {
     if(lexer->curr.id != AUG_TOKEN_LBRACKET)
         return NULL;
@@ -1441,7 +1437,7 @@ inline aug_ast* aug_parse_array(aug_lexer* lexer)
     return array;
 }
 
-inline aug_ast* aug_parse_get_element(aug_lexer* lexer)
+aug_ast* aug_parse_get_element(aug_lexer* lexer)
 {
     if(lexer->next.id != AUG_TOKEN_LBRACKET)
         return NULL;
@@ -1476,7 +1472,7 @@ inline aug_ast* aug_parse_get_element(aug_lexer* lexer)
     return element;
 }
 
-inline aug_ast* aug_parse_value(aug_lexer* lexer)
+aug_ast* aug_parse_value(aug_lexer* lexer)
 {
     aug_ast* value = NULL;
     switch (lexer->curr.id)
@@ -1783,7 +1779,7 @@ aug_ast* aug_parse_stmt_while(aug_lexer* lexer)
     return while_stmt;
 }
 
-inline aug_ast* aug_parse_param_list(aug_lexer* lexer)
+aug_ast* aug_parse_param_list(aug_lexer* lexer)
 {
     if(lexer->curr.id != AUG_TOKEN_LPAREN)
     {
@@ -1895,7 +1891,7 @@ aug_ast* aug_parse_stmt_return(aug_lexer* lexer)
     return return_stmt;
 }
 
-inline aug_ast* aug_parse_stmt(aug_lexer* lexer)
+aug_ast* aug_parse_stmt(aug_lexer* lexer)
 {
     //TODO: assignment, funcdef etc..
     // Default, epxression parsing. 
@@ -2195,7 +2191,7 @@ typedef struct aug_ir
     bool valid;
 } aug_ir;
 
-inline aug_ir* aug_ir_new(aug_input* input)
+static inline aug_ir* aug_ir_new(aug_input* input)
 {
     aug_ir* ir = AUG_ALLOC(aug_ir);
     ir->valid = true;
@@ -2207,7 +2203,7 @@ inline aug_ir* aug_ir_new(aug_input* input)
     return ir;
 }
 
-inline void aug_ir_delete(aug_ir* ir)
+static inline void aug_ir_delete(aug_ir* ir)
 {
     size_t i;
     for(i = 0; i < ir->operations.length; ++i)
@@ -2221,7 +2217,7 @@ inline void aug_ir_delete(aug_ir* ir)
     AUG_FREE(ir);
 }
 
-inline size_t aug_ir_operand_size(aug_ir_operand operand)
+static inline size_t aug_ir_operand_size(aug_ir_operand operand)
 {
     switch (operand.type)
     {
@@ -2241,7 +2237,7 @@ inline size_t aug_ir_operand_size(aug_ir_operand operand)
     return 0;
 }
 
-inline size_t aug_ir_operation_size(const aug_ir_operation* operation)
+static inline size_t aug_ir_operation_size(const aug_ir_operation* operation)
 {
     if(operation == 0)
         return 0;
@@ -2250,7 +2246,7 @@ inline size_t aug_ir_operation_size(const aug_ir_operation* operation)
     return size;
 }
 
-inline size_t aug_ir_add_operation_arg(aug_ir*ir, aug_opcode opcode, aug_ir_operand operand)
+static inline size_t aug_ir_add_operation_arg(aug_ir*ir, aug_opcode opcode, aug_ir_operand operand)
 {
     aug_ir_operation* operation = AUG_ALLOC(aug_ir_operation);
     operation->opcode = opcode;
@@ -2262,26 +2258,26 @@ inline size_t aug_ir_add_operation_arg(aug_ir*ir, aug_opcode opcode, aug_ir_oper
     return ir->operations.length-1;
 }
 
-inline size_t aug_ir_add_operation(aug_ir*ir, aug_opcode opcode)
+static inline size_t aug_ir_add_operation(aug_ir*ir, aug_opcode opcode)
 {
     aug_ir_operand operand;
     operand.type = AUG_IR_OPERAND_NONE;
     return aug_ir_add_operation_arg(ir, opcode, operand);
 }
 
-inline aug_ir_operation* aug_ir_last_operation(aug_ir*ir)
+static inline aug_ir_operation* aug_ir_last_operation(aug_ir*ir)
 {
     assert(ir->operations.length > 0);
     return (aug_ir_operation*)aug_container_at(&ir->operations, ir->operations.length - 1);
 }
 
-inline aug_ir_operation* aug_ir_get_operation(aug_ir*ir, size_t operation_index)
+static inline aug_ir_operation* aug_ir_get_operation(aug_ir*ir, size_t operation_index)
 {
     assert(operation_index < ir->operations.length);
     return (aug_ir_operation*)aug_container_at(&ir->operations, operation_index);
 }
 
-inline aug_ir_operand aug_ir_operand_from_bool(bool data)
+static inline aug_ir_operand aug_ir_operand_from_bool(bool data)
 {
     aug_ir_operand operand;
     operand.type = AUG_IR_OPERAND_BOOL;
@@ -2289,7 +2285,7 @@ inline aug_ir_operand aug_ir_operand_from_bool(bool data)
     return operand;
 }
 
-inline aug_ir_operand aug_ir_operand_from_char(char data)
+static inline aug_ir_operand aug_ir_operand_from_char(char data)
 {
     aug_ir_operand operand;
     operand.type = AUG_IR_OPERAND_CHAR;
@@ -2297,7 +2293,7 @@ inline aug_ir_operand aug_ir_operand_from_char(char data)
     return operand;
 }
 
-inline aug_ir_operand aug_ir_operand_from_int(int data)
+static inline aug_ir_operand aug_ir_operand_from_int(int data)
 {
     aug_ir_operand operand;
     operand.type = AUG_IR_OPERAND_INT;
@@ -2305,7 +2301,7 @@ inline aug_ir_operand aug_ir_operand_from_int(int data)
     return operand;
 }
 
-inline aug_ir_operand aug_ir_operand_from_float(float data)
+static inline aug_ir_operand aug_ir_operand_from_float(float data)
 {
     aug_ir_operand operand;
     operand.type = AUG_IR_OPERAND_FLOAT;
@@ -2313,7 +2309,7 @@ inline aug_ir_operand aug_ir_operand_from_float(float data)
     return operand;
 }
 
-inline aug_ir_operand aug_ir_operand_from_str(const char* data)
+static inline aug_ir_operand aug_ir_operand_from_str(const char* data)
 {
     aug_ir_operand operand;
     operand.type = AUG_IR_OPERAND_BYTES;
@@ -2321,20 +2317,20 @@ inline aug_ir_operand aug_ir_operand_from_str(const char* data)
     return operand;
 }
 
-inline aug_ir_frame* aug_ir_current_frame(aug_ir*ir)
+static inline aug_ir_frame* aug_ir_current_frame(aug_ir*ir)
 {
     assert(ir->frame_stack.length > 0);
     return (aug_ir_frame*)aug_container_back(&ir->frame_stack);
 }
 
-inline aug_ir_scope* aug_ir_current_scope(aug_ir*ir)
+static inline aug_ir_scope* aug_ir_current_scope(aug_ir*ir)
 {
     aug_ir_frame* frame = aug_ir_current_frame(ir);
     assert(frame->scope_stack.length > 0);
     return (aug_ir_scope*)aug_container_back(&frame->scope_stack);
 }
 
-inline bool aug_ir_current_scope_is_global(aug_ir*ir)
+static inline bool aug_ir_current_scope_is_global(aug_ir*ir)
 {
     aug_ir_frame* frame = aug_ir_current_frame(ir);
     if(ir->frame_stack.length == 1 && frame->scope_stack.length == 1)
@@ -2342,20 +2338,20 @@ inline bool aug_ir_current_scope_is_global(aug_ir*ir)
     return false;
 }
 
-inline int aug_ir_current_scope_local_offset(aug_ir*ir)
+static inline int aug_ir_current_scope_local_offset(aug_ir*ir)
 {
     const aug_ir_scope* scope = aug_ir_current_scope(ir);
     return scope->stack_offset - scope->base_index;
 }
 
-inline int aug_ir_calling_offset(aug_ir*ir)
+static inline int aug_ir_calling_offset(aug_ir*ir)
 {
     aug_ir_scope* scope = aug_ir_current_scope(ir);
     aug_ir_frame* frame = aug_ir_current_frame(ir);
     return (scope->stack_offset - frame->base_index) + frame->arg_count;
 }
 
-inline void aug_ir_push_frame(aug_ir*ir, int arg_count)
+static inline void aug_ir_push_frame(aug_ir*ir, int arg_count)
 {
     aug_ir_frame* frame = AUG_ALLOC(aug_ir_frame);
     frame->arg_count = arg_count;
@@ -2380,7 +2376,7 @@ inline void aug_ir_push_frame(aug_ir*ir, int arg_count)
     aug_container_push(&ir->frame_stack, frame);
 }
 
-inline void aug_ir_pop_frame(aug_ir*ir)
+static inline void aug_ir_pop_frame(aug_ir*ir)
 {
     if(ir->frame_stack.length == 1)
     {
@@ -2402,7 +2398,7 @@ inline void aug_ir_pop_frame(aug_ir*ir)
     AUG_FREE(frame);
 }
 
-inline void aug_ir_push_scope(aug_ir*ir)
+static inline void aug_ir_push_scope(aug_ir*ir)
 {
     const aug_ir_scope* current_scope = aug_ir_current_scope(ir);
     aug_ir_scope* scope = AUG_ALLOC(aug_ir_scope);
@@ -2414,7 +2410,7 @@ inline void aug_ir_push_scope(aug_ir*ir)
     aug_container_push(&frame->scope_stack, scope);
 }
 
-inline void aug_ir_pop_scope(aug_ir*ir)
+static inline void aug_ir_pop_scope(aug_ir*ir)
 {
     const aug_ir_operand delta = aug_ir_operand_from_int(aug_ir_current_scope_local_offset(ir));
     aug_ir_add_operation_arg(ir, AUG_OPCODE_DEC_STACK, delta);
@@ -2425,7 +2421,7 @@ inline void aug_ir_pop_scope(aug_ir*ir)
     AUG_FREE(scope);
 }
 
-inline bool aug_ir_set_var(aug_ir*ir, aug_string* var_name)
+static inline bool aug_ir_set_var(aug_ir*ir, aug_string* var_name)
 {
     aug_ir_scope* scope = aug_ir_current_scope(ir);
     const int offset = scope->stack_offset++;
@@ -2445,7 +2441,7 @@ inline bool aug_ir_set_var(aug_ir*ir, aug_string* var_name)
     return aug_symtable_set(scope->symtable, symbol);
 }
 
-inline bool aug_ir_set_param(aug_ir*ir, aug_string* param_name)
+static inline bool aug_ir_set_param(aug_ir*ir, aug_string* param_name)
 {
     aug_ir_scope* scope = aug_ir_current_scope(ir);
     const int offset = scope->stack_offset++;
@@ -2464,7 +2460,7 @@ inline bool aug_ir_set_param(aug_ir*ir, aug_string* param_name)
     return aug_symtable_set(scope->symtable, symbol);
 }
 
-inline bool aug_ir_set_func(aug_ir*ir, aug_string* func_name, int param_count)
+static inline bool aug_ir_set_func(aug_ir*ir, aug_string* func_name, int param_count)
 {
     aug_ir_scope* scope = aug_ir_current_scope(ir);
     const int offset = ir->bytecode_offset;
@@ -2483,7 +2479,7 @@ inline bool aug_ir_set_func(aug_ir*ir, aug_string* func_name, int param_count)
     return aug_symtable_set(scope->symtable, symbol);
 }
 
-inline aug_symbol aug_ir_get_symbol(aug_ir*ir, aug_string* name)
+static inline aug_symbol aug_ir_get_symbol(aug_ir*ir, aug_string* name)
 {
     int i,j;
     for(i = ir->frame_stack.length - 1; i >= 0; --i)
@@ -2505,7 +2501,7 @@ inline aug_symbol aug_ir_get_symbol(aug_ir*ir, aug_string* name)
     return sym;
 }
 
-inline aug_symbol aug_ir_symbol_relative(aug_ir*ir, aug_string* name)
+static inline aug_symbol aug_ir_symbol_relative(aug_ir*ir, aug_string* name)
 {
     int i,j;
     for(i = ir->frame_stack.length - 1; i >= 0; --i)
@@ -2548,14 +2544,14 @@ inline aug_symbol aug_ir_symbol_relative(aug_ir*ir, aug_string* name)
     return sym;
 }
 
-inline aug_symbol aug_ir_get_symbol_local(aug_ir*ir, aug_string* name)
+static inline aug_symbol aug_ir_get_symbol_local(aug_ir*ir, aug_string* name)
 {
     aug_ir_scope* scope = aug_ir_current_scope(ir);
     return aug_symtable_get(scope->symtable, name);
 }
 
 // --------------------------------------- Value Operations -------------------------------------------------------//
-inline bool aug_set_bool(aug_value* value, bool data)
+static inline bool aug_set_bool(aug_value* value, bool data)
 {
     if(value == NULL)
         return false;
@@ -2564,7 +2560,7 @@ inline bool aug_set_bool(aug_value* value, bool data)
     return true;
 }
 
-inline bool aug_set_int(aug_value* value, int data)
+static inline bool aug_set_int(aug_value* value, int data)
 {
     if(value == NULL)
         return false;
@@ -2573,7 +2569,7 @@ inline bool aug_set_int(aug_value* value, int data)
     return true;
 }
 
-inline bool aug_set_char(aug_value* value, char data)
+static inline bool aug_set_char(aug_value* value, char data)
 {
     if(value == NULL)
         return false;
@@ -2582,7 +2578,7 @@ inline bool aug_set_char(aug_value* value, char data)
     return true;
 }
 
-inline bool aug_set_float(aug_value* value, float data)
+static inline bool aug_set_float(aug_value* value, float data)
 {
     if(value == NULL)
         return false;
@@ -2591,7 +2587,7 @@ inline bool aug_set_float(aug_value* value, float data)
     return true;
 }
 
-inline bool aug_set_string(aug_value* value, const char* data)
+static inline bool aug_set_string(aug_value* value, const char* data)
 {
     if(value == NULL)
         return false;
@@ -2601,7 +2597,7 @@ inline bool aug_set_string(aug_value* value, const char* data)
     return true;
 }
 
-inline bool aug_set_array(aug_value* value)
+static inline bool aug_set_array(aug_value* value)
 {
     if(value == NULL)
         return false;
@@ -2693,7 +2689,7 @@ float aug_get_float(const aug_value* value)
     return 0.0f;
 }
 
-inline void aug_decref(aug_value* value)
+static inline void aug_decref(aug_value* value)
 {
     if(value == NULL)
         return;
@@ -2729,7 +2725,7 @@ inline void aug_decref(aug_value* value)
     }
 }
 
-inline void aug_incref(aug_value* value)
+static inline void aug_incref(aug_value* value)
 {
     if(value == NULL)
         return;
@@ -2751,7 +2747,7 @@ inline void aug_incref(aug_value* value)
     }
 }
 
-inline void aug_assign(aug_value* to, aug_value* from)
+static inline void aug_assign(aug_value* to, aug_value* from)
 {
     if(from == NULL || to == NULL)
         return;
@@ -2761,7 +2757,7 @@ inline void aug_assign(aug_value* to, aug_value* from)
     aug_incref(to);
 }
 
-inline void aug_move(aug_value* to, aug_value* from)
+static inline void aug_move(aug_value* to, aug_value* from)
 {
     if(from == NULL || to == NULL)
         return;
@@ -2771,7 +2767,7 @@ inline void aug_move(aug_value* to, aug_value* from)
     *from = aug_none();
 }
 
-inline bool aug_get_element(aug_value* container, aug_value* index, aug_value* element)
+static inline bool aug_get_element(aug_value* container, aug_value* index, aug_value* element)
 {
     if(container == NULL || index == NULL || element == NULL)
         return false;
@@ -2851,7 +2847,7 @@ inline bool aug_get_element(aug_value* container, aug_value* index, aug_value* e
     }                                                           \
 }
 
-inline bool aug_add(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_add(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_int(result, lhs->i + rhs->i),
@@ -2864,7 +2860,7 @@ inline bool aug_add(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_sub(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_sub(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_int(result, lhs->i - rhs->i),
@@ -2877,7 +2873,7 @@ inline bool aug_sub(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_mul(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_mul(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_int(result, lhs->i * rhs->i),
@@ -2890,7 +2886,7 @@ inline bool aug_mul(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_div(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_div(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_float(result, (float)lhs->i / rhs->i),
@@ -2903,7 +2899,7 @@ inline bool aug_div(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_pow(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_pow(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_int(result, (int)powf((float)lhs->i, (float)rhs->i)),
@@ -2916,7 +2912,7 @@ inline bool aug_pow(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_mod(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_mod(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_int(result, lhs->i % rhs->i),
@@ -2929,7 +2925,7 @@ inline bool aug_mod(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_lt(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_lt(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_bool(result, lhs->i < rhs->i),
@@ -2942,7 +2938,7 @@ inline bool aug_lt(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_lte(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_lte(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_bool(result, lhs->i <= rhs->i),
@@ -2955,7 +2951,7 @@ inline bool aug_lte(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_gt(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_gt(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_bool(result, lhs->i > rhs->i),
@@ -2968,7 +2964,7 @@ inline bool aug_gt(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_gte(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_gte(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_bool(result, lhs->i >= rhs->i),
@@ -2981,7 +2977,7 @@ inline bool aug_gte(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_eq(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_eq(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     // TODO: add a special case for object equivalence (per field)
     AUG_DEFINE_BINOP(result, lhs, rhs,
@@ -2995,7 +2991,7 @@ inline bool aug_eq(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_neq(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_neq(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     // TODO: add a special case for object equivalence (per field)
     AUG_DEFINE_BINOP(result, lhs, rhs,
@@ -3009,7 +3005,7 @@ inline bool aug_neq(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_approxeq(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_approxeq(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_bool(result, lhs->i == rhs->i),
@@ -3022,12 +3018,12 @@ inline bool aug_approxeq(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_and(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_and(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     return aug_set_bool(result, aug_get_bool(lhs) && aug_get_bool(rhs));
 }
 
-inline bool aug_or(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_or(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     return aug_set_bool(result, aug_get_bool(lhs) || aug_get_bool(rhs));
 }
@@ -3070,12 +3066,12 @@ static_assert(sizeof(float) >= sizeof(int), "Ensure bytes array has enough space
         rhs ? aug_value_type_labels[(int)rhs->type] : "(null)")     \
 }
 
-inline aug_value* aug_vm_top(aug_vm* vm)
+static inline aug_value* aug_vm_top(aug_vm* vm)
 {
     return &vm->stack[vm->stack_index -1];
 }
 
-inline aug_value* aug_vm_push(aug_vm* vm)
+static inline aug_value* aug_vm_push(aug_vm* vm)
 {
     if(vm->stack_index >= AUG_STACK_SIZE)
     {                                              
@@ -3087,14 +3083,14 @@ inline aug_value* aug_vm_push(aug_vm* vm)
     return top;
 }
 
-inline aug_value* aug_vm_pop(aug_vm* vm)
+static inline aug_value* aug_vm_pop(aug_vm* vm)
 {
     aug_value* top = aug_vm_top(vm);
     --vm->stack_index;
     return top;
 }
 
-inline aug_value* aug_vm_get_global(aug_vm* vm, int stack_offset)
+static inline aug_value* aug_vm_get_global(aug_vm* vm, int stack_offset)
 {
     if(stack_offset < 0)
     {
@@ -3112,7 +3108,7 @@ inline aug_value* aug_vm_get_global(aug_vm* vm, int stack_offset)
     return &vm->stack[stack_offset];
 }
 
-inline void aug_vm_push_call_frame(aug_vm* vm, int return_addr)
+static inline void aug_vm_push_call_frame(aug_vm* vm, int return_addr)
 {
     aug_value* ret_value = aug_vm_push(vm);
     if(ret_value == NULL)
@@ -3127,12 +3123,12 @@ inline void aug_vm_push_call_frame(aug_vm* vm, int return_addr)
     base_value->i = vm->base_index;    
 }
 
-inline aug_value* aug_vm_get_local(aug_vm* vm, int stack_offset)
+static inline aug_value* aug_vm_get_local(aug_vm* vm, int stack_offset)
 {
     return aug_vm_get_global(vm, vm->base_index + stack_offset);
 }
 
-inline int aug_vm_read_bool(aug_vm* vm)
+static inline int aug_vm_read_bool(aug_vm* vm)
 {
     aug_vm_bytecode_value bytecode_value;
     for(size_t i = 0; i < sizeof(bytecode_value.b); ++i)
@@ -3140,7 +3136,7 @@ inline int aug_vm_read_bool(aug_vm* vm)
     return bytecode_value.b;
 }
 
-inline int aug_vm_read_int(aug_vm* vm)
+static inline int aug_vm_read_int(aug_vm* vm)
 {
     aug_vm_bytecode_value bytecode_value;
     for(size_t i = 0; i < sizeof(bytecode_value.i); ++i)
@@ -3148,7 +3144,7 @@ inline int aug_vm_read_int(aug_vm* vm)
     return bytecode_value.i;
 }
 
-inline char aug_vm_read_char(aug_vm* vm)
+static inline char aug_vm_read_char(aug_vm* vm)
 {
     aug_vm_bytecode_value bytecode_value;
     for(size_t i = 0; i < sizeof(bytecode_value.c); ++i)
@@ -3156,7 +3152,7 @@ inline char aug_vm_read_char(aug_vm* vm)
     return bytecode_value.c;
 }
 
-inline float aug_vm_read_float(aug_vm* vm)
+static inline float aug_vm_read_float(aug_vm* vm)
 {
     aug_vm_bytecode_value bytecode_value;
     for(size_t i = 0; i < sizeof(bytecode_value.f); ++i)
@@ -3164,7 +3160,7 @@ inline float aug_vm_read_float(aug_vm* vm)
     return bytecode_value.f;
 }
 
-inline const char* aug_vm_read_bytes(aug_vm* vm)
+static inline const char* aug_vm_read_bytes(aug_vm* vm)
 {
     size_t len = 1; // include null terminating
     while(*(vm->instruction++))
@@ -3199,7 +3195,7 @@ void aug_vm_load_script(aug_vm* vm, const aug_script* script)
     if(vm == NULL || script == NULL)
         return;
 
-    if(script->bytecode == NULL && script->bytecode_size == 0)
+    if(script->bytecode == NULL)
         vm->bytecode = NULL;
     else
         vm->bytecode = script->bytecode;
@@ -3207,7 +3203,6 @@ void aug_vm_load_script(aug_vm* vm, const aug_script* script)
     vm->instruction = vm->bytecode;
     vm->valid = (vm->bytecode != NULL);
 
-    // Load the script state
     if(script->stack_state != NULL)
     {
         for(size_t i = 0; i < script->stack_state->length; ++i)
@@ -4311,16 +4306,12 @@ void aug_compile_script(aug_vm* vm, aug_input* input, aug_ast* root, aug_script*
     aug_ir* ir = aug_ir_new(input);
     aug_ast_to_ir(vm, root, ir);
 
-    if(!ir->valid)
-        return;
-    
     // Load script globals
     script->globals = ir->globals;
     aug_symtable_incref(script->globals);
 
     // Load bytecode into VM
     script->bytecode = aug_ir_to_bytecode(ir);
-    script->bytecode_size = ir->bytecode_offset;
 
     aug_ir_delete(ir);
 }
@@ -4575,7 +4566,7 @@ char aug_string_back(const aug_string* string)
 
 bool aug_string_compare(const aug_string* a, const aug_string* b) 
 {
-	if(a->length != b->length)
+    if(a == NULL || b == NULL || a->length != b->length)
         return false; 
     return strncmp(a->buffer, b->buffer, a->length) == 0;
 }

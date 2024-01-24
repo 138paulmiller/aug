@@ -10,4 +10,4 @@ clean:
 	rm -f $(TARGET)
 
 $(TARGET): $(SRC)
-	$(CC) -o $@ $^ -Wall -O3 -I../ -lm 
+	$(CC) -g -o $@ $^ -I../ -lm 
