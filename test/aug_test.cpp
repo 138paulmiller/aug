@@ -25,7 +25,6 @@ struct aug_tester
 	bool dump;
 	std::string filename;
 	
-
 private:
 	static aug_tester* s_tester;
 public:
@@ -93,7 +92,6 @@ public:
 		}
 	}
 };
-
 aug_tester* aug_tester::s_tester;
 
 std::string to_string(const aug_value& value)
@@ -168,14 +166,11 @@ void print(const aug_value& value)
 	case AUG_ARRAY:
 	{
 		printf("[ ");
-		if(value.array)
+		for( size_t i = 0; i < value.array->length; ++i)
 		{
-			for( size_t i = 0; i < value.array->length; ++i)
-			{
-				const aug_value* entry = aug_array_at(value.array, i);
-				print(*entry);
-				printf(" ");
-			}
+			const aug_value* entry = aug_array_at(value.array, i);
+			print(*entry);
+			printf(" ");
 		}
 		printf("]");
 		break;
@@ -191,7 +186,6 @@ float sum(const aug_value& value, aug_value_type& type)
 	case AUG_BOOL:
 	case AUG_STRING:
 	case AUG_OBJECT:
-		// INVALID TYPE!
 		return 0.0f;
 	case AUG_INT:
 		return (float)value.i;
@@ -258,12 +252,10 @@ aug_value expect(int argc, const aug_value* args)
 
 void aug_test_native(aug_vm* vm)
 {
-	aug_script* script = aug_script_new();
-	aug_compile(vm, script, aug_tester::get().filename.c_str());
+	aug_script* script = aug_compile(vm, aug_tester::get().filename.c_str());
 	
 	// store script state into VM
 	aug_load(vm, script);
-
 	{	
 		aug_value args[1];
 		args[0] = aug_from_int(5);
@@ -290,13 +282,11 @@ void aug_test_native(aug_vm* vm)
 	// unload the script state and restore vm
 	aug_unload(vm, script);
 	aug_script_delete(script);
-
 }
 
 void aug_test_gameloop(aug_vm* vm)
 {	
-	aug_script* script = aug_script_new();
-	aug_compile(vm, script, aug_tester::get().filename.c_str());
+	aug_script* script = aug_compile(vm, aug_tester::get().filename.c_str());
 	aug_load(vm, script);
 
 	const int test_count = 10;

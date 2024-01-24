@@ -1,4 +1,3 @@
-
 OUT_DIR = ../build
 TARGET = $(OUT_DIR)/aug_test
 SRC = $(wildcard *.cpp)
