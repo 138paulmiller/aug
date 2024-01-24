@@ -1,14 +1,21 @@
-a = "012345";
+func fibonacci(n) {
+    a = 0;
+    b = 1;
+    c = 0;
+    sum = 0;
+    count = n;
 
-e = a[1];
-expect(e == '1', "a[1] = ", e);
+    while count > 0 {
+        count = count - 1; 
+        a = b ;
+        b = sum; 
+        sum = a + b;
+    }
+    return sum;
+}
 
-e = a[2];
-expect(e == '2', "a[2] = ", e);
-
-e = a[ 1 + 1];
-expect(e == '2', "a[1+1] = ", e);
-
-i = 5;
-e = a[i];
-expect(e == '5', "a[i] = ", e);
+i = 1;
+while i < 40 {
+    print("fibonacci ",i,"\t", fibonacci(i));
+    i += 1;
+} 

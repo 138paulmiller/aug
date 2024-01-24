@@ -1,12 +1,13 @@
 #define AUG_LOG_VERBOSE
 #include <aug.h>
 
-#include <string.h>
+#include <string>
+#include <cstring>
 
-void aug_dump_file(aug_vm vm, const char* filename);
+void aug_dump_file(aug_vm* vm, const char* filename);
 
 struct aug_tester;
-typedef void(aug_tester_func)(aug_vm&);
+typedef void(aug_tester_func)(aug_vm*);
 
 #ifdef __linux__
 	#define STDOUT_RED(txt)   "\u001b[31m" txt "\u001b[0m"
@@ -24,7 +25,6 @@ struct aug_tester
 	bool dump;
 	std::string filename;
 	
-
 private:
 	static aug_tester* s_tester;
 public:
@@ -55,11 +55,11 @@ public:
 			printf("[TEST]\t%s\n", filename.c_str());
 	}
 
-	void run(aug_vm& vm, aug_tester_func* func = nullptr)
+	void run(aug_vm* vm, aug_tester_func* func = nullptr)
 	{
 		if (dump)
 			aug_dump_file(vm, filename.c_str());
-		 
+
 		if (func != nullptr)
 			func(vm);
 		else
@@ -92,7 +92,6 @@ public:
 		}
 	}
 };
-
 aug_tester* aug_tester::s_tester;
 
 std::string to_string(const aug_value& value)
@@ -116,7 +115,7 @@ std::string to_string(const aug_value& value)
         len = snprintf(out, sizeof(out), "%f", value.f);
         break;
     case AUG_STRING:
-        len = snprintf(out, sizeof(out), "%s", value.str->c_str());
+        len = snprintf(out, sizeof(out), "%s", value.str->buffer);
         break;
     case AUG_OBJECT:
         return "object";
@@ -125,9 +124,10 @@ std::string to_string(const aug_value& value)
         std::string str = "[ ";
 		if(value.array)
 		{
-			for(const aug_value& entry : *value.array)
+			for( size_t i = 0; i < value.array->length; ++i)
 			{
-				str += to_string(entry);
+				const aug_value* entry = aug_array_at(value.array, i);
+				str += to_string(*entry);
 				str += " ";
 			}
 		}
@@ -158,7 +158,7 @@ void print(const aug_value& value)
 		printf("%0.3f", value.f);
 		break;
 	case AUG_STRING:
-		printf("%s", value.str->c_str());
+		printf("%s", value.str->buffer);
 		break;
 	case AUG_OBJECT:
 		printf("object");
@@ -166,13 +166,11 @@ void print(const aug_value& value)
 	case AUG_ARRAY:
 	{
 		printf("[ ");
-		if(value.array)
+		for( size_t i = 0; i < value.array->length; ++i)
 		{
-			for(const aug_value& entry : *value.array)
-			{
-				print(entry);
-				printf(" ");
-			}
+			const aug_value* entry = aug_array_at(value.array, i);
+			print(*entry);
+			printf(" ");
 		}
 		printf("]");
 		break;
@@ -188,7 +186,6 @@ float sum(const aug_value& value, aug_value_type& type)
 	case AUG_BOOL:
 	case AUG_STRING:
 	case AUG_OBJECT:
-		// INVALID TYPE!
 		return 0.0f;
 	case AUG_INT:
 		return (float)value.i;
@@ -202,8 +199,11 @@ float sum(const aug_value& value, aug_value_type& type)
 		float  total = 0;
 		if(value.array)
 		{
-			for(const aug_value& entry : *value.array)
-				total += sum(entry, type);
+			for( size_t i = 0; i < value.array->length; ++i)
+			{
+				const aug_value* entry = aug_array_at(value.array, i);
+				total += sum(*entry, type);
+			}
 		}
 		return total;
 	}
@@ -211,12 +211,12 @@ float sum(const aug_value& value, aug_value_type& type)
 	return 0.0f;
 }
 
-aug_value sum(const aug_std_array<aug_value>& args)
+aug_value sum(int argc, const aug_value* args)
 {
 	aug_value_type type = AUG_INT;
 	float total = 0.0;
-	for (const aug_value& arg : args)
-		total += sum(arg, type);
+	for( int i = 0; i < argc; ++i)
+		total += sum(args[i], type);
 
 	if(type == AUG_FLOAT)
 		return  aug_from_float(total);
@@ -225,26 +225,24 @@ aug_value sum(const aug_std_array<aug_value>& args)
 	return aug_none();
 }
 
-aug_value print(const aug_std_array<aug_value>& args)
+aug_value print(int argc, const aug_value* args)
 {
-	for (const aug_value& arg : args)
-	{
-		print(arg);
-	}
+	for( int i = 0; i < argc; ++i)
+		print(args[i]);
 
 	printf("\n");
 
 	return aug_none();
 }
 
-aug_value expect(const aug_std_array<aug_value>& args)
+aug_value expect(int argc, const aug_value* args)
 {
-	if (args.size() == 0)
+	if (argc == 0)
 		return aug_none();
 
-	bool success = aug_get_bool(args[0]);
+	bool success = aug_get_bool(&args[0]);
 	std::string message;
-	for( size_t i = 1; i < args.size(); ++i)
+	for( int i = 1; i < argc; ++i)
 		message += to_string(args[i]);
 	
 	aug_tester::get().verify(success, message);
@@ -252,17 +250,17 @@ aug_value expect(const aug_std_array<aug_value>& args)
 	return aug_none();
 }
 
-void aug_test_native(aug_vm& vm)
+void aug_test_native(aug_vm* vm)
 {
-	aug_script script;
-	aug_compile(vm, script, aug_tester::get().filename.c_str());
-
+	aug_script* script = aug_compile(vm, aug_tester::get().filename.c_str());
+	
+	// store script state into VM
+	aug_load(vm, script);
 	{	
-		aug_std_array<aug_value> args;
-		args.push_back(aug_from_int(5));
-		//args.push_back(aug_from_int(30));
+		aug_value args[1];
+		args[0] = aug_from_int(5);
 
-		aug_value value = aug_call(vm, script, "fibonacci", args);
+		aug_value value = aug_call_args(vm, script, "fibonacci", 1, &args[0]);
 		
 		bool success = value.i == 5;
 		//bool success = value.i == 832040;
@@ -271,21 +269,24 @@ void aug_test_native(aug_vm& vm)
 	}
 	{
 		const int n = 5000;
-		aug_std_array<aug_value> args;
-		args.push_back(aug_from_int(n));
+		aug_value args[1];
+		args[0] = aug_from_int(n);
 
-		aug_value value = aug_call(vm, script, "count", args);
+		aug_value value = aug_call_args(vm, script, "count", 1, &args[0]);
 		
 		bool success = value.i == n;
 		const std::string message = "count = " + to_string(value);
 		aug_tester::get().verify(success, message);
 	}
+
+	// unload the script state and restore vm
+	aug_unload(vm, script);
+	aug_script_delete(script);
 }
 
-void aug_test_gameloop(aug_vm& vm)
+void aug_test_gameloop(aug_vm* vm)
 {	
-	aug_script script;
-	aug_compile(vm, script, aug_tester::get().filename.c_str());
+	aug_script* script = aug_compile(vm, aug_tester::get().filename.c_str());
 	aug_load(vm, script);
 
 	const int test_count = 10;
@@ -295,6 +296,7 @@ void aug_test_gameloop(aug_vm& vm)
 	}
 
 	aug_unload(vm, script);
+	aug_script_delete(script);
 }
 
 void aug_error(const char* msg)
@@ -304,8 +306,8 @@ void aug_error(const char* msg)
 
 int aug_test(int argc, char** argv)
 {
-	aug_vm vm;
-	aug_startup(vm, aug_error);
+	aug_vm* vm = aug_startup(aug_error);
+	
 	aug_register(vm, "print", print);
 	aug_register(vm, "expect", expect);
 	aug_register(vm, "sum", sum);

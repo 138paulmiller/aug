@@ -1,5 +1,5 @@
 i = 0;
 func update(){
 	i = i + 1;
-	print("Update:", i);
+	expect(i != 0);
 }

@@ -1,4 +1,3 @@
-
 OUT_DIR = ../build
 TARGET = $(OUT_DIR)/aug_test
 SRC = $(wildcard *.cpp)
@@ -17,4 +16,4 @@ $(OUT_DIR):
 	mkdir $(OUT_DIR)
 
 $(TARGET): $(SRC)
-	$(CC) $(LD) -o $@ $^ $(CFLAGS) $(LIBS)
+	$(CC) -g -o $@ $^ $(CFLAGS) $(LIBS) $(LD)

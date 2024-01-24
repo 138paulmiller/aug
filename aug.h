@@ -1,4 +1,3 @@
-
 /* MIT License
 
 Copyright (c) 2024 Paul Miller (https://github.com/138paulmiller)
@@ -30,124 +29,114 @@ SOFTWARE. */
         #define AUG_IMPLEMENTATION
         #include "aug.h"
 
-    * syntax:
-        block := { stmts }
-
-        stmt := stmt_expr
-              | stmt_assign
-              | stmt_expr
-              | stmt_while
-              | stmt_func_def
-
-        stmts := stmt stmts
-               | NULL
-
-        expr := value 
-              | expr BINOP expr 
-              | UNOP expr
-    
-        func_call := NAME ( args )
-
-        args := expr args
-              | , expr args
-              | NULL
-
-        value := NAME 
-               | func_call 
-               | NUMBER 
-               | STRING 
-               | ( expr )
-               | [ args ]
- 
-        stmt_expr := expr ;
-    
-        stmt_assign := VAR NAME = expr ;
-    
-        stmt_if := IF block 
-                |  IF block ELSE block 
-                |  IF block ELSE stmt_if
-    
-        stmt_while := WHILE expr { stmts }
-
-        params := NAME  params
-              | , NAME params
-              | NULL
-
-        stmt_func_def := FUNC NAME ( params ) block 
-
     Todo: 
-    - Syntax - Implement for loops
-    - VM - Serialize Bytecode to external file. Execute compiled bytecode from file
-    - VM - Serialize debug map to file. Link from bytecode to source file. 
-    - VM - Print Stack trace on error. Link back to source file if running uncompiled bytecode
-    - Native - Support return value in function callbacks
-    - Semantic Pass - resolve IR pass any potential naming, field,  or return issues     
-    - Convert to C 
-    -   Reimplement primary data structures, expose custom allocator/deallocator in vmironment
-    - Pushing string literals should not create copy. Create a flag to determine if in memory bytes
-
-    Issues:
-        - Create a STORE_ELEMENT VM opcode that will store the top of the stack into the container index. 
+    - Implement for loops
+    - Serialize Bytecode to external file. Execute compiled bytecode from file
+    - Serialize debug map to file. Link from bytecode to source file. 
+    - Opcodes for iterators, values references etc...
+    - Create bespoke operations array. 
+    - Create bespoke hashmap symtable.
+    - Implement objects 
 */
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #ifndef __AUG_HEADER__
 #define __AUG_HEADER__
 
 #define AUG_DEBUG_VM 0 // for console debug
 
-// Max size of the virtual machine stack
+// Size of the virtual machine's value stack 
 #ifndef AUG_STACK_SIZE
 #define AUG_STACK_SIZE (1024 * 16)
 #endif//AUG_STACK_SIZE
 
+// MAx number of user-provided external functions
+#ifndef AUG_EXTENSION_SIZE
+#define AUG_EXTENSION_SIZE 64
+#endif//AUG_EXTENSION_SIZE
+
+// Threshold of the nearly equal operator
 #ifndef AUG_APPROX_THRESHOLD
 #define AUG_APPROX_THRESHOLD 0.0000001
 #endif//AUG_APPROX_THRESHOLD 
 
-// Max number of characters per symbol name
-#ifndef AUG_TOKEN_BUFFER_SIZE
-#define AUG_TOKEN_BUFFER_SIZE 32
-#endif//AUG_TOKEN_BUFFER_SIZE
+#ifndef AUG_ALLOC
+#define AUG_ALLOC(type) (type*)(malloc(sizeof(type)))
+#endif//AUG_ALLOC
 
-#ifndef AUG_NEW
-#define AUG_NEW(type) new type
-#endif//AUG_NEW
+#ifndef AUG_ALLOC_ARRAY
+#define AUG_ALLOC_ARRAY(type, count) (type*)(malloc(sizeof(type)*count))
+#endif//AUG_ALLOC_ARRAY
 
-#ifndef AUG_NEW_ARRAY
-#define AUG_NEW_ARRAY(type, count) new type [count]
-#endif//AUG_NEW_ARRAY
+#ifndef AUG_REALLOC_ARRAY
+#define AUG_REALLOC_ARRAY(ptr, type, count) (type*)(realloc(ptr, sizeof(type)*count))
+#endif//AUG_REALLOC_ARRAY
 
-#ifndef AUG_DELETE
-#define AUG_DELETE(ptr) delete ptr
-#endif//AUG_DELETE
+#ifndef AUG_FREE
+#define AUG_FREE(ptr) free(ptr)
+#endif//AUG_FREE
 
-#ifndef AUG_DELETE_ARRAY
-#define AUG_DELETE_ARRAY(ptr) delete [] ptr
-#endif//AUG_DELETE_ARRAY
+#ifndef AUG_FREE_ARRAY
+#define AUG_FREE_ARRAY(ptr) free(ptr)
+#endif//AUG_FREE_ARRAY
 
-
-#include <string>
-#include <vector>
-#include <unordered_map>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
 
 // Data structures
-struct aug_value;
-struct aug_object;
-struct aug_symbol;
+typedef struct aug_value aug_value;
 
-using aug_std_string = std::string;
+typedef struct aug_string
+{
+	char *buffer;
+	int ref_count;
+	size_t capacity;
+	size_t length;
+} aug_string;
 
-template <class type>
-using aug_std_array = std::vector<type>;
+aug_string* aug_string_new(size_t size);
+aug_string* aug_string_create(const char* bytes);
+void aug_string_incref(aug_string* string);
+aug_string* aug_string_decref(aug_string* string);
+void aug_string_resize(aug_string* string, size_t size);
+void aug_string_push(aug_string* string, char c);
+char aug_string_pop(aug_string* string);
+char aug_string_at(const aug_string* string, size_t index);
+char aug_string_back(const aug_string* string);
+bool aug_string_compare(const aug_string* a, const aug_string* b);
+bool aug_string_compare_bytes(const aug_string* a, const char* bytes);
 
-template <class key, class type>
-using aug_std_map = std::unordered_map<key, type>;
+typedef struct aug_array
+{
+	aug_value* buffer;
+	int ref_count;
+	size_t capacity;
+	size_t length;
+} aug_array;
 
-typedef void(aug_error_callback)(const char* /*msg*/);
-typedef aug_value /*return_value*/ (aug_function_callback)(const aug_std_array<aug_value>& /*args*/);
+aug_array* aug_array_new(size_t size);
+void  aug_array_incref(aug_array* array);
+aug_array* aug_array_decref(aug_array* array);
+void  aug_array_resize(aug_array* array, size_t size);
+aug_value* aug_array_push(aug_array* array);
+aug_value* aug_array_pop(aug_array* array);
+aug_value* aug_array_at(const aug_array* array, size_t index);
+aug_value* aug_array_back(const aug_array* array);
+
+// Object instance
+typedef struct aug_object
+{
+    int ref_count;
+    // Value Hash map aug_string -> aug_value
+    //aug_std_array<aug_attribute> attribs;
+} aug_object;
 
 // Value Types
-enum aug_value_type : char
+typedef enum aug_value_type
 {
     AUG_BOOL,
     AUG_CHAR,
@@ -157,30 +146,17 @@ enum aug_value_type : char
     AUG_ARRAY,
     AUG_OBJECT,
     AUG_NONE,
-};
+} aug_value_type;
 
 #if defined(AUG_IMPLEMENTATION)
 const char* aug_value_type_labels[] =
 {
     "bool", "char", "int", "float", "string", "array", "object", "none"
 };
-static_assert(sizeof(aug_value_type_labels) / sizeof(aug_value_type_labels[0]) == (int)AUG_NONE + 1, "Type labels must be up to date with enum");
 #endif //AUG_IMPLEMENTATION
 
-// TODO: replace with custom class
-struct aug_array : public aug_std_array<aug_value>
-{
-    int ref_count;
-};
-
-// TODO: replace with custom class
-struct aug_string : public aug_std_string
-{
-    int ref_count;
-};
-
 // Values instance 
-struct aug_value
+typedef struct aug_value
 {
     aug_value_type type;
     union 
@@ -193,64 +169,71 @@ struct aug_value
         aug_object* obj;
         aug_array* array;
     };
-};
+} aug_value;
 
-// Object attributes
-struct aug_attribute
-{
-    aug_string id;
-    aug_value value;
-};
-
-// Object instance
-struct aug_object
-{
-    int ref_count;
-
-    aug_std_array<aug_attribute> attribs;
-};
+aug_value aug_none();
+bool aug_get_bool(const aug_value* value);
+int aug_get_int(const aug_value* value);
+float aug_get_float(const aug_value* value);
+aug_value aug_from_bool(bool data);
+aug_value aug_from_int(int data);
+aug_value aug_from_char(char data);
+aug_value aug_from_float(float data);
+aug_value aug_from_string(const char* data);
 
 // Symbol types
-enum aug_symbol_type
+typedef enum aug_symbol_type
 {
     AUG_SYM_NONE,
     AUG_SYM_VAR,
     AUG_SYM_FUNC,
-};
+} aug_symbol_type;
 
-enum aug_symbol_scope
+typedef enum aug_symbol_scope
 {
     AUG_SYM_SCOPE_LOCAL,
     AUG_SYM_SCOPE_GLOBAL,
     AUG_SYM_SCOPE_PARAM,
-};
+} aug_symbol_scope;
 
 // Script symbols 
-struct aug_symbol
+typedef struct aug_symbol
 {
+    aug_string* name;
     aug_symbol_scope scope;
     aug_symbol_type type;
     // Functions - offset is the bytecode address, argc is the number of expected params
     // Variables - offset is the stack offset from the base index
     int offset;
     int argc;
-};
+} aug_symbol;
 
-using aug_symtable = aug_std_map<aug_std_string, aug_symbol>;
+typedef struct aug_symtable
+{
+	aug_symbol* buffer;
+	int ref_count;
+	size_t capacity;
+	size_t length;
+} aug_symtable;
+
+aug_symtable* aug_symtable_new(size_t size);
+void aug_symtable_incref(aug_symtable* symtable);
+aug_symtable* aug_symtable_decref(aug_symtable* symtable);
+void  aug_symtable_resize(aug_symtable* symtable, size_t size);
+bool aug_symtable_set(aug_symtable* symtable, aug_symbol symbol);
+aug_symbol aug_symtable_get(aug_symtable* symtable, aug_string* name);
+aug_symbol aug_symtable_get_bytes(aug_symtable* symtable, const char* name);
 
 // Represents a "compiled" script
-struct aug_script
+typedef struct aug_script
 {
-    aug_symtable globals;
-    aug_std_array<char> bytecode;
-    bool valid;
+    aug_symtable* globals;
+    char* bytecode;
+    aug_array* stack_state;
+} aug_script;
 
-    // If the script
-    aug_std_array<aug_value> stack_state;
-};
-
-// Calling frames are used to preserve and access parameters and local variables from the stack within a calling context
-struct aug_frame
+// Calling frames are used to presize and access parameters and local variables from the stack within a calling context
+typedef struct aug_frame
 {
     int base_index;
     int stack_index;
@@ -259,62 +242,58 @@ struct aug_frame
     bool func_call;
     int arg_count;
     const char* instruction; 
-};
+} aug_frame;
+
+typedef void(aug_error_function)(const char* /*msg*/);
+typedef aug_value /*return*/ (aug_extension)(int argc, const aug_value* /*args*/);
 
 // Running instance of the virtual machine
-struct aug_vm
+typedef struct aug_vm
 {
-    aug_error_callback* error_callback;
+    aug_error_function* error_callback;
     bool valid;
 
     const char* instruction;
     const char* bytecode;
  
-    aug_value* stack;
+    aug_value stack[AUG_STACK_SIZE];
     int stack_index;
     int base_index;
 
-    // External functions are native functions that can be called from scripts   
+    // Extensions are external functions are native functions that can be called from scripts   
     // This external function map contains the user's registered functions. 
     // Use aug_register/aug_unregister to modify these fields
-    aug_std_array<aug_function_callback*> external_functions;
-    aug_std_array<aug_std_string>         external_function_names;
+    aug_extension* extensions[AUG_EXTENSION_SIZE];      
+    aug_string* extension_names[AUG_EXTENSION_SIZE]; 
+    int extension_count;
 
     // TODO: debug symtable from addr to func name / variable offsets
-};
+} aug_vm;
 
 // VM Must call both startup before using the VM. When done, must call shutdown.
-void aug_startup(aug_vm& vm, aug_error_callback* error_callback);
-void aug_shutdown(aug_vm& vm);
+aug_vm* aug_startup(aug_error_function* on_error);
+void aug_shutdown(aug_vm* vm);
 
 // Extend the script functions via external functions. 
 // NOTE: changing the registered functions will require a script recompilation. Can not guarantee the external function call will work. 
-void aug_register(aug_vm& vm, const char* func_name, aug_function_callback* callback);
-void aug_unregister(aug_vm& vm, const char* func_name);
+void aug_register(aug_vm* vm, const char* func_name, aug_extension* extension);
+void aug_unregister(aug_vm* vm, const char* func_name);
 
 // Will reboot the VM to execute the standalone script or code
-void aug_execute(aug_vm& vm, const char* filename);
-void aug_evaluate(aug_vm& vm, const char* code);
+void aug_execute(aug_vm* vm, const char* filename);
+aug_script* aug_compile(aug_vm* vm, const char* filename);
 
-// Script
-bool aug_compile(aug_vm& vm, aug_script& script, const char* filename);
-void aug_load(aug_vm& vm, aug_script& script);
-void aug_unload(aug_vm& vm, aug_script& script);
-aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name);
-aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name, const aug_std_array<aug_value>& args);
+aug_script* aug_script_new(aug_symtable* globals, char* bytecode);
+void aug_script_delete(aug_script* script);
+void aug_load(aug_vm* vm, aug_script* script);
+void aug_unload(aug_vm* vm, aug_script* script);
 
-// Types
-aug_value aug_none();
+aug_value aug_call(aug_vm* vm, aug_script* script, const char* func_name);
+aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, int argc, aug_value* args);
 
-bool aug_get_bool(const aug_value& value);
-int aug_get_int(const aug_value& value);
-float aug_get_float(const aug_value& value);
-
-aug_value aug_from_bool(bool data);
-aug_value aug_from_int(int data);
-aug_value aug_from_char(char data);
-aug_value aug_from_float(float data);
-aug_value aug_from_string(const char* data);
+#ifdef __cplusplus
+}
+#endif
 
 #endif //__AUG_HEADER__
 
@@ -322,48 +301,66 @@ aug_value aug_from_string(const char* data);
 
 #if defined(AUG_IMPLEMENTATION)
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <ctype.h>
 #include <assert.h>
 #include <math.h>
 #include <stdarg.h>
 #include <string.h>
 
-#include <fstream>
-#include <iostream>
-#include <sstream>
+// --------------------------------------- Generic Containers -----------------------------------------//
+
+typedef struct aug_container
+{
+	void** buffer;
+	size_t capacity;
+	size_t length;
+} aug_container;
+
+aug_container aug_container_new(size_t size);
+void aug_container_delete(aug_container* array);
+void  aug_container_resize(aug_container* array, size_t size);
+void aug_container_push(aug_container* array, void* data);
+void* aug_container_pop(aug_container* array);
+void* aug_container_at(const aug_container* array, size_t index);
+void* aug_container_back(const aug_container* array);
 
 // --------------------------------------- Input/Logging ---------------------------------------//
 
-void aug_log_error_internal(aug_error_callback* error_callback, const char* format, ...)
+void aug_log_error_internal(aug_error_function* error_callback, const char* format, ...)
 {
     // TODO: make thread safe
     static char log_buffer[4096];
 
     va_list args;
     va_start(args, format);
-    if (error_callback)
+    if(error_callback)
     {
         vsnprintf(log_buffer, sizeof(log_buffer), format, args);
         error_callback(log_buffer);
     }
+#if defined(AUG_LOG_VERBOSE)
     else
     {
-#if defined(AUG_LOG_VERBOSE)
         vprintf(format, args);
-#endif //defined(AUG_LOG_VERBOSE)
     }
+#endif //defined(AUG_LOG_VERBOSE)
     va_end(args);
 }
 
-#define AUG_LOG_ERROR(error_callback, ...)\
+#define AUG_LOG_ERROR(error_callback, ...)   \
     aug_log_error_internal(error_callback, __VA_ARGS__);
 
-#define AUG_INPUT_ERROR_AT(input, pos, ...)\
-if (input->valid)                          \
-{                                          \
-    input->valid = false;                  \
-    aug_input_error_hint(input, pos);      \
-    AUG_LOG_ERROR(input->error_callback,   \
-        __VA_ARGS__);                      \
+#define AUG_INPUT_ERROR_AT(input, pos, ...) \
+if(input->valid)                            \
+{                                           \
+    input->valid = false;                   \
+    aug_input_error_hint(input, pos);       \
+    AUG_LOG_ERROR(input->error_callback,    \
+        __VA_ARGS__);                       \
 }
 
 #define AUG_INPUT_ERROR(input, ...) \
@@ -371,210 +368,63 @@ if (input->valid)                          \
         aug_input_prev_pos(input),  \
         __VA_ARGS__);
 
-
-struct aug_pos
+typedef struct aug_pos
 {
     size_t filepos;
     size_t linepos;
-    int line;
-    int col;
-};
+    size_t line;
+    size_t col;
 
-struct aug_input
+    char c;
+}aug_pos;
+
+typedef struct aug_input
 {
-    bool is_file; // True if input source is a file. If false, file is string stream and filename is raw source code
-    std::istream* file;
-    aug_std_string filename;
-    aug_error_callback* error_callback;
+    FILE* file;
     bool valid;
+    aug_string* filename;
+    size_t track_pos;
+    size_t pos_buffer_index;
+    aug_pos pos_buffer[2];
 
-    std::streampos track_pos;
-    int pos_buffer_index;
-    aug_pos pos_buffer[4];
+    aug_error_function* error_callback;
+}aug_input;
 
-    char token_buffer[AUG_TOKEN_BUFFER_SIZE];
-};
-
-inline aug_pos* aug_input_pos(aug_input* input)
-{
-    return &input->pos_buffer[input->pos_buffer_index];
-}
-
-inline aug_pos* aug_input_prev_pos(aug_input* input)
-{
-    assert(input != NULL);
-    input->pos_buffer_index--;
-    if (input->pos_buffer_index < 0)
-        input->pos_buffer_index = (sizeof(input->pos_buffer) / sizeof(input->pos_buffer[0])) - 1;
-    return aug_input_pos(input);
-}
-
-inline aug_pos* aug_input_next_pos(aug_input* input)
-{
-    assert(input != NULL);
-    input->pos_buffer_index = (input->pos_buffer_index + 1) % (sizeof(input->pos_buffer) / sizeof(input->pos_buffer[0]));
-    return aug_input_pos(input);
-}
-
-aug_input* aug_input_open(const char* filename_or_code, aug_error_callback* error_callback, bool is_file)
-{
-    std::istream* stream = NULL;
-    if (is_file)
-    {
-        std::fstream* file = AUG_NEW(std::fstream(filename_or_code, std::fstream::in));
-        if (file == NULL || !file->is_open())
-        {
-            AUG_LOG_ERROR(error_callback, "Input failed to open file %s", filename_or_code);
-            if (file)
-                AUG_DELETE(file);
-            return NULL;
-        }
-        stream = file;
-    }
-    else
-    {
-        std::stringstream* iss = AUG_NEW(std::stringstream(filename_or_code, std::fstream::in));
-        if (iss == NULL)
-        {
-            AUG_LOG_ERROR(error_callback, "Input failed to read code %s", filename_or_code);
-            return NULL;
-        }
-        stream = iss;
-    }
-
-    aug_input* input = AUG_NEW(aug_input);
-    input->valid = true;
-    input->error_callback = error_callback;
-    input->is_file = is_file;
-    input->file = stream;
-    input->filename = filename_or_code;
-    input->pos_buffer_index = 0;
-    input->track_pos = 0;
-
-    aug_pos* pos = aug_input_pos(input);
-    pos->col = 0;
-    pos->line = 0;
-    pos->filepos = pos->linepos = (size_t)input->file->tellg();
-
-    return input;
-}
-
-void aug_input_close(aug_input* input)
-{
-    if (input->file != NULL)
-        AUG_DELETE(input->file);
-
-    AUG_DELETE(input);
-}
-
-inline char aug_input_get(aug_input* input)
-{
-    if (input == NULL || input->file == NULL)
-        return -1;
-
-    const char c = input->file->get();
-
-    aug_pos* pos = aug_input_pos(input);
-    aug_pos* next_pos = aug_input_next_pos(input);
-
-    next_pos->line = pos->line;
-    next_pos->col = pos->col + 1;
-    next_pos->linepos = pos->linepos;
-    next_pos->filepos = (size_t)input->file->tellg();
-
-    if (c == '\n')
-    {
-        next_pos->col = pos->line + 1;
-        next_pos->line = pos->line;
-        next_pos->linepos = (size_t)input->file->tellg();
-    }
-    return c;
-}
-
-inline char aug_input_peek(aug_input* input)
-{
-    assert(input != NULL && input->file != NULL);
-    return input->file->peek();
-}
-
-inline char aug_input_unget(aug_input* input)
-{
-    assert(input != NULL && input->file != NULL);
-    input->file->unget();
-
-    aug_input_prev_pos(input);
-
-    return aug_input_peek(input);
-}
-
-inline void aug_input_start_tracking(aug_input* input)
-{
-    assert(input != NULL && input->file != NULL);
-    input->track_pos = input->file->tellg();
-}
-
-inline bool aug_input_end_tracking(aug_input* input, aug_std_string& s)
-{
-    assert(input != NULL && input->file != NULL);
-    const std::fstream::iostate state = input->file->rdstate();
-    input->file->clear();
-
-    const std::streampos pos_end = input->file->tellg();
-    const std::streamoff len = (pos_end - input->track_pos);
-
-    if (len >= AUG_TOKEN_BUFFER_SIZE)
-    {
-        AUG_LOG_ERROR(input->error_callback, "Token contains to many characters. Can not exceed %d", AUG_TOKEN_BUFFER_SIZE);
-        input->file->clear(state);
-        return false;
-    }
-
-    input->token_buffer[0] = '\0';
-    input->file->seekg(input->track_pos);
-    input->file->read(input->token_buffer, len);
-    input->file->seekg(pos_end);
-    input->file->clear(state);
-
-    s.assign(input->token_buffer, (size_t)len);
-    return true;
-}
-
-inline void aug_input_error_hint(aug_input* input, const aug_pos* pos)
+static inline void aug_input_error_hint(aug_input* input, const aug_pos* pos)
 {
     assert(input != NULL && input->file != NULL);
     
     // save state
-    const std::fstream::iostate state = input->file->rdstate();
-    input->file->clear();
-    const std::streampos curr_pos = input->file->tellg();
+    int curr_pos = ftell(input->file);
 
     // go to line
-    input->file->seekg(pos->linepos);
+    fseek(input->file, pos->linepos, SEEK_SET);
 
     char buffer[4096];
-    int n = 0;
+    size_t n = 0;
 
-    char c = input->file->get();
+    char c = fgetc(input->file);
     // skip leading whitespace
-    while (isspace(c))
-        c = input->file->get();
+    while(isspace(c))
+        c = fgetc(input->file);
 
-    while (c != EOF && c != '\n' && n < (int)(sizeof(buffer) / sizeof(buffer[0]) - 1))
+    while(c != EOF && c != '\n' && n < (int)(sizeof(buffer) / sizeof(buffer[0]) - 1))
     {
         buffer[n++] = c;
-        c = input->file->get();
+        c = fgetc(input->file);
     }
     buffer[n] = '\0';
 
     AUG_LOG_ERROR(input->error_callback, "Error %s:(%d,%d) ",
-        input->filename.c_str(), pos->line + 1, pos->col + 1);
+        input->filename->buffer, pos->line + 1, pos->col + 1);
 
     AUG_LOG_ERROR(input->error_callback, "%s", buffer);
 
     // Draw arrow to the error if within buffer
-    if (pos->col < n-1)
+    if(pos->col < n-1)
     {
-        for (int i = 0; i < pos->col; ++i)
+        size_t i;
+        for(i = 0; i < pos->col; ++i)
             buffer[i] = ' ';
         buffer[pos->col] = '^';
         buffer[pos->col+1] = '\0';
@@ -583,26 +433,151 @@ inline void aug_input_error_hint(aug_input* input, const aug_pos* pos)
     AUG_LOG_ERROR(input->error_callback, "%s", buffer);
 
     // restore state
-    input->file->seekg(curr_pos);
-    input->file->clear(state);
+    fseek(input->file, curr_pos, SEEK_SET);
+}
+
+static inline aug_pos* aug_input_pos(aug_input* input)
+{
+    return &input->pos_buffer[input->pos_buffer_index];
+}
+
+static inline aug_pos* aug_input_prev_pos(aug_input* input)
+{
+    assert(input != NULL);
+    input->pos_buffer_index--;
+    if(input->pos_buffer_index < 0)
+        input->pos_buffer_index = (sizeof(input->pos_buffer) / sizeof(input->pos_buffer[0])) - 1;
+    return aug_input_pos(input);
+}
+
+static inline aug_pos* aug_input_next_pos(aug_input* input)
+{
+    assert(input != NULL);
+    input->pos_buffer_index = (input->pos_buffer_index + 1) % (sizeof(input->pos_buffer) / sizeof(input->pos_buffer[0]));
+    return aug_input_pos(input);
+}
+
+static inline char aug_input_get(aug_input* input)
+{
+    if(input == NULL || input->file == NULL)
+        return -1;
+
+    char c = fgetc(input->file);
+
+    aug_pos* pos = aug_input_pos(input);
+    aug_pos* next_pos = aug_input_next_pos(input);
+    
+    next_pos->c = c;
+    next_pos->line = pos->line;
+    next_pos->col = pos->col + 1;
+    next_pos->linepos = pos->linepos;
+    next_pos->filepos = ftell(input->file);
+
+    if(c == '\n')
+    {
+        next_pos->col = pos->line + 1;
+        next_pos->line = pos->line;
+        next_pos->linepos = ftell(input->file);
+    }
+    return c;
+}
+
+static inline char aug_input_peek(aug_input* input)
+{
+    assert(input != NULL && input->file != NULL);
+    char c = fgetc(input->file);
+    ungetc(c, input->file);
+    return c;
+}
+
+static inline void aug_input_unget(aug_input* input)
+{
+    assert(input != NULL && input->file != NULL);
+    aug_pos* pos = aug_input_pos(input);
+    ungetc(pos->c, input->file);
+}
+
+aug_input* aug_input_open(const char* filename, aug_error_function* error_callback)
+{
+    FILE* file = fopen(filename, "r");
+    if(file == NULL)
+    {
+        AUG_LOG_ERROR(error_callback, "Input failed to open file %s", filename);
+        return NULL;
+    }
+
+    aug_input* input = AUG_ALLOC(aug_input);
+    input->error_callback = error_callback;
+    input->file = file;
+    input->valid = true;
+    input->filename = aug_string_create(filename);
+    input->pos_buffer_index = 0;
+    input->track_pos = 0;
+
+    aug_pos* pos = aug_input_pos(input);
+    pos->col = 0;
+    pos->line = 0;
+    pos->filepos = pos->linepos = ftell(input->file);
+    pos->c = -1;
+
+    return input;
+}
+
+void aug_input_close(aug_input* input)
+{
+    input->filename = aug_string_decref(input->filename);
+    if(input->file != NULL)
+        fclose(input->file);
+
+    AUG_FREE(input);
+}
+
+static inline void aug_input_start_tracking(aug_input* input)
+{
+    assert(input != NULL && input->file != NULL);
+    input->track_pos = ftell(input->file);
+}
+
+static inline aug_string* aug_input_end_tracking(aug_input* input)
+{
+    assert(input != NULL && input->file != NULL);
+
+    const size_t pos_end = ftell(input->file);
+    const size_t len = (pos_end - input->track_pos);
+
+    aug_string* string = aug_string_new(len+1);
+    string->length = len;
+    string->buffer[len] = '\0';
+
+    fseek(input->file, input->track_pos, SEEK_SET);
+    size_t count = fread(string->buffer, sizeof(char), len, input->file);
+    fseek(input->file, pos_end, SEEK_SET);
+    if(count != len)
+    {
+        AUG_INPUT_ERROR(input, "Failed to read %d bytes! %s", len, input->filename->buffer);
+        fseek(input->file, pos_end, SEEK_END);
+    }
+
+    return string;
 }
 
 // -------------------------------------- Lexer  ---------------------------------------// 
+
 // Static token details
-struct aug_token_detail
+typedef struct aug_token_detail
 {
     const char* label;    // the string representation, used for visualization and debugging
     char prec;            // if the token is an operator, this is the precedence (note: higher values take precendece)
     int  argc;            // if the token is an operator, this is the number of arguments
     bool capture;         // if non-zero, the token will contain the source string value (i.e. integer and string literals)
     const char* keyword;  // if non-null, the token must match the provided keyword
-};
+} aug_token_detail;
 
 #define AUG_TOKEN_LIST                             \
     /* State */                                    \
     AUG_TOKEN(NONE,           0, 0, 0, NULL)       \
     AUG_TOKEN(END,            0, 0, 0, NULL)       \
-    /* Symbols */			                       \
+    /* Symbols */		                           \
     AUG_TOKEN(DOT,            0, 0, 0, NULL)       \
     AUG_TOKEN(COMMA,          0, 0, 0, NULL)       \
     AUG_TOKEN(COLON,          0, 0, 0, NULL)       \
@@ -660,16 +635,16 @@ struct aug_token_detail
     AUG_TOKEN(FALSE,          0, 0, 0, "false")
 
 // Token identifier. 
-enum aug_token_id : uint8_t 
+typedef enum aug_token_id
 {
 #define AUG_TOKEN(id, ...) AUG_TOKEN_##id,
     AUG_TOKEN_LIST
 #undef AUG_TOKEN
     AUG_TOKEN_COUNT
-};
+} aug_token_id;
 
 // All token type info. Types map from id to type info
-static aug_token_detail aug_token_details[(int)AUG_TOKEN_COUNT] = 
+aug_token_detail aug_token_details[(int)AUG_TOKEN_COUNT] = 
 {
 #define AUG_TOKEN(id, ...) { #id, __VA_ARGS__},
     AUG_TOKEN_LIST
@@ -679,162 +654,173 @@ static aug_token_detail aug_token_details[(int)AUG_TOKEN_COUNT] =
 #undef AUG_TOKEN_LIST
 
 // Token instance
-struct aug_token
+typedef struct  aug_token
 {
     aug_token_id id;
     const aug_token_detail* detail; 
-    aug_std_string data;
+    aug_string* data;
     aug_pos pos;
-};
+} aug_token;
 
 // Lexer state
-struct aug_lexer
+typedef struct aug_lexer
 {
     aug_input* input;
 
-    aug_token prev;
     aug_token curr;
     aug_token next;
 
     char comment_symbol;
-};
+} aug_lexer;
+
+aug_token aug_token_new()
+{
+    aug_token token;
+    token.id = AUG_TOKEN_NONE;
+    token.detail = &aug_token_details[(int)token.id];
+    token.data = NULL;
+    return token;
+}
+
+void aug_token_reset(aug_token* token)
+{
+    aug_string_decref(token->data);
+    *token = aug_token_new();
+}
+
+aug_token aug_token_copy(aug_token token)
+{
+    aug_token new_token = token;
+    aug_string_incref(new_token.data);
+    return new_token;
+}
 
 aug_lexer* aug_lexer_new(aug_input* input)
 {
-    aug_lexer* lexer = AUG_NEW(aug_lexer);
+    aug_lexer* lexer = AUG_ALLOC(aug_lexer);
     lexer->input = input;
     lexer->comment_symbol = '#';
 
-    lexer->prev = aug_token();
-    lexer->curr = aug_token();
-    lexer->next = aug_token();
+    lexer->curr = aug_token_new();
+    lexer->next = aug_token_new();
 
     return lexer;
 }
 
 void aug_lexer_delete(aug_lexer* lexer)
 {
-    AUG_DELETE(lexer);
+    aug_token_reset(&lexer->curr);
+    aug_token_reset(&lexer->next);
+
+    AUG_FREE(lexer);
 }
 
-inline bool aug_lexer_tokenize_char(aug_lexer* lexer, aug_token& token)
+bool aug_lexer_tokenize_char(aug_lexer* lexer, aug_token* token)
 {
     char c = aug_input_get(lexer->input);
-    if (c != '\'')
-    {
-        aug_input_unget(lexer->input);
-        return false;
-    }
+    assert(c == '\'');
 
-    token.id = AUG_TOKEN_CHAR;
-    token.data.clear();
+    token->id = AUG_TOKEN_CHAR;
+    token->data = aug_string_new(1);
 
     c = aug_input_get(lexer->input);
-    if (c != '\'')
+    if(c != '\'')
     {
-        token.data.push_back(c);
+        aug_string_push(token->data, c);
         c = aug_input_get(lexer->input); // eat 
     }
     else
-        token.data.push_back(0);
+        aug_string_push(token->data, 0);
 
-    if (c != '\'')
+    if(c != '\'')
     {
+        token->data = aug_string_decref(token->data);
         AUG_INPUT_ERROR(lexer->input, "char literal missing closing \"");
         return false;
     }
     return true;
 }
 
-inline bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token& token)
+bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token* token)
 {
     char c = aug_input_get(lexer->input);
-    if (c != '\"')
-    {
-        aug_input_unget(lexer->input);
-        return false;
-    }
+    assert(c == '\"');
 
-    token.id = AUG_TOKEN_STRING;
-    token.data.clear();
+    token->id = AUG_TOKEN_STRING;
+    token->data = aug_string_new(4);
 
     c = aug_input_get(lexer->input);
 
-    while (c != '\"')
+    while(c != '\"')
     {
-        if (c == EOF)
+        if(c == EOF)
         {
+            token->data = aug_string_decref(token->data);
             AUG_INPUT_ERROR(lexer->input, "string literal missing closing \"");
             return false;
         }
 
-        if (c == '\\')
+        if(c == '\\')
         {
             // handle escaped chars
             c = aug_input_get(lexer->input);
-            switch (c)
+            switch(c)
             {
             case '\'': 
-                token.data.push_back('\'');
+                aug_string_push(token->data, '\'');
                 break;
             case '\"':
-                token.data.push_back('\"');
+                aug_string_push(token->data, '\"');
                 break;
             case '\\':
-                token.data.push_back('\\');
+                aug_string_push(token->data, '\\');
                 break;
             case '0': //Null
-                token.data.push_back(0x0);
+                aug_string_push(token->data, 0x0);
                 break;
             case 'a': //Alert beep
-                token.data.push_back(0x07);
+                aug_string_push(token->data, 0x07);
                 break;
             case 'b': // Backspace
-                token.data.push_back(0x08);
+                aug_string_push(token->data, 0x08);
                 break;
             case 'f': // Page break
-                token.data.push_back(0x0C);
+                aug_string_push(token->data, 0x0C);
                 break;
             case 'n': // Newline
-                token.data.push_back(0x0A);
+                aug_string_push(token->data, 0x0A);
                 break;
             case 'r': // Carriage return
-                token.data.push_back(0x0D);
+                aug_string_push(token->data, 0x0D);
                 break;
             case 't': // Tab (Horizontal)
-                token.data.push_back(0x09);
+                aug_string_push(token->data, 0x09);
                 break;
             case 'v': // Tab (Vertical)
-                token.data.push_back(0x0B);
+                aug_string_push(token->data, 0x0B);
                 break;
             default:
+                token->data = aug_string_decref(token->data);
                 AUG_INPUT_ERROR(lexer->input, "invalid escape character \\%c", c);
-                while (c != '\"')
-                {
-                    if (c == EOF)
-                        break;
-                    c = aug_input_get(lexer->input);
-                }
                 return false;
             }
         }
         else
         {
-            token.data.push_back(c);
+            aug_string_push(token->data, c);
         }
 
         c = aug_input_get(lexer->input);
     }
-
     return true;
 }
 
-inline bool aug_lexer_tokenize_symbol(aug_lexer* lexer, aug_token& token)
+bool aug_lexer_tokenize_symbol(aug_lexer* lexer, aug_token* token)
 {
     aug_token_id id = AUG_TOKEN_NONE;
 
     char c = aug_input_get(lexer->input);
-    switch (c)
+    switch(c)
     {
     case '.': id = AUG_TOKEN_DOT;       break;
     case ',': id = AUG_TOKEN_COMMA;     break;
@@ -847,108 +833,106 @@ inline bool aug_lexer_tokenize_symbol(aug_lexer* lexer, aug_token& token)
     case '{': id = AUG_TOKEN_LBRACE;    break;
     case '}': id = AUG_TOKEN_RBRACE;    break;
     case '+':
-        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
+        if(aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_ADD_ASSIGN;
         else
             id = AUG_TOKEN_ADD;
         break;
     case '-':
-        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
+        if(aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_SUB_ASSIGN;
         else
             id = AUG_TOKEN_SUB;
         break;
     case '*':
-        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
+        if(aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_MUL_ASSIGN;
         else
             id = AUG_TOKEN_MUL;
         break;
     case '/':
-        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
+        if(aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_DIV_ASSIGN;
         else
             id = AUG_TOKEN_DIV;
         break;
     case '^':
-        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
+        if(aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_POW_ASSIGN;
         else
             id = AUG_TOKEN_POW;
         break;
     case '%':
-        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
+        if(aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_MOD_ASSIGN;
         else
             id = AUG_TOKEN_MOD;
         break;
     case '<':
-        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
+        if(aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_LT_EQ;
         else
             id = AUG_TOKEN_LT;
         break;
     case '>':
-        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
+        if(aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_GT_EQ;
         else
             id = AUG_TOKEN_GT;
         break;
     case '=':
-        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
+        if(aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_EQ;
         else
             id = AUG_TOKEN_ASSIGN;
         break;
     case '!':
-        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
+        if(aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_NOT_EQ;
         else
             id = AUG_TOKEN_NOT;
         break;
     case '~':
-        if (aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
+        if(aug_input_peek(lexer->input) == '=' && aug_input_get(lexer->input))
             id = AUG_TOKEN_APPROX_EQ;
         break;
     }
 
-    if (id == AUG_TOKEN_NONE)
+    if(id == AUG_TOKEN_NONE)
     {
         aug_input_unget(lexer->input);
         return false;
     }
 
-    token.id = id;
+    token->id = id;
     return true;
 }
 
-inline bool aug_lexer_tokenize_name(aug_lexer* lexer, aug_token& token)
+bool aug_lexer_tokenize_name(aug_lexer* lexer, aug_token* token)
 {
     aug_input_start_tracking(lexer->input);
 
     char c = aug_input_get(lexer->input);
-    if (c != '_' && !isalpha(c))
+    if(c != '_' && !isalpha(c))
     {
         aug_input_unget(lexer->input);
         return false;
     }
     
-    while (c == '_' || isalnum(c))
+    while(c == '_' || isalnum(c))
         c = aug_input_get(lexer->input);
     aug_input_unget(lexer->input);
 
-    if (!aug_input_end_tracking(lexer->input, token.data))
-        return false;
-
-    token.id = AUG_TOKEN_NAME;
+    token->id = AUG_TOKEN_NAME;
+    token->data = aug_input_end_tracking(lexer->input);
 
     // find token id for keyword
-    for (size_t i = 0; i < (size_t)AUG_TOKEN_COUNT; ++i)
+    for(size_t i = 0; i < (size_t)AUG_TOKEN_COUNT; ++i)
     {
-        const aug_token_detail& detail = aug_token_details[i];
-        if (detail.keyword && detail.keyword == token.data)
+        if(aug_string_compare_bytes(token->data, aug_token_details[i].keyword))
         {
-            token.id = (aug_token_id)i;
+            token->id = (aug_token_id)i;
+            token->data = aug_string_decref(token->data); // keyword is static, free token data
             break;
         }
     }
@@ -956,12 +940,12 @@ inline bool aug_lexer_tokenize_name(aug_lexer* lexer, aug_token& token)
     return true;
 }
 
-bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token& token)
+bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token* token)
 {    
     aug_input_start_tracking(lexer->input);
 
     char c = aug_input_get(lexer->input);
-    if (c != '.' && !isdigit(c) && c != '+' && c != '-')
+    if(c != '.' && !isdigit(c) && c != '+' && c != '-')
     {
         aug_input_unget(lexer->input);
         return false;
@@ -969,30 +953,30 @@ bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token& token)
 
     aug_token_id id = AUG_TOKEN_NONE;
 
-    if (c == '0' && aug_input_peek(lexer->input) == 'x')
+    if(c == '0' && aug_input_peek(lexer->input) == 'x')
     {
         id = AUG_TOKEN_HEX;
 
         c = aug_input_get(lexer->input); //eat 'x'
         c = aug_input_get(lexer->input);
 
-        while (isalnum(c))
+        while(isalnum(c))
         {
-            if (!isdigit(c) && !((c >='a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+            if(!isdigit(c) && !((c >='a' && c <= 'f') || (c >= 'A' && c <= 'F')))
                 id = AUG_TOKEN_NONE;
 
             c = aug_input_get(lexer->input);
         }
         aug_input_unget(lexer->input);
     }
-    else if (c == '0' && aug_input_peek(lexer->input) == 'b')
+    else if(c == '0' && aug_input_peek(lexer->input) == 'b')
     {
         id = AUG_TOKEN_BINARY;
 
         c = aug_input_get(lexer->input); // eat 'b'
         c = aug_input_get(lexer->input);
 
-        while (isdigit(c))
+        while(isdigit(c))
         {
             if(c != '0' && c != '1')
                 id = AUG_TOKEN_NONE;
@@ -1003,10 +987,10 @@ bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token& token)
     }
     else
     {
-        if (c == '+' || c == '-')
+        if(c == '+' || c == '-')
         {
             c = aug_input_peek(lexer->input);
-            if (c != '.' && !isdigit(c))
+            if(c != '.' && !isdigit(c))
             {
                 aug_input_unget(lexer->input);
                 return false;
@@ -1014,17 +998,17 @@ bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token& token)
             c = aug_input_get(lexer->input);
         }
 
-        if (c == '.')
+        if(c == '.')
             id = AUG_TOKEN_FLOAT;
         else 
             id = AUG_TOKEN_INT;
 
         bool dot = false;
-        while (c == '.' || isdigit(c))
+        while(c == '.' || isdigit(c))
         {
-            if (c == '.')
+            if(c == '.')
             {
-                if (dot)
+                if(dot)
                     id = AUG_TOKEN_NONE;
                 else
                     id = AUG_TOKEN_FLOAT;
@@ -1036,33 +1020,28 @@ bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token& token)
         aug_input_unget(lexer->input);
     }
 
-    token.id = id;
+    token->id = id;
+    token->data = aug_input_end_tracking(lexer->input);
 
     if(id == AUG_TOKEN_NONE)
     {
-        AUG_INPUT_ERROR(lexer->input, "invalid numeric format %s", token.data.c_str());
+        AUG_INPUT_ERROR(lexer->input, "invalid numeric format %s", token->data->buffer);
+        token->data = aug_string_decref(token->data);
         return false;
     }
-    
-    if (!aug_input_end_tracking(lexer->input, token.data))
-        return false;
 
     return true;
 }
 
 aug_token aug_lexer_tokenize(aug_lexer* lexer)
 {
-    aug_token token;
+    aug_token token = aug_token_new();
 
     // if file is not open, or already at then end. return invalid token
-    if (lexer->input == NULL || !lexer->input->valid)
-    {
-        token.id = AUG_TOKEN_NONE;
-        token.detail = &aug_token_details[(int)token.id];
+    if(lexer->input == NULL)
         return token;
-    }
 
-    if (aug_input_peek(lexer->input) == EOF)
+    if(aug_input_peek(lexer->input) == EOF)
     {
         token.id = AUG_TOKEN_END;
         token.detail = &aug_token_details[(int)token.id];
@@ -1072,9 +1051,9 @@ aug_token aug_lexer_tokenize(aug_lexer* lexer)
     char c = aug_input_peek(lexer->input);
 
     // skip whitespace
-    if (isspace(c))
+    if(isspace(c))
     {
-        while (isspace(c))
+        while(isspace(c))
             c = aug_input_get(lexer->input);
         aug_input_unget(lexer->input);
     }
@@ -1082,11 +1061,11 @@ aug_token aug_lexer_tokenize(aug_lexer* lexer)
     // skip comments
     while(c == lexer->comment_symbol)
     {        
-        while (c != EOF)
+        while(c != EOF)
         {
             c = aug_input_get(lexer->input);
 
-            if (c == '\n')
+            if(c == '\n')
             {
                 c = aug_input_peek(lexer->input);
                 break;
@@ -1094,16 +1073,16 @@ aug_token aug_lexer_tokenize(aug_lexer* lexer)
         }
 
         // skip whitespace
-        if (isspace(c))
+        if(isspace(c))
         {
-            while (isspace(c))
+            while(isspace(c))
                 c = aug_input_get(lexer->input);
             aug_input_unget(lexer->input);
         }
     }
 
     // handle eof
-    if (c == EOF)
+    if(c == EOF)
     {
         token.id = AUG_TOKEN_END;
         token.detail = &aug_token_details[(int)token.id];
@@ -1133,24 +1112,24 @@ aug_token aug_lexer_tokenize(aug_lexer* lexer)
             default:
                 break;
         }
-        if (!allow_sign || !aug_lexer_tokenize_number(lexer, token))
-            aug_lexer_tokenize_symbol(lexer, token);
+        if(!allow_sign || !aug_lexer_tokenize_number(lexer, &token))
+            aug_lexer_tokenize_symbol(lexer, &token);
         break;
     }
     case '\"':
-        aug_lexer_tokenize_string(lexer, token);
+        aug_lexer_tokenize_string(lexer, &token);
         break;
     case '\'':
-        aug_lexer_tokenize_char(lexer, token);
+        aug_lexer_tokenize_char(lexer, &token);
         break;
     default:
-        if (aug_lexer_tokenize_symbol(lexer, token))
+        if(aug_lexer_tokenize_name(lexer, &token))
             break;
-        if(aug_lexer_tokenize_name(lexer, token))
+        if(aug_lexer_tokenize_number(lexer, &token))
             break;
-        if (aug_lexer_tokenize_number(lexer, token))
+    
+        if(aug_lexer_tokenize_symbol(lexer, &token))
             break;
-
         AUG_INPUT_ERROR(lexer->input, "invalid character %c", c);
         break;
     }
@@ -1161,13 +1140,15 @@ aug_token aug_lexer_tokenize(aug_lexer* lexer)
 
 bool aug_lexer_move(aug_lexer* lexer)
 {
-    if (lexer == NULL)
+    if(lexer == NULL)
         return false;
 
-    if (lexer->next.id == AUG_TOKEN_NONE)
+    if(lexer->next.id == AUG_TOKEN_NONE)
         lexer->next = aug_lexer_tokenize(lexer);        
 
-    lexer->prev = lexer->curr; 
+
+    aug_token_reset(&lexer->curr);
+
     lexer->curr = lexer->next;
     lexer->next = aug_lexer_tokenize(lexer);
 
@@ -1176,9 +1157,9 @@ bool aug_lexer_move(aug_lexer* lexer)
 
 // -------------------------------------- Parser / Abstract Syntax Tree ---------------------------------------// 
 
-enum aug_ast_id : uint8_t
+typedef enum aug_ast_id
 {
-    AUG_AST_ROOT,
+    AUG_AST_ROOT = 0,
     AUG_AST_BLOCK, 
     AUG_AST_STMT_EXPR,
     AUG_AST_STMT_DEFINE_VAR,
@@ -1197,89 +1178,144 @@ enum aug_ast_id : uint8_t
     AUG_AST_PARAM_LIST,
     AUG_AST_PARAM,
     AUG_AST_RETURN,
-};
+} aug_ast_id;
 
-struct aug_ast
+typedef struct aug_ast
 {
     aug_ast_id id;
     aug_token token;
-    aug_std_array<aug_ast*> children;
-};
+    struct aug_ast** children;
+    int children_size;
+    int children_capacity;
+} aug_ast;
 
 aug_ast* aug_parse_value(aug_lexer* lexer); 
 aug_ast* aug_parse_block(aug_lexer* lexer);
 
-inline aug_ast* aug_ast_new(aug_ast_id id, const aug_token& token = aug_token())
+aug_ast* aug_ast_new(aug_ast_id id, aug_token token)
 {
-    aug_ast* node = AUG_NEW(aug_ast);
+    aug_ast* node = AUG_ALLOC(aug_ast);
     node->id = id;
     node->token = token;
+    node->children = NULL;
+    node->children_size = 0;
+    node->children_capacity = 0;
     return node;
 }
 
-inline void aug_ast_delete(aug_ast* node)
+static inline void aug_ast_delete(aug_ast* node)
 {
-    if (node == NULL)
+    if(node == NULL)
         return;
-    for(aug_ast* child : node->children)
-        aug_ast_delete(child);
-    delete node;
+    if(node->children)
+    {
+        int i;
+        for(i = 0; i < node->children_size; ++i)
+            aug_ast_delete(node->children[i]);
+        AUG_FREE_ARRAY(node->children);
+    }
+    aug_token_reset(&node->token);
+    AUG_FREE(node);
 }
 
-inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_std_array<aug_token>& op_stack, aug_std_array<aug_ast*>& expr_stack)
-{
-    aug_token next_op = op_stack.back();
-    op_stack.pop_back();
+static inline void aug_ast_resize(aug_ast* node, int size)
+{    
+    node->children_capacity = size == 0 ? 1 : size;
+    node->children = AUG_REALLOC_ARRAY(node->children, aug_ast*, node->children_capacity);
+    node->children_size = size;
+}
 
-    const int op_argc = (size_t)next_op.detail->argc;
+static inline void aug_ast_add(aug_ast* node, aug_ast* child)
+{
+    if(node->children_size + 1 >= node->children_capacity)
+    {
+        node->children_capacity = node->children_capacity == 0 ? 1 : node->children_capacity * 2;
+        node->children = AUG_REALLOC_ARRAY(node->children, aug_ast*, node->children_capacity);
+    }
+    node->children[node->children_size++] = child;
+}
+
+static inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_container* op_stack, aug_container* expr_stack)
+{
+    //op_stack : aug_token*
+    //expr_stack : aug_ast*
+    
+    aug_token* next_op = (aug_token*)aug_container_pop(op_stack);
+
+    const int op_argc = next_op->detail->argc;
     assert(op_argc == 1 || op_argc == 2); // Only supported operator types
 
-    if(expr_stack.size() < (size_t)op_argc)
+    if(expr_stack->length < (size_t)op_argc)
     {
-        while(expr_stack.size() > 0)
+        while(expr_stack->length > 0)
         {
-            aug_ast_delete(expr_stack.back());
-            expr_stack.pop_back();
+            aug_ast* expr = (aug_ast*)aug_container_pop(expr_stack);
+            aug_ast_delete(expr);
         }
-        AUG_INPUT_ERROR(lexer->input, "Invalid number of arguments to operator %s", next_op.detail->label);
+        AUG_INPUT_ERROR(lexer->input, "Invalid number of arguments to operator %s", next_op->detail->label);
+        
+        AUG_FREE(next_op);
         return false;
     }
 
     // Push binary op onto stack
     aug_ast_id id = (op_argc == 2) ? AUG_AST_BINARY_OP : AUG_AST_UNARY_OP;
-    aug_ast* binaryop = aug_ast_new(id, next_op);
-    binaryop->children.resize(op_argc);
-
-    for(int i = 0; i < op_argc; ++i)
+    aug_ast* binaryop = aug_ast_new(id, *next_op);
+    aug_ast_resize(binaryop, op_argc);
+    
+    int i;
+    for(i = 0; i < op_argc; ++i)
     {
-        aug_ast* expr = expr_stack.back();
-        expr_stack.pop_back();
+        aug_ast* expr = (aug_ast*)aug_container_pop(expr_stack);
         binaryop->children[(op_argc-1) - i] = expr; // add in reverse
     }
 
-    expr_stack.push_back(binaryop);
+    aug_container_push(expr_stack, binaryop); 
+    AUG_FREE(next_op);
     return true;
 }
 
-inline aug_ast* aug_parse_expr(aug_lexer* lexer)
+static inline void aug_parse_expr_stack_cleanup(aug_container* op_stack, aug_container* expr_stack)
+{
+    while(op_stack->length > 0)
+    {
+        aug_token* token = (aug_token*) aug_container_pop(op_stack);
+        AUG_FREE(token);
+    }
+    while(expr_stack->length > 0)
+    {
+        aug_ast* expr = (aug_ast*) aug_container_pop(expr_stack);
+        aug_ast_delete(expr);
+    }
+    aug_container_delete(op_stack);
+    aug_container_delete(expr_stack);
+}
+
+aug_ast* aug_parse_expr(aug_lexer* lexer)
 {
     // Shunting yard algorithm
-    aug_std_array<aug_token> op_stack;
-    aug_std_array<aug_ast*> expr_stack;
-    
+    aug_container op_stack = aug_container_new(1);
+    aug_container expr_stack = aug_container_new(1);
     while(lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_token op = lexer->curr;
+
         if(op.detail->prec > 0)
         {
             // left associate by default (for right, <= becomes <)
-            while(op_stack.size() && op_stack.back().detail->prec >= op.detail->prec)
+            while(op_stack.length)
             {
-                if(!aug_parse_expr_pop(lexer,  op_stack, expr_stack))
+                aug_token* next_op = (aug_token*)aug_container_back(&op_stack);
+
+                if(next_op->detail->prec < op.detail->prec)
+                    break;
+                if(!aug_parse_expr_pop(lexer, &op_stack, &expr_stack))
                     return NULL;
             }
-
-            op_stack.push_back(op);
+            aug_token* new_op = AUG_ALLOC(aug_token);
+            *new_op = op;
+            
+            aug_container_push(&op_stack, new_op);
             aug_lexer_move(lexer);
         }
         else
@@ -1287,62 +1323,72 @@ inline aug_ast* aug_parse_expr(aug_lexer* lexer)
             aug_ast* value = aug_parse_value(lexer);
             if(value == NULL)
                 break;
-            expr_stack.push_back(value);
+
+            aug_container_push(&expr_stack, value);
         }
     }
 
     // Not an expression
-    if(op_stack.size() == 0 && expr_stack.size() == 0)
-        return NULL;
-
-    while(op_stack.size())
+    if(op_stack.length == 0 && expr_stack.length == 0)
     {
-        if(!aug_parse_expr_pop(lexer,  op_stack, expr_stack))
+        aug_container_delete(&op_stack);
+        aug_container_delete(&expr_stack);
+        return NULL;
+    }
+
+    while(op_stack.length)
+    {
+        if(!aug_parse_expr_pop(lexer, &op_stack, &expr_stack))
+        {
+            aug_parse_expr_stack_cleanup(&op_stack, &expr_stack);
             return NULL;
+        }
     }
 
     // Not a valid expression. Either malformed or missing semicolon 
-    if(expr_stack.size() == 0 || expr_stack.size() > 1)
+    if(expr_stack.length == 0 || expr_stack.length > 1)
     {
-        while(expr_stack.size() > 0)
-        {
-            aug_ast_delete(expr_stack.back());
-            expr_stack.pop_back();
-        }
+        aug_parse_expr_stack_cleanup(&op_stack, &expr_stack);
         AUG_INPUT_ERROR(lexer->input, "Invalid expression syntax");
         return NULL;
     }
 
-    return expr_stack.back();
+    aug_ast* expr = (aug_ast*) aug_container_back(&expr_stack);
+    aug_container_delete(&op_stack);
+    aug_container_delete(&expr_stack);
+    return expr;
 }
 
-inline aug_ast* aug_parse_funccall(aug_lexer* lexer)
+aug_ast* aug_parse_funccall(aug_lexer* lexer)
 {
-    aug_token name_token = lexer->curr;
-    if (name_token.id != AUG_TOKEN_NAME)
+    if(lexer->curr.id != AUG_TOKEN_NAME)
         return NULL;
 
-    if (lexer->next.id != AUG_TOKEN_LPAREN)
+    if(lexer->next.id != AUG_TOKEN_LPAREN)
         return NULL;
+
+    aug_token name_token = aug_token_copy(lexer->curr);
 
     aug_lexer_move(lexer); // eat NAME
     aug_lexer_move(lexer); // eat LPAREN
 
     aug_ast* funccall = aug_ast_new(AUG_AST_FUNC_CALL, name_token);
-    if (aug_ast* expr = aug_parse_expr(lexer))
+    aug_ast* expr = aug_parse_expr(lexer);
+    if(expr != NULL)
     {
-        funccall->children.push_back(expr);
+        aug_ast_add(funccall, expr);
 
-        while (expr && lexer->curr.id == AUG_TOKEN_COMMA)
+        while(expr != NULL && lexer->curr.id == AUG_TOKEN_COMMA)
         {
             aug_lexer_move(lexer); // eat COMMA
 
-            if((expr = aug_parse_expr(lexer)))
-                funccall->children.push_back(expr);
+            expr = aug_parse_expr(lexer);
+            if(expr != NULL)
+                aug_ast_add(funccall, expr);
         }
     }
 
-    if (lexer->curr.id != AUG_TOKEN_RPAREN)
+    if(lexer->curr.id != AUG_TOKEN_RPAREN)
     {
         aug_ast_delete(funccall);
         AUG_INPUT_ERROR(lexer->input, "Function call missing closing parentheses");
@@ -1353,28 +1399,30 @@ inline aug_ast* aug_parse_funccall(aug_lexer* lexer)
     return funccall;
 }
 
-inline aug_ast* aug_parse_array(aug_lexer* lexer)
+aug_ast* aug_parse_array(aug_lexer* lexer)
 {
-    if (lexer->curr.id != AUG_TOKEN_LBRACKET)
+    if(lexer->curr.id != AUG_TOKEN_LBRACKET)
         return NULL;
 
     aug_lexer_move(lexer); // eat LBRACKET
 
-    aug_ast* array = aug_ast_new(AUG_AST_ARRAY);
-    if (aug_ast* expr = aug_parse_expr(lexer))
+    aug_ast* array = aug_ast_new(AUG_AST_ARRAY, aug_token_new());
+    aug_ast* expr = aug_parse_expr(lexer);
+    if(expr != NULL)
     {
-        array->children.push_back(expr);
+        aug_ast_add(array, expr);
 
-        while (expr && lexer->curr.id == AUG_TOKEN_COMMA)
+        while(expr != NULL && lexer->curr.id == AUG_TOKEN_COMMA)
         {
             aug_lexer_move(lexer); // eat COMMA
 
-            if((expr = aug_parse_expr(lexer)))
-                array->children.push_back(expr);
+            expr = aug_parse_expr(lexer);
+            if(expr != NULL)
+                aug_ast_add(array, expr);
         }
     }
 
-    if (lexer->curr.id != AUG_TOKEN_RBRACKET)
+    if(lexer->curr.id != AUG_TOKEN_RBRACKET)
     {
         aug_ast_delete(array);
         AUG_INPUT_ERROR(lexer->input, "List missing closing bracket");
@@ -1385,29 +1433,31 @@ inline aug_ast* aug_parse_array(aug_lexer* lexer)
     return array;
 }
 
-inline aug_ast* aug_parse_get_element(aug_lexer* lexer)
+aug_ast* aug_parse_get_element(aug_lexer* lexer)
 {
-    aug_token name_token = lexer->curr;
-    if (lexer->next.id != AUG_TOKEN_LBRACKET)
+    if(lexer->next.id != AUG_TOKEN_LBRACKET)
         return NULL;
+
+    aug_token name_token = aug_token_copy(lexer->curr);
 
     aug_lexer_move(lexer); // eat NAME
     aug_lexer_move(lexer); // eat LBRACKET
 
     aug_ast* expr = aug_parse_expr(lexer);
-    if (expr == NULL)
+    if(expr == NULL)
     {
         AUG_INPUT_ERROR(lexer->input, "Index operator missing index value");
         return NULL;
     }
 
-    aug_ast* element = aug_ast_new(AUG_AST_ELEMENT);
     aug_ast* container = aug_ast_new(AUG_AST_VARIABLE, name_token);
     
-    element->children.push_back(container);
-    element->children.push_back(expr);
+    aug_ast* element = aug_ast_new(AUG_AST_ELEMENT, aug_token_new());
+    aug_ast_resize(element, 2);
+    element->children[0] = container;
+    element->children[1] = expr;
 
-    if (lexer->curr.id != AUG_TOKEN_RBRACKET)
+    if(lexer->curr.id != AUG_TOKEN_RBRACKET)
     {
         aug_ast_delete(element);
         AUG_INPUT_ERROR(lexer->input, "Index operator missing closing bracket");
@@ -1418,11 +1468,10 @@ inline aug_ast* aug_parse_get_element(aug_lexer* lexer)
     return element;
 }
 
-inline aug_ast* aug_parse_value(aug_lexer* lexer)
+aug_ast* aug_parse_value(aug_lexer* lexer)
 {
     aug_ast* value = NULL;
-    const aug_token token = lexer->curr;
-    switch (token.id)
+    switch (lexer->curr.id)
     {
     case AUG_TOKEN_INT:
     case AUG_TOKEN_HEX:
@@ -1433,8 +1482,10 @@ inline aug_ast* aug_parse_value(aug_lexer* lexer)
     case AUG_TOKEN_TRUE:
     case AUG_TOKEN_FALSE:
     {
-        aug_lexer_move(lexer);
+        aug_token token = aug_token_copy(lexer->curr);
         value = aug_ast_new(AUG_AST_LITERAL, token);
+
+        aug_lexer_move(lexer);
         break;
     }
     case AUG_TOKEN_NAME:
@@ -1450,8 +1501,10 @@ inline aug_ast* aug_parse_value(aug_lexer* lexer)
             break;
 
         // consume token. return variable node
-        aug_lexer_move(lexer); // eat name
+        aug_token token = aug_token_copy(lexer->curr);
         value = aug_ast_new(AUG_AST_VARIABLE, token);
+
+        aug_lexer_move(lexer); // eat name
         break;
     }
     case AUG_TOKEN_LBRACKET:
@@ -1463,7 +1516,7 @@ inline aug_ast* aug_parse_value(aug_lexer* lexer)
     {
         aug_lexer_move(lexer); // eat LPAREN
         value = aug_parse_expr(lexer);
-        if (lexer->curr.id == AUG_TOKEN_RPAREN)
+        if(lexer->curr.id == AUG_TOKEN_RPAREN)
         {
             aug_lexer_move(lexer); // eat RPAREN
         }
@@ -1483,10 +1536,10 @@ inline aug_ast* aug_parse_value(aug_lexer* lexer)
 aug_ast* aug_parse_stmt_expr(aug_lexer* lexer)
 {
     aug_ast* expr = aug_parse_expr(lexer);
-    if (expr == NULL)
+    if(expr == NULL)
         return NULL;
     
-    if (lexer->curr.id != AUG_TOKEN_SEMICOLON)
+    if(lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(expr);
         AUG_INPUT_ERROR(lexer->input,  "Missing semicolon at end of expression");
@@ -1495,27 +1548,28 @@ aug_ast* aug_parse_stmt_expr(aug_lexer* lexer)
 
     aug_lexer_move(lexer); // eat SEMICOLON
     
-    aug_ast* stmt_expr = aug_ast_new(AUG_AST_STMT_EXPR);
-    stmt_expr->children.push_back(expr);
+    aug_ast* stmt_expr = aug_ast_new(AUG_AST_STMT_EXPR, aug_token_new());
+    aug_ast_add(stmt_expr, expr);
     return stmt_expr;
 }
 
 aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
 {
-    if (lexer->curr.id != AUG_TOKEN_VAR)
+    if(lexer->curr.id != AUG_TOKEN_VAR)
         return NULL;
 
     aug_lexer_move(lexer); // eat VAR
 
-    aug_token name_token = lexer->curr;
-    if (name_token.id != AUG_TOKEN_NAME)
+    if(lexer->curr.id != AUG_TOKEN_NAME)
     {
         AUG_INPUT_ERROR(lexer->input,  "Variable assignment expected name");
         return NULL;
     }
+
+    aug_token name_token = aug_token_copy(lexer->curr);
     aug_lexer_move(lexer); // eat NAME
 
-    if (lexer->curr.id == AUG_TOKEN_SEMICOLON)
+    if(lexer->curr.id == AUG_TOKEN_SEMICOLON)
     {
         aug_lexer_move(lexer); // eat SEMICOLON
 
@@ -1523,8 +1577,9 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
         return stmt_define;
     }
 
-    if (lexer->curr.id != AUG_TOKEN_ASSIGN)
+    if(lexer->curr.id != AUG_TOKEN_ASSIGN)
     {
+        aug_token_reset(&name_token);
         AUG_INPUT_ERROR(lexer->input,  "Variable assignment expected \"=\" or ;");
         return NULL;
     }
@@ -1532,13 +1587,15 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
     aug_lexer_move(lexer); // eat ASSIGN
 
     aug_ast* expr = aug_parse_expr(lexer);
-    if (expr == NULL)
+    if(expr == NULL)
     {
+        aug_token_reset(&name_token);
         AUG_INPUT_ERROR(lexer->input,  "Variable assignment expected expression after \"=\"");
         return NULL;
     }
-    if (lexer->curr.id != AUG_TOKEN_SEMICOLON)
+    if(lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
+        aug_token_reset(&name_token);
         aug_ast_delete(expr);
         AUG_INPUT_ERROR(lexer->input,  "Variable assignment missing semicolon at end of expression");
         return NULL;
@@ -1547,18 +1604,17 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
     aug_lexer_move(lexer); // eat SEMICOLON
 
     aug_ast* stmt_define = aug_ast_new(AUG_AST_STMT_DEFINE_VAR, name_token);
-    stmt_define->children.push_back(expr);
+    aug_ast_add(stmt_define, expr);
     return stmt_define;
 }
 
 aug_ast* aug_parse_stmt_assign_var(aug_lexer* lexer)
 {
-    aug_token name_token = lexer->curr;
-    if (name_token.id != AUG_TOKEN_NAME)
+    if(lexer->curr.id != AUG_TOKEN_NAME)
         return NULL;
 
     aug_token eq_token = lexer->next;
-    aug_token op_token;
+    aug_token op_token = aug_token_new();
 
     switch(eq_token.id)
     {
@@ -1572,18 +1628,21 @@ aug_ast* aug_parse_stmt_assign_var(aug_lexer* lexer)
     default: return NULL;
     }
 
+    aug_token name_token = aug_token_copy(lexer->curr);
     aug_lexer_move(lexer); // eat NAME
     aug_lexer_move(lexer); // eat ASSIGN
 
     aug_ast* expr = aug_parse_expr(lexer);
-    if (expr == NULL)
+    if(expr == NULL)
     {
+        aug_token_reset(&name_token);
         AUG_INPUT_ERROR(lexer->input,  "Assignment expected expression after \"=\"");
         return NULL;
     }
 
-    if (lexer->curr.id != AUG_TOKEN_SEMICOLON)
+    if(lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
+        aug_token_reset(&name_token);
         aug_ast_delete(expr);
         AUG_INPUT_ERROR(lexer->input,  "Missing semicolon at end of expression");
         return NULL;
@@ -1597,21 +1656,22 @@ aug_ast* aug_parse_stmt_assign_var(aug_lexer* lexer)
         op_token.detail = &aug_token_details[(int)op_token.id];
 
         // Create name + expr
+        aug_token expr_name_token = aug_token_copy(name_token);
         aug_ast* binaryop = aug_ast_new(AUG_AST_BINARY_OP, op_token);
-        aug_ast* value = aug_ast_new(AUG_AST_VARIABLE, name_token);
+        aug_ast* value = aug_ast_new(AUG_AST_VARIABLE, expr_name_token);
 
         // add in reverse order
-        binaryop->children.push_back(value);
-        binaryop->children.push_back(expr);
-
+        aug_ast_resize(binaryop, 2);
+        binaryop->children[0] = value;
+        binaryop->children[1] = expr;
 
         aug_ast* stmt_assign = aug_ast_new(AUG_AST_STMT_ASSIGN_VAR, name_token);
-        stmt_assign->children.push_back(binaryop);
+        aug_ast_add(stmt_assign, binaryop);
         return stmt_assign;
     }
 
     aug_ast* stmt_assign = aug_ast_new(AUG_AST_STMT_ASSIGN_VAR, name_token);
-    stmt_assign->children.push_back(expr);
+    aug_ast_add(stmt_assign, expr);
     return stmt_assign;
 }
 
@@ -1621,31 +1681,33 @@ aug_ast* aug_parse_stmt_if_else(aug_lexer* lexer, aug_ast* expr, aug_ast* block)
 {
     aug_lexer_move(lexer); // eat ELSE
 
-    aug_ast* if_else_stmt = aug_ast_new(AUG_AST_STMT_IF_ELSE);
-    if_else_stmt->children.push_back(expr);
-    if_else_stmt->children.push_back(block);
+    aug_ast* if_else_stmt = aug_ast_new(AUG_AST_STMT_IF_ELSE, aug_token_new());
+    aug_ast_resize(if_else_stmt, 3);
+    if_else_stmt->children[0] = expr;
+    if_else_stmt->children[1] = block;
+
 
     // Handling else if becomes else { if ... }
-    if (lexer->curr.id == AUG_TOKEN_IF)
+    if(lexer->curr.id == AUG_TOKEN_IF)
     {
         aug_ast* trailing_if_stmt = aug_parse_stmt_if(lexer);
-        if (trailing_if_stmt == NULL)
+        if(trailing_if_stmt == NULL)
         {
             aug_ast_delete(if_else_stmt);
             return NULL;
         }
-        if_else_stmt->children.push_back(trailing_if_stmt);
+        if_else_stmt->children[2] = trailing_if_stmt;
     }
     else
     {
         aug_ast* else_block = aug_parse_block(lexer);
-        if (else_block == NULL)
+        if(else_block == NULL)
         {
             aug_ast_delete(if_else_stmt);
             AUG_INPUT_ERROR(lexer->input,  "If Else statement missing block");
             return NULL;
         }
-        if_else_stmt->children.push_back(else_block);
+        if_else_stmt->children[2] = else_block;
     }
 
     return if_else_stmt;
@@ -1653,7 +1715,7 @@ aug_ast* aug_parse_stmt_if_else(aug_lexer* lexer, aug_ast* expr, aug_ast* block)
 
 aug_ast* aug_parse_stmt_if(aug_lexer* lexer)
 {
-    if (lexer->curr.id != AUG_TOKEN_IF)
+    if(lexer->curr.id != AUG_TOKEN_IF)
         return NULL;
 
     aug_lexer_move(lexer); // eat IF
@@ -1666,7 +1728,7 @@ aug_ast* aug_parse_stmt_if(aug_lexer* lexer)
     }
 
     aug_ast* block = aug_parse_block(lexer);
-    if (block == NULL)
+    if(block == NULL)
     {
         aug_ast_delete(expr);
         AUG_INPUT_ERROR(lexer->input,  "If statement missing block");
@@ -1674,47 +1736,48 @@ aug_ast* aug_parse_stmt_if(aug_lexer* lexer)
     }
 
     // Parse else 
-    if (lexer->curr.id == AUG_TOKEN_ELSE)
+    if(lexer->curr.id == AUG_TOKEN_ELSE)
         return aug_parse_stmt_if_else(lexer, expr, block);
 
-    aug_ast* if_stmt = aug_ast_new(AUG_AST_STMT_IF);
-    if_stmt->children.push_back(expr);
-    if_stmt->children.push_back(block);
+    aug_ast* if_stmt = aug_ast_new(AUG_AST_STMT_IF, aug_token_new());
+    aug_ast_resize(if_stmt, 2);
+    if_stmt->children[0] = expr;
+    if_stmt->children[1] = block;
     return if_stmt;
 }
 
 aug_ast* aug_parse_stmt_while(aug_lexer* lexer)
 {
-    if (lexer->curr.id != AUG_TOKEN_WHILE)
+    if(lexer->curr.id != AUG_TOKEN_WHILE)
         return NULL;
 
     aug_lexer_move(lexer); // eat WHILE
 
     aug_ast* expr = aug_parse_expr(lexer);
-    if (expr == NULL)
+    if(expr == NULL)
     {
         AUG_INPUT_ERROR(lexer->input,  "While statement missing expression");
         return NULL;
     }
 
     aug_ast* block = aug_parse_block(lexer);
-    if (block == NULL)
+    if(block == NULL)
     {
         aug_ast_delete(expr);
         AUG_INPUT_ERROR(lexer->input,  "While statement missing block");
         return NULL;
     }
 
-    aug_ast* while_stmt = aug_ast_new(AUG_AST_STMT_WHILE);
-    while_stmt->children.push_back(expr);
-    while_stmt->children.push_back(block);
-
+    aug_ast* while_stmt = aug_ast_new(AUG_AST_STMT_WHILE, aug_token_new());
+    aug_ast_resize(while_stmt, 2);
+    while_stmt->children[0] = expr;
+    while_stmt->children[1] = block;
     return while_stmt;
 }
 
-inline aug_ast* aug_parse_param_list(aug_lexer* lexer)
+aug_ast* aug_parse_param_list(aug_lexer* lexer)
 {
-    if (lexer->curr.id != AUG_TOKEN_LPAREN)
+    if(lexer->curr.id != AUG_TOKEN_LPAREN)
     {
         AUG_INPUT_ERROR(lexer->input,  "Missing opening parentheses in function parameter list");
         return NULL;
@@ -1722,33 +1785,33 @@ inline aug_ast* aug_parse_param_list(aug_lexer* lexer)
 
     aug_lexer_move(lexer); // eat LPAREN
 
-    aug_ast* param_list = aug_ast_new(AUG_AST_PARAM_LIST);
-    if (lexer->curr.id == AUG_TOKEN_NAME)
+    aug_ast* param_list = aug_ast_new(AUG_AST_PARAM_LIST, aug_token_new());
+    if(lexer->curr.id == AUG_TOKEN_NAME)
     {
-        aug_ast* param = aug_ast_new(AUG_AST_PARAM, lexer->curr);
-        param_list->children.push_back(param);
+        aug_ast* param = aug_ast_new(AUG_AST_PARAM, aug_token_copy(lexer->curr));
+        aug_ast_add(param_list, param);
 
         aug_lexer_move(lexer); // eat NAME
 
-        while (lexer->curr.id == AUG_TOKEN_COMMA)
+        while(lexer->curr.id == AUG_TOKEN_COMMA)
         {
             aug_lexer_move(lexer); // eat COMMA
 
-            if (lexer->curr.id != AUG_TOKEN_NAME)
+            if(lexer->curr.id != AUG_TOKEN_NAME)
             {
                 AUG_INPUT_ERROR(lexer->input,  "Invalid function parameter. Expected parameter name");
                 aug_ast_delete(param_list);
                 return NULL;
             }
 
-            aug_ast* param = aug_ast_new(AUG_AST_PARAM, lexer->curr);
-            param_list->children.push_back(param);
+            aug_ast* param = aug_ast_new(AUG_AST_PARAM, aug_token_copy(lexer->curr));
+            aug_ast_add(param_list, param);
 
             aug_lexer_move(lexer); // eat NAME
         }
     }
 
-    if (lexer->curr.id != AUG_TOKEN_RPAREN)
+    if(lexer->curr.id != AUG_TOKEN_RPAREN)
     {
         AUG_INPUT_ERROR(lexer->input,  "Missing closing parentheses in function parameter list");
         aug_ast_delete(param_list);
@@ -1762,53 +1825,57 @@ inline aug_ast* aug_parse_param_list(aug_lexer* lexer)
 
 aug_ast* aug_parse_stmt_func(aug_lexer* lexer)
 {
-    if (lexer->curr.id != AUG_TOKEN_FUNC)
+    if(lexer->curr.id != AUG_TOKEN_FUNC)
         return NULL;
 
     aug_lexer_move(lexer); // eat FUNC
 
-    if (lexer->curr.id != AUG_TOKEN_NAME)
+    if(lexer->curr.id != AUG_TOKEN_NAME)
     {
         AUG_INPUT_ERROR(lexer->input,  "Missing name in function definition");
         return NULL;
     }
 
-    const aug_token func_name = lexer->curr;
+    aug_token func_name_token = aug_token_copy(lexer->curr);
 
     aug_lexer_move(lexer); // eat NAME
 
     aug_ast* param_list = aug_parse_param_list(lexer);
-    if (param_list == NULL)
+    if(param_list == NULL)
+    {
+        aug_token_reset(&func_name_token);
         return NULL;
+    }
 
     aug_ast* block = aug_parse_block(lexer);
-    if (block == NULL)
+    if(block == NULL)
     {
+        aug_token_reset(&func_name_token);
         aug_ast_delete(param_list);
         return NULL;
     }
 
-    aug_ast* func_def = aug_ast_new(AUG_AST_FUNC_DEF, func_name);
-    func_def->children.push_back(param_list);
-    func_def->children.push_back(block);
-
+    aug_ast* func_def = aug_ast_new(AUG_AST_FUNC_DEF, func_name_token);
+    aug_ast_resize(func_def, 2);
+    func_def->children[0] = param_list;
+    func_def->children[1] = block;
     return func_def;
 }
 
 aug_ast* aug_parse_stmt_return(aug_lexer* lexer)
 {
-    if (lexer->curr.id != AUG_TOKEN_RETURN)
+    if(lexer->curr.id != AUG_TOKEN_RETURN)
         return NULL;
 
     aug_lexer_move(lexer); // eat RETURN
 
-    aug_ast* return_stmt = aug_ast_new(AUG_AST_RETURN);
+    aug_ast* return_stmt = aug_ast_new(AUG_AST_RETURN, aug_token_new());
 
     aug_ast* expr = aug_parse_expr(lexer);
-    if (expr != NULL)
-        return_stmt->children.push_back(expr);
+    if(expr != NULL)
+        aug_ast_add(return_stmt, expr);
 
-    if (lexer->curr.id != AUG_TOKEN_SEMICOLON)
+    if(lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(return_stmt);
         AUG_INPUT_ERROR(lexer->input,  "Missing semicolon at end of expression");
@@ -1820,7 +1887,7 @@ aug_ast* aug_parse_stmt_return(aug_lexer* lexer)
     return return_stmt;
 }
 
-inline aug_ast* aug_parse_stmt(aug_lexer* lexer)
+aug_ast* aug_parse_stmt(aug_lexer* lexer)
 {
     //TODO: assignment, funcdef etc..
     // Default, epxression parsing. 
@@ -1854,24 +1921,27 @@ inline aug_ast* aug_parse_stmt(aug_lexer* lexer)
         stmt = aug_parse_stmt_expr(lexer);
         break;
     }
-
     return stmt;
 }
 
 aug_ast* aug_parse_block(aug_lexer* lexer)
 {
-    if (lexer->curr.id != AUG_TOKEN_LBRACE)
+    if(lexer->curr.id != AUG_TOKEN_LBRACE)
     {
         AUG_INPUT_ERROR(lexer->input,  "Block missing opening \"{\"");
         return NULL;
     }
     aug_lexer_move(lexer); // eat LBRACE
 
-    aug_ast* block = aug_ast_new(AUG_AST_BLOCK);
-    while(aug_ast* stmt = aug_parse_stmt(lexer))
-        block->children.push_back(stmt);
+    aug_ast* block = aug_ast_new(AUG_AST_BLOCK, aug_token_new());    
+    aug_ast* stmt = aug_parse_stmt(lexer);
+    while(stmt)
+    {
+        aug_ast_add(block, stmt);
+        stmt = aug_parse_stmt(lexer);
+    }   
 
-    if (lexer->curr.id != AUG_TOKEN_RBRACE)
+    if(lexer->curr.id != AUG_TOKEN_RBRACE)
     {
         AUG_INPUT_ERROR(lexer->input,  "Block missing closing \"}\"");
         aug_ast_delete(block);
@@ -1884,16 +1954,20 @@ aug_ast* aug_parse_block(aug_lexer* lexer)
 
 aug_ast* aug_parse_root(aug_lexer* lexer)
 {
-    if (lexer == NULL)
+    if(lexer == NULL)
         return NULL;
 
     aug_lexer_move(lexer); // move to first token
 
-    aug_ast* root = aug_ast_new(AUG_AST_ROOT);
-    while (aug_ast* stmt = aug_parse_stmt(lexer))
-        root->children.push_back(stmt);
+    aug_ast* root = aug_ast_new(AUG_AST_ROOT, aug_token_new());
+    aug_ast* stmt = aug_parse_stmt(lexer);
+    while(stmt)
+    {
+        aug_ast_add(root, stmt);
+        stmt = aug_parse_stmt(lexer);
+    }   
 
-    if (root->children.size() == 0)
+    if(root->children_size == 0)
     {
         aug_ast_delete(root);
         return NULL;
@@ -1901,19 +1975,65 @@ aug_ast* aug_parse_root(aug_lexer* lexer)
     return root;
 }
 
-aug_ast* aug_parse(aug_vm& vm, aug_input* input)
+/*
+Syntax:
+    block := { stmts }
+
+    stmt := stmt_expr
+            | stmt_assign
+            | stmt_expr
+            | stmt_while
+            | stmt_func_def
+
+    stmts := stmt stmts
+            | NULL
+
+    expr := value 
+            | expr BINOP expr 
+            | UNOP expr
+
+    func_call := NAME ( args )
+
+    args := expr args
+            | , expr args
+            | NULL
+
+    value := NAME 
+            | func_call 
+            | NUMBER 
+            | STRING 
+            | ( expr )
+            | [ args ]
+
+    stmt_expr := expr ;
+
+    stmt_assign := VAR NAME = expr ;
+
+    stmt_if := IF block 
+            |  IF block ELSE block 
+            |  IF block ELSE stmt_if
+
+    stmt_while := WHILE expr { stmts }
+
+    params := NAME  params
+            | , NAME params
+            | NULL
+
+    stmt_func_def := FUNC NAME ( params ) block 
+*/
+
+
+aug_ast* aug_parse(aug_vm* vm, aug_input* input)
 {
-    if (input == NULL)
+    if(input == NULL)
         return NULL;
 
     aug_lexer* lexer = aug_lexer_new(input);
-    if (lexer == NULL)
+    if(lexer == NULL)
         return NULL;
 
     aug_ast* root = aug_parse_root(lexer);
-
     aug_lexer_delete(lexer);
-
     return root;
 }
 
@@ -1974,17 +2094,17 @@ aug_ast* aug_parse(aug_vm& vm, aug_input* input)
 
 // Special value used in bytecode to denote an invalid vm offset
 #define AUG_OPCODE_INVALID -1
+#define aug_opcode_repr uint8_t
 
-enum aug_opcode : uint8_t
+typedef enum aug_opcode
 { 
 #define AUG_OPCODE(opcode) AUG_OPCODE_##opcode,
 	AUG_OPCODE_LIST
 #undef AUG_OPCODE
     AUG_OPCODE_COUNT
-};
-static_assert(AUG_OPCODE_COUNT < 255, "AUG Opcode count too large. This will affect bytecode instruction set");
+}aug_opcode;
 
-#ifdef AUG_DEBUG
+static_assert(AUG_OPCODE_COUNT < 255, "AUG Opcode count too large. This will affect bytecode instruction set");
 
 static const char* aug_opcode_labels[] =
 {
@@ -1993,13 +2113,11 @@ static const char* aug_opcode_labels[] =
 #undef AUG_OPCODE
 }; 
 
-#endif// AUG_DEBUG
-
 #undef AUG_OPCODE_LIST
 
 // -------------------------------------- IR --------------------------------------------// 
 
-enum aug_ir_operand_type
+typedef enum aug_ir_operand_type
 {
     // type if operand is constant or literal
     AUG_IR_OPERAND_NONE = 0,
@@ -2008,9 +2126,9 @@ enum aug_ir_operand_type
     AUG_IR_OPERAND_INT,
     AUG_IR_OPERAND_FLOAT,  
     AUG_IR_OPERAND_BYTES,
-};
+} aug_ir_operand_type;
 
-struct aug_ir_operand
+typedef struct aug_ir_operand
 {
     union
     {
@@ -2023,65 +2141,78 @@ struct aug_ir_operand
         const char* str; // NOTE: weak pointer to token data
     } data;
 
-    aug_ir_operand_type type = AUG_IR_OPERAND_NONE;
-};
+    aug_ir_operand_type type;
+} aug_ir_operand;
 
 static_assert(sizeof(float) >= sizeof(int), "Ensure bytes array has enough space to contain both int and float data types");
 
-struct aug_ir_operation
+typedef struct aug_ir_operation
 {
     aug_opcode opcode;
     aug_ir_operand operand; //optional parameter. will be encoded in following bytes
-   
-#ifdef AUG_DEBUG
     size_t bytecode_offset;
-#endif //AUG_DEBUG
-};
+} aug_ir_operation;
 
-struct aug_ir_scope
+typedef struct aug_ir_scope
 {
     int base_index;
     int stack_offset;
-    aug_symtable symtable;
-};
+    aug_symtable* symtable;
+} aug_ir_scope;
 
-struct aug_ir_frame
+typedef struct aug_ir_frame
 {
     int base_index;
     int arg_count;
-    aug_std_array< aug_ir_scope> scope_stack;
-};
+    aug_container scope_stack; //aug_ir_scope
+} aug_ir_frame;
 
 // All the blocks within a compilation/translation unit (i.e. file, code literal)
-struct aug_ir
+typedef struct aug_ir
 {		
     aug_input* input; // weak ref to source file/code
 
     // Transient IR data
-    aug_std_array<aug_ir_frame> frame_stack;
+    aug_container frame_stack; //aug_ir_frame
     int label_count;
 
     // Generated data
-    aug_std_array<aug_ir_operation> operations;
+    aug_container operations; //aug_ir_operation
     size_t bytecode_offset;
     
     // Assigned to the outer-most frame's symbol table. 
     // This field is initialized after generation, so not available during the generation pass. 
-    aug_symtable globals;
+    aug_symtable* globals;
     bool valid;
-};
+} aug_ir;
 
-inline void aug_ir_init(aug_ir& ir, aug_input* input)
+static inline aug_ir* aug_ir_new(aug_input* input)
 {
-    ir.valid = true;
-    ir.input = input;
-    ir.label_count = 0;
-    ir.bytecode_offset = 0;
-    ir.frame_stack.clear();
-    ir.operations.clear();
+    aug_ir* ir = AUG_ALLOC(aug_ir);
+    ir->valid = true;
+    ir->input = input;
+    ir->label_count = 0;
+    ir->bytecode_offset = 0;
+    ir->frame_stack =  aug_container_new(1);
+    ir->operations = aug_container_new(1);
+    return ir;
 }
 
-inline size_t aug_ir_operand_size(const aug_ir_operand& operand)
+static inline void aug_ir_delete(aug_ir* ir)
+{
+    size_t i;
+    for(i = 0; i < ir->operations.length; ++i)
+    {
+        aug_ir_operation* operation = (aug_ir_operation*)aug_container_at(&ir->operations, i);
+        AUG_FREE(operation);
+    }
+    aug_container_delete(&ir->operations);
+    aug_container_delete(&ir->frame_stack);
+    aug_symtable_decref(ir->globals);
+    AUG_FREE(ir);
+}
+
+static inline size_t aug_ir_operand_size(aug_ir_operand operand)
 {
     switch (operand.type)
     {
@@ -2101,40 +2232,47 @@ inline size_t aug_ir_operand_size(const aug_ir_operand& operand)
     return 0;
 }
 
-inline size_t aug_ir_operation_size(const aug_ir_operation& operation)
+static inline size_t aug_ir_operation_size(const aug_ir_operation* operation)
 {
-    size_t size = sizeof(operation.opcode);
-    size += aug_ir_operand_size(operation.operand);
+    if(operation == 0)
+        return 0;
+    size_t size = sizeof(aug_opcode_repr);
+    size += aug_ir_operand_size(operation->operand);
     return size;
 }
 
-inline size_t aug_ir_add_operation(aug_ir& ir, aug_opcode opcode, const aug_ir_operand& operand)
+static inline size_t aug_ir_add_operation_arg(aug_ir*ir, aug_opcode opcode, aug_ir_operand operand)
 {
-    aug_ir_operation operation;
-    operation.opcode = opcode;
-    operation.operand = operand;
-#ifdef AUG_DEBUG
-    operation.bytecode_offset = ir.bytecode_offset;
-#endif //AUG_DEBUG
+    aug_ir_operation* operation = AUG_ALLOC(aug_ir_operation);
+    operation->opcode = opcode;
+    operation->operand = operand;
+    operation->bytecode_offset = ir->bytecode_offset;
 
-    ir.bytecode_offset += aug_ir_operation_size(operation);
-    ir.operations.push_back(operation);
-    return ir.operations.size()-1;
+    ir->bytecode_offset += aug_ir_operation_size(operation);
+    aug_container_push(&ir->operations, operation);
+    return ir->operations.length-1;
 }
 
-inline size_t aug_ir_add_operation(aug_ir& ir, aug_opcode opcode)
+static inline size_t aug_ir_add_operation(aug_ir*ir, aug_opcode opcode)
 {
     aug_ir_operand operand;
-    return aug_ir_add_operation(ir, opcode, operand);
+    operand.type = AUG_IR_OPERAND_NONE;
+    return aug_ir_add_operation_arg(ir, opcode, operand);
 }
 
-inline aug_ir_operation& aug_ir_get_operation(aug_ir& ir, size_t operation_index)
+static inline aug_ir_operation* aug_ir_last_operation(aug_ir*ir)
 {
-    assert(operation_index < ir.operations.size());
-    return ir.operations.at(operation_index);
+    assert(ir->operations.length > 0);
+    return (aug_ir_operation*)aug_container_at(&ir->operations, ir->operations.length - 1);
 }
 
-inline aug_ir_operand aug_ir_operand_from_bool(bool data)
+static inline aug_ir_operation* aug_ir_get_operation(aug_ir*ir, size_t operation_index)
+{
+    assert(operation_index < ir->operations.length);
+    return (aug_ir_operation*)aug_container_at(&ir->operations, operation_index);
+}
+
+static inline aug_ir_operand aug_ir_operand_from_bool(bool data)
 {
     aug_ir_operand operand;
     operand.type = AUG_IR_OPERAND_BOOL;
@@ -2142,7 +2280,7 @@ inline aug_ir_operand aug_ir_operand_from_bool(bool data)
     return operand;
 }
 
-inline aug_ir_operand aug_ir_operand_from_char(char data)
+static inline aug_ir_operand aug_ir_operand_from_char(char data)
 {
     aug_ir_operand operand;
     operand.type = AUG_IR_OPERAND_CHAR;
@@ -2150,7 +2288,7 @@ inline aug_ir_operand aug_ir_operand_from_char(char data)
     return operand;
 }
 
-inline aug_ir_operand aug_ir_operand_from_int(int data)
+static inline aug_ir_operand aug_ir_operand_from_int(int data)
 {
     aug_ir_operand operand;
     operand.type = AUG_IR_OPERAND_INT;
@@ -2158,7 +2296,7 @@ inline aug_ir_operand aug_ir_operand_from_int(int data)
     return operand;
 }
 
-inline aug_ir_operand aug_ir_operand_from_float(float data)
+static inline aug_ir_operand aug_ir_operand_from_float(float data)
 {
     aug_ir_operand operand;
     operand.type = AUG_IR_OPERAND_FLOAT;
@@ -2166,7 +2304,7 @@ inline aug_ir_operand aug_ir_operand_from_float(float data)
     return operand;
 }
 
-inline aug_ir_operand aug_ir_operand_from_str(const char* data)
+static inline aug_ir_operand aug_ir_operand_from_str(const char* data)
 {
     aug_ir_operand operand;
     operand.type = AUG_IR_OPERAND_BYTES;
@@ -2174,166 +2312,180 @@ inline aug_ir_operand aug_ir_operand_from_str(const char* data)
     return operand;
 }
 
-inline aug_ir_frame& aug_ir_current_frame(aug_ir& ir)
+static inline aug_ir_frame* aug_ir_current_frame(aug_ir*ir)
 {
-    assert(ir.frame_stack.size() > 0);
-    return ir.frame_stack.back();
+    assert(ir->frame_stack.length > 0);
+    return (aug_ir_frame*)aug_container_back(&ir->frame_stack);
 }
 
-inline aug_ir_scope& aug_ir_current_scope(aug_ir& ir)
+static inline aug_ir_scope* aug_ir_current_scope(aug_ir*ir)
 {
-    aug_ir_frame& frame = aug_ir_current_frame(ir);
-    assert(frame.scope_stack.size() > 0);
-    return frame.scope_stack.back();
+    aug_ir_frame* frame = aug_ir_current_frame(ir);
+    assert(frame->scope_stack.length > 0);
+    return (aug_ir_scope*)aug_container_back(&frame->scope_stack);
 }
 
-inline bool aug_ir_current_scope_is_global(aug_ir& ir)
+static inline bool aug_ir_current_scope_is_global(aug_ir*ir)
 {
-    aug_ir_frame& frame = aug_ir_current_frame(ir);
-    if(ir.frame_stack.size() == 1 && frame.scope_stack.size() == 1)
+    aug_ir_frame* frame = aug_ir_current_frame(ir);
+    if(ir->frame_stack.length == 1 && frame->scope_stack.length == 1)
         return true;
     return false;
 }
 
-inline int aug_ir_current_scope_local_offset(aug_ir& ir)
+static inline int aug_ir_current_scope_local_offset(aug_ir*ir)
 {
-    const aug_ir_scope& scope = aug_ir_current_scope(ir);
-    return scope.stack_offset - scope.base_index;
+    const aug_ir_scope* scope = aug_ir_current_scope(ir);
+    return scope->stack_offset - scope->base_index;
 }
 
-inline int aug_ir_calling_offset(aug_ir& ir)
+static inline int aug_ir_calling_offset(aug_ir*ir)
 {
-    const aug_ir_scope& scope = aug_ir_current_scope(ir);
-    aug_ir_frame& frame = aug_ir_current_frame(ir);
-    return (scope.stack_offset - frame.base_index) + frame.arg_count;
+    aug_ir_scope* scope = aug_ir_current_scope(ir);
+    aug_ir_frame* frame = aug_ir_current_frame(ir);
+    return (scope->stack_offset - frame->base_index) + frame->arg_count;
 }
 
-inline void aug_ir_push_frame(aug_ir& ir, int arg_count)
+static inline void aug_ir_push_frame(aug_ir*ir, int arg_count)
 {
-    aug_ir_frame frame;
-    frame.arg_count = arg_count;
+    aug_ir_frame* frame = AUG_ALLOC(aug_ir_frame);
+    frame->arg_count = arg_count;
 
-    if (ir.frame_stack.size() > 0)
+    if(ir->frame_stack.length > 0)
     {
-        const aug_ir_scope& scope = aug_ir_current_scope(ir);
-        frame.base_index = scope.stack_offset;
+        const aug_ir_scope* scope = aug_ir_current_scope(ir);
+        frame->base_index = scope->stack_offset;
     }
     else
     {
-        frame.base_index = 0;
+        frame->base_index = 0;
     }
 
-    aug_ir_scope scope;
-    scope.base_index = frame.base_index;
-    scope.stack_offset = frame.base_index;
-    frame.scope_stack.push_back(scope);
-
-    ir.frame_stack.push_back(frame);
+    aug_ir_scope* scope = AUG_ALLOC(aug_ir_scope);
+    scope->base_index = frame->base_index;
+    scope->stack_offset = frame->base_index;
+    scope->symtable = aug_symtable_new(1);
+    
+    frame->scope_stack = aug_container_new(1);
+    aug_container_push(&frame->scope_stack, scope);
+    aug_container_push(&ir->frame_stack, frame);
 }
 
-inline void aug_ir_pop_frame(aug_ir& ir)
+static inline void aug_ir_pop_frame(aug_ir*ir)
 {
-    if(ir.frame_stack.size() == 1)
-        ir.globals = aug_ir_current_scope(ir).symtable; // pass global frame symbols to ir
-    ir.frame_stack.pop_back();
+    if(ir->frame_stack.length == 1)
+    {
+        aug_ir_scope* scope = aug_ir_current_scope(ir);
+        ir->globals = scope->symtable;
+        scope->symtable = NULL; // Move to globals
+    }
+    
+    aug_ir_frame* frame = (aug_ir_frame*)aug_container_pop(&ir->frame_stack);
+
+    size_t i;
+    for(i = 0; i < frame->scope_stack.length; ++i)
+    {
+        aug_ir_scope* scope = (aug_ir_scope*)aug_container_at(&frame->scope_stack, i);
+        aug_symtable_decref(scope->symtable);
+        AUG_FREE(scope);
+    }
+    aug_container_delete(&frame->scope_stack);
+    AUG_FREE(frame);
 }
 
-inline void aug_ir_push_scope(aug_ir& ir)
+static inline void aug_ir_push_scope(aug_ir*ir)
 {
-    const aug_ir_scope& current_scope = aug_ir_current_scope(ir);
-    aug_ir_scope scope;
-    scope.base_index = current_scope.stack_offset;
-    scope.stack_offset = current_scope.stack_offset;
+    const aug_ir_scope* current_scope = aug_ir_current_scope(ir);
+    aug_ir_scope* scope = AUG_ALLOC(aug_ir_scope);
+    scope->base_index = current_scope->stack_offset;
+    scope->stack_offset = current_scope->stack_offset;
+    scope->symtable = aug_symtable_new(1);
 
-    aug_ir_frame& frame = aug_ir_current_frame(ir);
-    frame.scope_stack.push_back(scope);
+    aug_ir_frame* frame = aug_ir_current_frame(ir);
+    aug_container_push(&frame->scope_stack, scope);
 }
 
-inline void aug_ir_pop_scope(aug_ir& ir)
+static inline void aug_ir_pop_scope(aug_ir*ir)
 {
     const aug_ir_operand delta = aug_ir_operand_from_int(aug_ir_current_scope_local_offset(ir));
-    aug_ir_add_operation(ir, AUG_OPCODE_DEC_STACK, delta);
+    aug_ir_add_operation_arg(ir, AUG_OPCODE_DEC_STACK, delta);
 
-    aug_ir_frame& frame = aug_ir_current_frame(ir);
-    frame.scope_stack.pop_back();
+    aug_ir_frame* frame = aug_ir_current_frame(ir);
+    aug_ir_scope* scope = (aug_ir_scope*)aug_container_pop(&frame->scope_stack);
+    aug_symtable_decref(scope->symtable);
+    AUG_FREE(scope);
 }
 
-inline bool aug_ir_set_var(aug_ir& ir, const aug_std_string& name)
+static inline bool aug_ir_set_var(aug_ir*ir, aug_string* var_name)
 {
-    aug_ir_scope& scope = aug_ir_current_scope(ir);
-    const int offset = scope.stack_offset++;
+    aug_ir_scope* scope = aug_ir_current_scope(ir);
+    const int offset = scope->stack_offset++;
 
-    if (scope.symtable.count(name) != 0)
-        return false;
-
-    aug_symbol sym;
-    sym.type = AUG_SYM_VAR;
-    sym.offset = offset;
-    sym.argc = 0;
+    aug_symbol symbol;
+    symbol.name = var_name;
+    symbol.type = AUG_SYM_VAR;
+    symbol.offset = offset;
+    symbol.argc = 0;
     
-    if (aug_ir_current_scope_is_global(ir))
-        sym.scope = AUG_SYM_SCOPE_GLOBAL;
+    if(aug_ir_current_scope_is_global(ir))
+        symbol.scope = AUG_SYM_SCOPE_GLOBAL;
     else
-        sym.scope = AUG_SYM_SCOPE_LOCAL;
+        symbol.scope = AUG_SYM_SCOPE_LOCAL;
 
-    scope.symtable[name] = sym;
-    return true;
+
+    return aug_symtable_set(scope->symtable, symbol);
 }
 
-inline bool aug_ir_set_param(aug_ir& ir, const aug_std_string& name)
+static inline bool aug_ir_set_param(aug_ir*ir, aug_string* param_name)
 {
-    aug_ir_scope& scope = aug_ir_current_scope(ir);
-    const int offset = scope.stack_offset++;
+    aug_ir_scope* scope = aug_ir_current_scope(ir);
+    const int offset = scope->stack_offset++;
 
-    if (scope.symtable.count(name) != 0)
-        return false;
-
-    aug_symbol sym;
-    sym.type = AUG_SYM_VAR;
-    sym.offset = offset;
-    sym.argc = 0;
+    aug_symbol symbol;
+    symbol.name = param_name;
+    symbol.type = AUG_SYM_VAR;
+    symbol.offset = offset;
+    symbol.argc = 0;
     
-    if (aug_ir_current_scope_is_global(ir))
-        sym.scope = AUG_SYM_SCOPE_GLOBAL;
+    if(aug_ir_current_scope_is_global(ir))
+        symbol.scope = AUG_SYM_SCOPE_GLOBAL;
     else
-        sym.scope = AUG_SYM_SCOPE_PARAM;
+        symbol.scope = AUG_SYM_SCOPE_PARAM;
 
-    scope.symtable[name] = sym;
-    return true;
+    return aug_symtable_set(scope->symtable, symbol);
 }
 
-inline bool aug_ir_set_func(aug_ir& ir, const aug_std_string& name, int param_count)
+static inline bool aug_ir_set_func(aug_ir*ir, aug_string* func_name, int param_count)
 {
-    aug_ir_scope& scope = aug_ir_current_scope(ir);
-    const int offset = ir.bytecode_offset;
-    if (scope.symtable.count(name) != 0)
-        return false;
+    aug_ir_scope* scope = aug_ir_current_scope(ir);
+    const int offset = ir->bytecode_offset;
 
-    aug_symbol sym;
-    sym.type = AUG_SYM_FUNC;
-    sym.offset = offset;
-    sym.argc = param_count;
+    aug_symbol symbol;
+    symbol.name = func_name;
+    symbol.type = AUG_SYM_FUNC;
+    symbol.offset = offset;
+    symbol.argc = param_count;
 
-    if (aug_ir_current_scope_is_global(ir))
-        sym.scope = AUG_SYM_SCOPE_GLOBAL;
+    if(aug_ir_current_scope_is_global(ir))
+        symbol.scope = AUG_SYM_SCOPE_GLOBAL;
     else
-        sym.scope = AUG_SYM_SCOPE_LOCAL;
+        symbol.scope = AUG_SYM_SCOPE_LOCAL;
 
-    scope.symtable[name] = sym;
-    return true;
+    return aug_symtable_set(scope->symtable, symbol);
 }
 
-inline aug_symbol aug_ir_get_symbol(aug_ir& ir, const aug_std_string& name)
+static inline aug_symbol aug_ir_get_symbol(aug_ir*ir, aug_string* name)
 {
-    for (int i = ir.frame_stack.size() - 1; i >= 0; --i)
+    int i,j;
+    for(i = ir->frame_stack.length - 1; i >= 0; --i)
     {
-        const aug_ir_frame& frame = ir.frame_stack.at(i);
-        for (int i = frame.scope_stack.size() - 1; i >= 0; --i)
+        aug_ir_frame* frame = (aug_ir_frame*) aug_container_at(&ir->frame_stack, i);
+        for(j = frame->scope_stack.length - 1; j >= 0; --j)
         {
-            const aug_ir_scope& scope = frame.scope_stack.at(i);
-            const aug_symtable& symtable = scope.symtable;
-            if (symtable.count(name))
-                return symtable.at(name);
+            aug_ir_scope* scope = (aug_ir_scope*) aug_container_at(&frame->scope_stack, j);
+            aug_symbol symbol = aug_symtable_get(scope->symtable, name);
+            if(symbol.type != AUG_SYM_NONE)
+                return symbol;
         }
     }
 
@@ -2344,34 +2496,34 @@ inline aug_symbol aug_ir_get_symbol(aug_ir& ir, const aug_std_string& name)
     return sym;
 }
 
-inline aug_symbol aug_ir_symbol_relative(aug_ir& ir, const aug_std_string& name)
+static inline aug_symbol aug_ir_symbol_relative(aug_ir*ir, aug_string* name)
 {
-    for (int i = ir.frame_stack.size() - 1; i >= 0; --i)
+    int i,j;
+    for(i = ir->frame_stack.length - 1; i >= 0; --i)
     {
-        const aug_ir_frame& frame = ir.frame_stack.at(i);
-        for (int j = frame.scope_stack.size() - 1; j >= 0; --j)
+        aug_ir_frame* frame = (aug_ir_frame*) aug_container_at(&ir->frame_stack, i);
+        for(j = frame->scope_stack.length - 1; j >= 0; --j)
         {
-            const aug_ir_scope& scope = frame.scope_stack.at(j);
-            const aug_symtable& symtable = scope.symtable;
-            if (symtable.count(name))
+            aug_ir_scope* scope = (aug_ir_scope*) aug_container_at(&frame->scope_stack, j);
+            aug_symbol symbol = aug_symtable_get(scope->symtable, name);
+            if(symbol.type != AUG_SYM_NONE)
             {
-                aug_symbol symbol = symtable.at(name);                
                 switch (symbol.scope)
                 {
                 case AUG_SYM_SCOPE_GLOBAL:
                     break;
                 case AUG_SYM_SCOPE_PARAM:
                 {
-                    const aug_ir_frame& frame = aug_ir_current_frame(ir);
-                    symbol.offset = symbol.offset - frame.base_index;
+                    const aug_ir_frame* frame = aug_ir_current_frame(ir);
+                    symbol.offset = symbol.offset - frame->base_index;
                     break;
                 }
                 case AUG_SYM_SCOPE_LOCAL:
                 {
-                    const aug_ir_frame& frame = aug_ir_current_frame(ir);
+                    const aug_ir_frame* frame = aug_ir_current_frame(ir);
                     //If this variable is a local variable in an outer frame. Offset by 2 (ret addr and base index) for each frame delta
-                    int frame_delta = (ir.frame_stack.size()-1) - i;
-                    symbol.offset = symbol.offset - frame.base_index - frame_delta * 2;
+                    int frame_delta = (ir->frame_stack.length-1) - i;
+                    symbol.offset = symbol.offset - frame->base_index - frame_delta * 2;
                     break;
                 }
                 }
@@ -2387,77 +2539,61 @@ inline aug_symbol aug_ir_symbol_relative(aug_ir& ir, const aug_std_string& name)
     return sym;
 }
 
-inline aug_symbol aug_ir_get_symbol_local(aug_ir& ir, const aug_std_string& name)
-{
-    const aug_ir_scope& scope = aug_ir_current_scope(ir);
-    if (scope.symtable.count(name))
-        return scope.symtable.at(name);
-
-    aug_symbol sym;
-    sym.offset = AUG_OPCODE_INVALID;
-    sym.type = AUG_SYM_NONE;
-    sym.argc = 0;
-    return sym;
-}
-
 // --------------------------------------- Value Operations -------------------------------------------------------//
-inline bool aug_set_bool(aug_value* value, bool data)
+static inline bool aug_set_bool(aug_value* value, bool data)
 {
-    if (value == NULL)
+    if(value == NULL)
         return false;
     value->type = AUG_BOOL;
     value->b = data;
     return true;
 }
 
-inline bool aug_set_int(aug_value* value, int data)
+static inline bool aug_set_int(aug_value* value, int data)
 {
-    if (value == NULL)
+    if(value == NULL)
         return false;
     value->type = AUG_INT;
     value->i = data;
     return true;
 }
 
-inline bool aug_set_char(aug_value* value, char data)
+static inline bool aug_set_char(aug_value* value, char data)
 {
-    if (value == NULL)
+    if(value == NULL)
         return false;
     value->type = AUG_CHAR;
     value->c = data;
     return true;
 }
 
-inline bool aug_set_float(aug_value* value, float data)
+static inline bool aug_set_float(aug_value* value, float data)
 {
-    if (value == NULL)
+    if(value == NULL)
         return false;
     value->type = AUG_FLOAT;
     value->f = data;
     return true;
 }
 
-inline bool aug_set_string(aug_value* value, const char* data)
+static inline bool aug_set_string(aug_value* value, const char* data)
 {
-    if (value == NULL)
+    if(value == NULL)
         return false;
 
     value->type = AUG_STRING;
-    value->str = AUG_NEW(aug_string);
-    value->str->ref_count = 1;
-    value->str->assign(data, strlen(data));
+    value->str = aug_string_create(data);
     return true;
 }
 
-inline bool aug_set_array(aug_value* value)
+static inline bool aug_set_array(aug_value* value)
 {
-    if (value == NULL)
+    if(value == NULL)
         return false;
 
     value->type = AUG_ARRAY;
-    value->array = AUG_NEW(aug_array);
-    value->array->ref_count = 1; 
-     return true;
+    value->array = aug_array_new(1);
+    return true;
 }
 
 aug_value aug_none()
@@ -2467,41 +2603,39 @@ aug_value aug_none()
     return value;
 }
 
-bool aug_condition(const aug_value* value)
+bool aug_get_bool(const aug_value* value)
 {
-    if (value == NULL)
+    if(value == NULL)
         return false;
 
-    return aug_get_bool(*value);
-}
-
-bool aug_get_bool(const aug_value& value)
-{
-    switch (value.type)
+    switch (value->type)
     {
     case AUG_NONE:
         return false;
     case AUG_BOOL:
-        return value.b;
+        return value->b;
     case AUG_INT:
-        return value.i != 0;
+        return value->i != 0;
     case AUG_CHAR:
-        return value.c != 0;
+        return value->c != 0;
     case AUG_FLOAT:
-        return value.f != 0.0f;
+        return value->f != 0.0f;
     case AUG_STRING:
-        return value.str != NULL;
+        return value->str != NULL;
     case AUG_OBJECT:
-        return value.obj != NULL;
+        return value->obj != NULL;
     case AUG_ARRAY:
-        return value.array != NULL;
+        return value->array != NULL;
     }
     return false;
 }
 
-int aug_get_int(const aug_value& value)
-{
-    switch (value.type)
+int aug_get_int(const aug_value* value)
+{    
+    if(value == NULL)
+        return false;
+
+    switch (value->type)
     {
     case AUG_NONE:
     case AUG_STRING:
@@ -2509,20 +2643,23 @@ int aug_get_int(const aug_value& value)
     case AUG_ARRAY:
         return 0;
     case AUG_BOOL:
-        return value.b ? 1 : 0;
+        return value->b ? 1 : 0;
     case AUG_INT:
-        return value.i;
+        return value->i;
     case AUG_CHAR:
-        return (int)value.c;
+        return (int)value->c;
     case AUG_FLOAT:
-        return (int)value.f;
+        return (int)value->f;
     }
     return 0;
 }
 
-float aug_get_float(const aug_value& value)
+float aug_get_float(const aug_value* value)
 {
-    switch (value.type)
+    if(value == NULL)
+        return false;
+
+    switch (value->type)
     {
     case AUG_NONE:
     case AUG_STRING:
@@ -2530,20 +2667,20 @@ float aug_get_float(const aug_value& value)
     case AUG_ARRAY:
        return 0.0f;
     case AUG_BOOL:
-        return value.b ? 1.0f : 0.0f;
+        return value->b ? 1.0f : 0.0f;
     case AUG_INT:
-        return (float)value.i;
+        return (float)value->i;
     case AUG_CHAR:
-        return (float)value.c;
+        return (float)value->c;
     case AUG_FLOAT:
-        return value.f;
+        return value->f;
     }
     return 0.0f;
 }
 
-inline void aug_decref(aug_value* value)
+static inline void aug_decref(aug_value* value)
 {
-    if (value == NULL)
+    if(value == NULL)
         return;
 
     switch (value->type)
@@ -2555,77 +2692,76 @@ inline void aug_decref(aug_value* value)
     case AUG_FLOAT:
         break;
     case AUG_STRING:
-        if(value->str && --value->str->ref_count <= 0)
+        value->str = aug_string_decref(value->str);
+        break;
+    case AUG_ARRAY:
+        if(value->array)
         {
-            value->type = AUG_NONE;
-            AUG_DELETE(value->str);
+            for(size_t i = 0; i < value->array->length; ++i)
+            {
+                aug_decref(aug_array_at(value->array, i));
+            }
+            value->array = aug_array_decref(value->array);
         }
         break;
     case AUG_OBJECT:
         if(value->obj && --value->obj->ref_count <= 0)
         {
             value->type = AUG_NONE;
-            AUG_DELETE(value->obj);
-        }
-        break;
-    case AUG_ARRAY:
-        if(value->array && --value->array->ref_count <= 0)
-        {
-            value->type = AUG_NONE;
-            for(aug_value& entry : *value->array)
-                aug_decref(&entry);
-            AUG_DELETE(value->array);
+            AUG_FREE(value->obj);
         }
         break;
     }
 }
 
-inline bool aug_incref(aug_value* to, aug_value* from)
+static inline void aug_incref(aug_value* value)
 {
-    if(from == NULL || to == NULL)
-        return false;
+    if(value == NULL)
+        return;
 
-    aug_decref(to);
-    *to = *from;
-
-    switch (to->type)
+    switch (value->type)
     {
     case AUG_STRING:
-        assert(to->str);
-        ++to->str->ref_count;
-        break;
-    case AUG_OBJECT:
-        assert(to->obj);
-        ++to->obj->ref_count;
+        aug_string_incref(value->str);
         break;
     case AUG_ARRAY:
-        assert(to->array);
-        ++to->array->ref_count;
+        aug_array_incref(value->array);
+        break;
+    case AUG_OBJECT:
+        assert(value->obj);
+        ++value->obj->ref_count;
         break;
     default:
         break;
     }
-    return true;
 }
 
-inline bool aug_move(aug_value* to, aug_value* from)
+static inline void aug_assign(aug_value* to, aug_value* from)
 {
     if(from == NULL || to == NULL)
-        return false;
+        return;
+
+    aug_decref(to);
+    *to = *from;
+    aug_incref(to);
+}
+
+static inline void aug_move(aug_value* to, aug_value* from)
+{
+    if(from == NULL || to == NULL)
+        return;
 
     aug_decref(to);
     *to = *from;
     *from = aug_none();
-
-    return true;
 }
 
-inline bool aug_get_element(aug_value* container, aug_value* index, aug_value* element)
+static inline bool aug_get_element(aug_value* container, aug_value* index, aug_value* element)
 {
     if(container == NULL || index == NULL || element == NULL)
         return false;
 
-    int i = aug_get_int(*index);
+    int i = aug_get_int(index);
     if(i < 0)
         return false;
 
@@ -2633,21 +2769,23 @@ inline bool aug_get_element(aug_value* container, aug_value* index, aug_value* e
     {
     case AUG_STRING:
     {
-        assert(container->str);
-        aug_string* str = container->str;
-        *element = aug_from_char((*str)[i]);
+        *element = aug_from_char(aug_string_at(container->str, i));
         return true;
     }
     case AUG_ARRAY:
     {
-        assert(container->array);
-        aug_array* array = container->array;
-        *element = (*array)[i];
-        return true;
+        aug_value* value = aug_array_at(container->array, i);
+        if(value)
+        {
+            *element = *value;
+            return true;
+        }    
+         
     }
     default:
         break;
     }
+    *element = aug_none();
     return false;
 }
 
@@ -2698,7 +2836,7 @@ inline bool aug_get_element(aug_value* container, aug_value* index, aug_value* e
     }                                                           \
 }
 
-inline bool aug_add(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_add(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_int(result, lhs->i + rhs->i),
@@ -2711,7 +2849,7 @@ inline bool aug_add(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_sub(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_sub(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_int(result, lhs->i - rhs->i),
@@ -2724,7 +2862,7 @@ inline bool aug_sub(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_mul(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_mul(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_int(result, lhs->i * rhs->i),
@@ -2737,7 +2875,7 @@ inline bool aug_mul(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_div(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_div(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_float(result, (float)lhs->i / rhs->i),
@@ -2750,7 +2888,7 @@ inline bool aug_div(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_pow(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_pow(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_int(result, (int)powf((float)lhs->i, (float)rhs->i)),
@@ -2763,7 +2901,7 @@ inline bool aug_pow(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_mod(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_mod(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_int(result, lhs->i % rhs->i),
@@ -2776,7 +2914,7 @@ inline bool aug_mod(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_lt(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_lt(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_bool(result, lhs->i < rhs->i),
@@ -2789,7 +2927,7 @@ inline bool aug_lt(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_lte(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_lte(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_bool(result, lhs->i <= rhs->i),
@@ -2802,7 +2940,7 @@ inline bool aug_lte(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_gt(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_gt(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_bool(result, lhs->i > rhs->i),
@@ -2815,7 +2953,7 @@ inline bool aug_gt(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_gte(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_gte(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_bool(result, lhs->i >= rhs->i),
@@ -2828,7 +2966,7 @@ inline bool aug_gte(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_eq(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_eq(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     // TODO: add a special case for object equivalence (per field)
     AUG_DEFINE_BINOP(result, lhs, rhs,
@@ -2842,7 +2980,7 @@ inline bool aug_eq(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_neq(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_neq(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     // TODO: add a special case for object equivalence (per field)
     AUG_DEFINE_BINOP(result, lhs, rhs,
@@ -2856,7 +2994,7 @@ inline bool aug_neq(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
-inline bool aug_approxeq(aug_value* result, aug_value* lhs, aug_value* rhs)
+static inline bool aug_approxeq(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP(result, lhs, rhs,
         return aug_set_bool(result, lhs->i == rhs->i),
@@ -2869,220 +3007,249 @@ inline bool aug_approxeq(aug_value* result, aug_value* lhs, aug_value* rhs)
     return false;
 }
 
+static inline bool aug_and(aug_value* result, aug_value* lhs, aug_value* rhs)
+{
+    return aug_set_bool(result, aug_get_bool(lhs) && aug_get_bool(rhs));
+}
+
+static inline bool aug_or(aug_value* result, aug_value* lhs, aug_value* rhs)
+{
+    return aug_set_bool(result, aug_get_bool(lhs) || aug_get_bool(rhs));
+}
+
 #undef AUG_DEFINE_BINOP
 
 // -------------------------------------- Virtual Machine / Bytecode ----------------------------------------------// 
 
 // Used to convert values to/from bytes for constant values
-union aug_vm_bytecode_value
+typedef union aug_vm_bytecode_value
 {
     bool b;
     int i;
     char c;
     float f;
     unsigned char bytes[sizeof(float)]; //Used to access raw byte data to bool, float and int types
-};
+} aug_vm_bytecode_value;
 
 static_assert(sizeof(float) >= sizeof(int), "Ensure bytes array has enough space to contain both int and float data types");
 
-#define AUG_VM_ERROR(vm, ...)                      \
-{                                                  \
-    AUG_LOG_ERROR(vm.error_callback, __VA_ARGS__); \
-    vm.valid = false;                              \
-    vm.instruction = NULL;                         \
+#define AUG_VM_ERROR(vm, ...)                         \
+{                                                     \
+    AUG_LOG_ERROR(vm->error_callback, __VA_ARGS__);    \
+    vm->valid = false;                                 \
+    vm->instruction = NULL;                            \
 }
 
-#define AUG_VM_UNOP_ERROR(vm, arg, op)               \
-{                                                    \
-    if (arg != NULL)                                 \
-        AUG_VM_ERROR(vm, "%s %s not defined",        \
-            op,                                      \
-            aug_value_type_labels[(int)arg->type]);  \
+#define AUG_VM_UNOP_ERROR(vm, arg, op)                              \
+{                                                                   \
+    AUG_VM_ERROR(vm, "%s %s not defined",                           \
+        op,                                                         \
+        arg ? aug_value_type_labels[(int)arg->type] : "(null)");    \
 }
 
-#define AUG_VM_BINOP_ERROR(vm, lhs, rhs, op)           \
-{                                                      \
-    if (lhs != NULL && rhs != NULL)                    \
-        AUG_VM_ERROR(vm, "%s %s %s not defined",  \
-            aug_value_type_labels[(int)lhs->type],     \
-            op,                                        \
-            aug_value_type_labels[(int)rhs->type]);    \
+#define AUG_VM_BINOP_ERROR(vm, lhs, rhs, op)                        \
+{                                                                   \
+    AUG_VM_ERROR(vm, "%s %s %s not defined",                        \
+        lhs ? aug_value_type_labels[(int)lhs->type] : "(null)",     \
+        op,                                                         \
+        rhs ? aug_value_type_labels[(int)rhs->type] : "(null)")     \
 }
 
-inline aug_value* aug_vm_top(aug_vm& vm)
+static inline aug_value* aug_vm_top(aug_vm* vm)
 {
-    return &vm.stack[vm.stack_index -1];
+    return &vm->stack[vm->stack_index -1];
 }
 
-inline aug_value* aug_vm_push(aug_vm& vm)
+static inline aug_value* aug_vm_push(aug_vm* vm)
 {
-    if(vm.stack_index >= AUG_STACK_SIZE)
+    if(vm->stack_index >= AUG_STACK_SIZE)
     {                                              
-        if(vm.valid)
+        if(vm->valid)
             AUG_VM_ERROR(vm, "Stack overflow");      
         return NULL;                           
     }
-    aug_value* top = &vm.stack[vm.stack_index++];
+    aug_value* top = &vm->stack[vm->stack_index++];
     return top;
 }
 
-inline aug_value* aug_vm_pop(aug_vm& vm)
+static inline aug_value* aug_vm_pop(aug_vm* vm)
 {
     aug_value* top = aug_vm_top(vm);
-    --vm.stack_index;
+    --vm->stack_index;
     return top;
 }
 
-inline aug_value* aug_vm_get_global(aug_vm& vm, int stack_offset)
+static inline aug_value* aug_vm_get_global(aug_vm* vm, int stack_offset)
 {
-    if (stack_offset < 0)
+    if(stack_offset < 0)
     {
-        if (vm.instruction)
+        if(vm->instruction)
             AUG_VM_ERROR(vm, "Stack underflow");
         return NULL;
     }
-    else if (stack_offset >= AUG_STACK_SIZE)
+    else if(stack_offset >= AUG_STACK_SIZE)
     {
-        if (vm.instruction)
+        if(vm->instruction)
             AUG_VM_ERROR(vm, "Stack overflow");
         return NULL;
     }
 
-    return &vm.stack[stack_offset];
+    return &vm->stack[stack_offset];
 }
 
-inline void aug_vm_push_call_frame(aug_vm& vm, int return_addr)
+static inline void aug_vm_push_call_frame(aug_vm* vm, int return_addr)
 {
     aug_value* ret_value = aug_vm_push(vm);
-    if (ret_value == NULL)
+    if(ret_value == NULL)
         return;
     ret_value->type = AUG_INT;
     ret_value->i = return_addr;
 
     aug_value* base_value = aug_vm_push(vm);
-    if (base_value == NULL)
+    if(base_value == NULL)
         return;
     base_value->type = AUG_INT;
-    base_value->i = vm.base_index;    
+    base_value->i = vm->base_index;    
 }
 
-inline aug_value* aug_vm_get_local(aug_vm& vm, int stack_offset)
+static inline aug_value* aug_vm_get_local(aug_vm* vm, int stack_offset)
 {
-    return aug_vm_get_global(vm, vm.base_index + stack_offset);
+    return aug_vm_get_global(vm, vm->base_index + stack_offset);
 }
 
-inline int aug_vm_read_bool(aug_vm& vm)
+static inline int aug_vm_read_bool(aug_vm* vm)
 {
     aug_vm_bytecode_value bytecode_value;
-    for (size_t i = 0; i < sizeof(bytecode_value.b); ++i)
-        bytecode_value.bytes[i] = *(vm.instruction++);
+    for(size_t i = 0; i < sizeof(bytecode_value.b); ++i)
+        bytecode_value.bytes[i] = *(vm->instruction++);
     return bytecode_value.b;
 }
 
-inline int aug_vm_read_int(aug_vm& vm)
+static inline int aug_vm_read_int(aug_vm* vm)
 {
     aug_vm_bytecode_value bytecode_value;
-    for (size_t i = 0; i < sizeof(bytecode_value.i); ++i)
-        bytecode_value.bytes[i] = *(vm.instruction++);
+    for(size_t i = 0; i < sizeof(bytecode_value.i); ++i)
+        bytecode_value.bytes[i] = *(vm->instruction++);
     return bytecode_value.i;
 }
 
-inline char aug_vm_read_char(aug_vm& vm)
+static inline char aug_vm_read_char(aug_vm* vm)
 {
     aug_vm_bytecode_value bytecode_value;
-    for (size_t i = 0; i < sizeof(bytecode_value.c); ++i)
-        bytecode_value.bytes[i] = *(vm.instruction++);
+    for(size_t i = 0; i < sizeof(bytecode_value.c); ++i)
+        bytecode_value.bytes[i] = *(vm->instruction++);
     return bytecode_value.c;
 }
 
-inline float aug_vm_read_float(aug_vm& vm)
+static inline float aug_vm_read_float(aug_vm* vm)
 {
     aug_vm_bytecode_value bytecode_value;
-    for (size_t i = 0; i < sizeof(bytecode_value.f); ++i)
-        bytecode_value.bytes[i] = *(vm.instruction++);
+    for(size_t i = 0; i < sizeof(bytecode_value.f); ++i)
+        bytecode_value.bytes[i] = *(vm->instruction++);
     return bytecode_value.f;
 }
 
-inline const char* aug_vm_read_bytes(aug_vm& vm)
+static inline const char* aug_vm_read_bytes(aug_vm* vm)
 {
     size_t len = 1; // include null terminating
-    while (*(vm.instruction++))
+    while(*(vm->instruction++))
         len++;
-    return vm.instruction - len;
+    return vm->instruction - len;
 }
 
-void aug_vm_startup(aug_vm& vm)
+void aug_vm_startup(aug_vm* vm)
 {
-    vm.bytecode = NULL;
-    vm.instruction = NULL;
-    vm.stack_index = 0;
-    vm.base_index = 0;
-    vm.valid = false; 
+    vm->bytecode = NULL;
+    vm->instruction = NULL;
+    vm->stack_index = 0;
+    vm->base_index = 0;
+    vm->valid = false; 
 }
 
-void aug_vm_shutdown(aug_vm& vm)
+void aug_vm_shutdown(aug_vm* vm)
 {
-    // Cleanup stack values. Free any outstanding values
-    while(vm.stack_index > 0)
+    //Cleanup stack values. Free any outstanding values
+    while(vm->stack_index > 0)
         aug_decref(aug_vm_pop(vm));
 
     // Ensure that stack has returned to beginning state
-    if (vm.stack_index != 0)
-        AUG_LOG_ERROR(vm.error_callback, "Virtual machine shutdown error. Invalid stack state");
+    if(vm->stack_index != 0)
+        AUG_LOG_ERROR(vm->error_callback, "Virtual machine shutdown error. Invalid stack state");
 }
 
-void aug_vm_load_script(aug_vm& vm, const aug_script& script)
+void aug_vm_load_script(aug_vm* vm, const aug_script* script)
 {
-    if (script.valid && script.bytecode.size() == 0)
-        vm.bytecode = NULL;
-    else
-        vm.bytecode = &script.bytecode[0];
-    
-    vm.instruction = vm.bytecode;
-    vm.valid = (vm.bytecode != NULL);
+    if(vm == NULL || script == NULL)
+        return;
 
-    // Load the script state
-    for (size_t i = 0; i < script.stack_state.size(); ++i)
+    if(script->bytecode == NULL)
+        vm->bytecode = NULL;
+    else
+        vm->bytecode = script->bytecode;
+    
+    vm->instruction = vm->bytecode;
+    vm->valid = (vm->bytecode != NULL);
+
+    if(script->stack_state != NULL)
     {
-        aug_value* top = aug_vm_push(vm);
-        if (top)
-            *top = script.stack_state[i];
+        for(size_t i = 0; i < script->stack_state->length; ++i)
+        {
+            aug_value* top = aug_vm_push(vm);
+            if(top)
+                *top = *aug_array_at(script->stack_state, i);
+        }
     }
 }
 
-void aug_vm_save_script(aug_vm& vm, aug_script& script)
+void aug_vm_unload_script(aug_vm* vm, aug_script* script)
 {
-    script.stack_state.clear();
-    while (vm.stack_index > 0)
+    if(script == NULL)
+        return;
+
+    // Unload the script state
+    if(script->stack_state != NULL)
+    {
+        for(size_t i = 0; i < script->stack_state->length; ++i)
+        {   
+            aug_value* value = aug_array_at(script->stack_state, i);
+            aug_decref(value);
+        }
+    }
+}
+
+void aug_vm_save_script(aug_vm* vm, aug_script* script)
+{
+    if(vm == NULL || script == NULL)
+        return;
+
+    script->stack_state = aug_array_decref(script->stack_state);
+    if(vm->stack_index > 0)
+        script->stack_state = aug_array_new(1);
+
+    while(vm->stack_index > 0)
     {
         aug_value* top = aug_vm_pop(vm);
-        if (top)
-            script.stack_state.push_back(*top);
+        aug_value* element = aug_array_push(script->stack_state);
+        *element = aug_none();
+        aug_assign(element, top);
     }
 }
 
-void aug_free_script(aug_vm& vm, aug_script& script)
+void aug_vm_execute(aug_vm* vm)
 {
-    for (size_t i = 0; i < script.stack_state.size(); ++i)
-    {
-        aug_decref(&script.stack_state[i]);
-    }
-}
+    if(vm == NULL)
+        return;
 
-void aug_vm_execute(aug_vm& vm)
-{
-    while(vm.instruction)
+    while(vm->instruction)
     {
-        aug_opcode opcode = (aug_opcode) (*vm.instruction);
-        ++vm.instruction;
-
+        aug_opcode_repr opcode = (aug_opcode_repr)(*vm->instruction++);
         switch(opcode)
         {
             case AUG_OPCODE_NO_OP:
                 break;
             case AUG_OPCODE_EXIT:
             {
-                vm.instruction = NULL;
+                vm->instruction = NULL;
                 break;
             }
             case AUG_OPCODE_POP:
@@ -3093,7 +3260,7 @@ void aug_vm_execute(aug_vm& vm)
             case AUG_OPCODE_PUSH_NONE:
             {
                 aug_value* value = aug_vm_push(vm);
-                if (value == NULL)
+                if(value == NULL)
                     break;
                 value->type = AUG_NONE;
                 break;
@@ -3101,7 +3268,7 @@ void aug_vm_execute(aug_vm& vm)
             case AUG_OPCODE_PUSH_BOOL:
             {
                 aug_value* value = aug_vm_push(vm);
-                if (value == NULL)
+                if(value == NULL)
                     break;
                 aug_set_bool(value, aug_vm_read_bool(vm));
                 break;
@@ -3147,9 +3314,12 @@ void aug_vm_execute(aug_vm& vm)
                 int count = aug_vm_read_int(vm);
                 while(count-- > 0)
                 {
-                    aug_value entry = aug_none();
-                    aug_move(&entry, aug_vm_pop(vm));
-                    value.array->push_back(entry);
+                    aug_value* element = aug_array_push(value.array);
+                    if(element != NULL) 
+                    {
+                        *element = aug_none();
+                        aug_move(element, aug_vm_pop(vm));
+                    }
                 }
 
                 aug_value* top = aug_vm_push(vm);          
@@ -3162,7 +3332,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* local = aug_vm_get_local(vm, stack_offset);
 
                 aug_value* top = aug_vm_push(vm);
-                aug_incref(top, local);
+                aug_assign(top, local);
                 break;
             }
             case AUG_OPCODE_PUSH_GLOBAL:
@@ -3171,7 +3341,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* local = aug_vm_get_global(vm, stack_offset);
 
                 aug_value* top = aug_vm_push(vm);
-                aug_incref(top, local);
+                aug_assign(top, local);
                 break;
             }
             case AUG_OPCODE_PUSH_ELEMENT:
@@ -3217,7 +3387,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* rhs = aug_vm_pop(vm);
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);    
-                if (!aug_add(target, lhs, rhs))
+                if(!aug_add(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "+");
                 break;
             }
@@ -3226,7 +3396,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* rhs = aug_vm_pop(vm);
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);    
-                if (!aug_sub(target, lhs, rhs))
+                if(!aug_sub(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "-");
                 break;
             }
@@ -3235,7 +3405,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* rhs = aug_vm_pop(vm);
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);    
-                if (!aug_mul(target, lhs, rhs))
+                if(!aug_mul(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "*");
                 break;
             }
@@ -3253,7 +3423,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* rhs = aug_vm_pop(vm);
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
-                if (!aug_pow(target, lhs, rhs))
+                if(!aug_pow(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "^");
                 break;
             }
@@ -3262,7 +3432,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* rhs = aug_vm_pop(vm);
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
-                if (!aug_mod(target, lhs, rhs))
+                if(!aug_mod(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "%%");
                 break;
             }
@@ -3270,7 +3440,7 @@ void aug_vm_execute(aug_vm& vm)
             {
                 aug_value* arg = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
-                if (!aug_set_bool(target, !aug_condition(arg)))
+                if(!aug_set_bool(target, !aug_get_bool(arg)))
                     AUG_VM_UNOP_ERROR(vm, arg, "!");
                 break;
             }
@@ -3279,7 +3449,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* rhs = aug_vm_pop(vm);
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
-                if (!aug_set_bool(target, aug_condition(lhs) && aug_condition(rhs)))
+                if(!aug_and(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "&");
                 break;
             }
@@ -3288,7 +3458,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* rhs = aug_vm_pop(vm);
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
-                if (!aug_set_bool(target, aug_condition(lhs) || aug_condition(rhs)))
+                if(!aug_or(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "|");
                 break;
             }
@@ -3297,7 +3467,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* rhs = aug_vm_pop(vm);
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
-                if (!aug_lt(target, lhs, rhs))
+                if(!aug_lt(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "<");
                 break;
             }
@@ -3306,7 +3476,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* rhs = aug_vm_pop(vm);
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
-                if (!aug_lte(target, lhs, rhs))
+                if(!aug_lte(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "<=");
                 break;
             }
@@ -3315,7 +3485,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* rhs = aug_vm_pop(vm);
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
-                if (!aug_gt(target, lhs, rhs))
+                if(!aug_gt(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, ">");
                 break;
             }
@@ -3324,7 +3494,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* rhs = aug_vm_pop(vm);
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
-                if (!aug_gte(target, lhs, rhs))
+                if(!aug_gte(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, ">=");
                 break;
             }
@@ -3333,7 +3503,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* rhs = aug_vm_pop(vm);
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
-                if (!aug_eq(target, lhs, rhs))
+                if(!aug_eq(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "==");
                 break;
             }
@@ -3342,7 +3512,7 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* rhs = aug_vm_pop(vm);
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
-                if (!aug_neq(target, lhs, rhs))
+                if(!aug_neq(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "!=");
                 break;
             }
@@ -3351,22 +3521,22 @@ void aug_vm_execute(aug_vm& vm)
                 aug_value* rhs = aug_vm_pop(vm);
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
-                if (!aug_approxeq(target, lhs, rhs))
+                if(!aug_approxeq(target, lhs, rhs))
                     AUG_VM_BINOP_ERROR(vm, lhs, rhs, "~=");
                 break;
             }
             case AUG_OPCODE_JUMP:
             {
                 const int instruction_offset = aug_vm_read_int(vm);
-                vm.instruction = vm.bytecode + instruction_offset;
+                vm->instruction = vm->bytecode + instruction_offset;
                 break;
             }
             case AUG_OPCODE_JUMP_NZERO:
             {
                 const int instruction_offset = aug_vm_read_int(vm);
                 aug_value* top = aug_vm_pop(vm);
-                if (aug_condition(top) != 0)
-                    vm.instruction = vm.bytecode + instruction_offset;
+                if(aug_get_bool(top) != 0)
+                    vm->instruction = vm->bytecode + instruction_offset;
                 aug_decref(top);
                 break;
             }
@@ -3374,17 +3544,17 @@ void aug_vm_execute(aug_vm& vm)
             {
                 const int instruction_offset = aug_vm_read_int(vm);
                 aug_value* top = aug_vm_pop(vm);
-                if (aug_condition(top) == 0)
-                    vm.instruction = vm.bytecode + instruction_offset;
+                if(aug_get_bool(top) == 0)
+                    vm->instruction = vm->bytecode + instruction_offset;
                 aug_decref(top);
                 break;
             }
             case AUG_OPCODE_DEC_STACK:
             {
                 const int delta = aug_vm_read_int(vm);
-                for(int i = 0; i < delta; ++i)
+                int i;
+                for(i = 0; i < delta; ++i)
                     aug_decref(aug_vm_pop(vm));
-                //vm.stack_index = vm.stack_index - delta;
                 break;
             }
             case AUG_OPCODE_PUSH_CALL_FRAME:
@@ -3396,8 +3566,8 @@ void aug_vm_execute(aug_vm& vm)
             case AUG_OPCODE_CALL:
             {
                 const int func_addr = aug_vm_read_int(vm);
-                vm.instruction = vm.bytecode + func_addr;
-                vm.base_index = vm.stack_index;
+                vm->instruction = vm->bytecode + func_addr;
+                vm->base_index = vm->stack_index;
                 break;
             }
             case AUG_OPCODE_RETURN:
@@ -3407,25 +3577,38 @@ void aug_vm_execute(aug_vm& vm)
                 
                 // Free locals
                 const int delta = aug_vm_read_int(vm);
-                for(int i = 0; i < delta; ++i)
+                int i;
+                for(i = 0; i < delta; ++i)
                     aug_decref(aug_vm_pop(vm));
                 
                 // Restore base index
                 aug_value* ret_base = aug_vm_pop(vm);
-                vm.base_index = ret_base->i;
+                if(ret_base == NULL)
+                {                    
+                    AUG_VM_ERROR(vm, "Calling frame setup incorrectly. Stack missing stack base");
+                    break;
+                }
+
+                vm->base_index = ret_base->i;
                 aug_decref(ret_base);
 
                 // jump to return instruction
                 aug_value* ret_addr = aug_vm_pop(vm);
-                if (ret_addr->i == AUG_OPCODE_INVALID)
-                    vm.instruction = NULL;
+                if(ret_addr == NULL)
+                {                    
+                    AUG_VM_ERROR(vm, "Calling frame setup incorrectly. Stack missing return address");
+                    break;
+                }
+                
+                if(ret_addr->i == AUG_OPCODE_INVALID)
+                    vm->instruction = NULL;
                 else
-                    vm.instruction = vm.bytecode + ret_addr->i;
+                    vm->instruction = vm->bytecode + ret_addr->i;
                 aug_decref(ret_addr);
 
                 // push return value back onto stack, for callee
                 aug_value* top = aug_vm_push(vm);
-                if (ret_value != NULL && top != NULL)
+                if(ret_value != NULL && top != NULL)
                     *top = *ret_value;
 
                 break;
@@ -3445,43 +3628,38 @@ void aug_vm_execute(aug_vm& vm)
                 const int func_index = func_index_value->i;
 
                 // Gather arguments
-                aug_std_array<aug_value> args;
-                args.reserve(arg_count);
-                for (int i = arg_count - 1; i >= 0; --i)
+                aug_value* args = AUG_ALLOC_ARRAY(aug_value, arg_count);
+                int i;
+                for(i = arg_count - 1; i >= 0; --i)
                 {
                     aug_value* arg = aug_vm_pop(vm);
-                    if (arg != NULL)
+                    if(arg != NULL)
                     {
                         aug_value value = aug_none();
                         aug_move(&value, arg);
-                        args.push_back(value);
+                        args[arg_count - i - 1] = value;
                     }
                 }
-
+          
                 // Check function call
-                if (func_index < 0 || func_index >= (int)vm.external_functions.size() || vm.external_functions[func_index] == NULL)
+                if(func_index >= 0 && func_index < AUG_EXTENSION_SIZE && vm->extensions[func_index] != NULL)
                 {
-                    AUG_VM_ERROR(vm, "External Function Called at index %d not registered", func_index);
-                }
-                else if ((int)args.size() != arg_count)
-                {
-                    const aug_std_string& func_name = vm.external_function_names[func_index];
-                    AUG_VM_ERROR(vm, "External Function Call %s passed %d arguments, expected %d", func_name.c_str(), (int)args.size(), arg_count);
+                    // Call the external function. Move return value on to top of stack
+                    aug_value ret_value = vm->extensions[func_index](arg_count, args);
+                    aug_value* top = aug_vm_push(vm);
+                    if(top)
+                        aug_move(top, &ret_value);
                 }
                 else
                 {
-                    // Call the external function. Move return value on to top of stack
-                    aug_value ret_value = vm.external_functions[func_index](args);
-                    aug_value* top = aug_vm_push(vm);
-                    if (top)
-                        aug_move(top, &ret_value);
+                    AUG_VM_ERROR(vm, "External Function Called at index %d not registered", func_index);
                 }
 
                 // Cleanup arguments
                 aug_decref(func_index_value);
-                for (int i = 0; i < arg_count; ++i)
+                for(i = 0; i < arg_count; ++i)
                     aug_decref(&args[i]);
-
+                AUG_FREE_ARRAY(args);
                 break;
             }
             default:
@@ -3491,10 +3669,10 @@ void aug_vm_execute(aug_vm& vm)
 
 #if AUG_DEBUG_VM
         printf("OP:   %s\n", aug_opcode_labels[(int)opcode]);
-        for(int i = 0; i < 16; ++i)
+        for(size_t i = 0; i < 16; ++i)
         {
-            aug_value val = vm.stack[i];
-            printf("%s %d: %s ", (vm.stack_index-1) == i ? ">" : " ", i, aug_value_type_labels[(int)val.type]);
+            aug_value val = vm->stack[i];
+            printf("%s %d: %s ", (vm->stack_index-1) == i ? ">" : " ", i, aug_value_type_labels[(int)val.type]);
             switch(val.type)
             {
                 case AUG_INT: printf("%d", val.i); break;
@@ -3511,68 +3689,56 @@ void aug_vm_execute(aug_vm& vm)
     }
 }
 
-aug_value aug_vm_execute_from_frame(aug_vm& vm, int func_addr, const aug_std_array<aug_value>& args)
+aug_value aug_vm_execute_from_frame(aug_vm* vm, int func_addr, int argc, aug_value* args)
 {
     // Manually set expected call frame
     aug_vm_push_call_frame(vm, AUG_OPCODE_INVALID);
 
     // Jump to function call
-    vm.instruction = vm.bytecode + func_addr;
+    vm->instruction = vm->bytecode + func_addr;
 
-    const size_t arg_count = args.size();
-    for (size_t i = 0; i < arg_count; ++i)
+    int i;
+    for(i = 0; i < argc; ++i)
     {
         aug_value* value = aug_vm_push(vm);
-        if (value)
+        if(value)
             *value = args[i];
     }
 
-    vm.base_index = vm.stack_index;
+    vm->base_index = vm->stack_index;
     aug_vm_execute(vm);
 
     aug_value ret_value = aug_none();
-    if (vm.stack_index > 0)
+    if(vm->stack_index > 1)
     {
         // If stack is valid, get the pushed value
         aug_value* top = aug_vm_pop(vm);
-        if (top)
+        if(top)
             ret_value = *top;
     }
-
     return ret_value;
 }
 
-// -------------------------------------- Passes ------------------------------------------------// 
-bool aug_pass_semantic_check(const aug_ast* node)
+void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
 {
-    if(node == NULL)
-        return false;
-    return true;
-}
-// -------------------------------------- Transformations ---------------------------------------// 
-
-void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
-{
-    if(node == NULL || !ir.valid)
+    if(node == NULL || !ir->valid)
         return;
 
-    const aug_token& token = node->token;
-    const aug_std_array<aug_ast*>& children = node->children;
+    const aug_token token = node->token;
+    aug_string* token_data = token.data; 
+    aug_ast** children = node->children;
+    const int children_size = node->children_size;
 
     switch(node->id)
     {
         case AUG_AST_ROOT:
         {
-            const aug_std_array<aug_ast*>& children = node->children;
-
             aug_ir_push_frame(ir, 0); // push a global frame
 
-            for (aug_ast* stmt : children)
-                aug_ast_to_ir(vm, stmt, ir);
+            int i;
+            for(i = 0; i < children_size; ++ i)
+                aug_ast_to_ir(vm, children[i], ir);
 
-            // Restore stack
-            //const aug_ir_operand delta = aug_ir_operand_from_int(aug_ir_current_scope_local_offset(ir));
-            //aug_ir_add_operation(ir, AUG_OPCODE_DEC_STACK, delta);
             aug_ir_add_operation(ir, AUG_OPCODE_EXIT);
 
             aug_ir_pop_frame(ir); // pop global frame
@@ -3580,71 +3746,72 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_BLOCK: 
         {
-            for (aug_ast* stmt : children)
-                aug_ast_to_ir(vm, stmt, ir);
+            int i;
+            for(i = 0; i < children_size; ++ i)
+                aug_ast_to_ir(vm, children[i], ir);
+
             break;
         }
         case AUG_AST_LITERAL:
         {
-            const aug_token& token = node->token;
             switch (token.id)
             {
                 case AUG_TOKEN_CHAR:
                 {
-                    assert(token.data.size() > 0);
-                    const char data = token.data[0];
-                    const aug_ir_operand& operand = aug_ir_operand_from_char(data);
-                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_CHAR, operand);
+                    assert(token_data && token_data->length == 1);
+                    const char data = token_data->buffer[0];
+                    const aug_ir_operand operand = aug_ir_operand_from_char(data);
+                    aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_CHAR, operand);
                     break;
                 }
                 case AUG_TOKEN_INT:
                 {
-                    assert(token.data.size() > 0);
-                    const int data = strtol(token.data.c_str(), NULL, 10);
-                    const aug_ir_operand& operand = aug_ir_operand_from_int(data);
-                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
+                    assert(token_data && token_data->length > 0);
+                    const int data = strtol(token_data->buffer, NULL, 10);
+                    const aug_ir_operand operand = aug_ir_operand_from_int(data);
+                    aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_INT, operand);
                     break;
                 }
                 case AUG_TOKEN_HEX:
                 {
-                    assert(token.data.size() > 0);
-                    const unsigned int data = strtoul(token.data.c_str(), NULL, 16);
-                    const aug_ir_operand& operand = aug_ir_operand_from_int(data);
-                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
+                    assert(token_data && token_data->length > 0);
+                    const unsigned int data = strtoul(token_data->buffer, NULL, 16);
+                    const aug_ir_operand operand = aug_ir_operand_from_int(data);
+                    aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_INT, operand);
                     break;
                 }
                 case AUG_TOKEN_BINARY:
                 {
-                    assert(token.data.size() > 0);
-                    const unsigned int data = strtoul(token.data.c_str(), NULL, 2);
-                    const aug_ir_operand& operand = aug_ir_operand_from_int(data);
-                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, operand);
+                    assert(token_data && token_data->length > 0);
+                    const unsigned int data = strtoul(token_data->buffer, NULL, 2);
+                    const aug_ir_operand operand = aug_ir_operand_from_int(data);
+                    aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_INT, operand);
                     break;
                 }
                 case AUG_TOKEN_FLOAT:
                 {
-                    assert(token.data.size() > 0);
-                    const float data = strtof(token.data.c_str(), NULL);
-                    const aug_ir_operand& operand = aug_ir_operand_from_float(data);
-                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_FLOAT, operand);
+                    assert(token_data && token_data->length > 0);
+                    const float data = strtof(token_data->buffer, NULL);
+                    const aug_ir_operand operand = aug_ir_operand_from_float(data);
+                    aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_FLOAT, operand);
                     break;
                 }
                 case AUG_TOKEN_STRING:
                 {
-                    const aug_ir_operand& operand = aug_ir_operand_from_str(token.data.c_str());
-                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_STRING, operand);
+                    const aug_ir_operand operand = aug_ir_operand_from_str(token_data->buffer);
+                    aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_STRING, operand);
                     break;
                 }
                 case AUG_TOKEN_TRUE:
                 {
-                    const aug_ir_operand& operand = aug_ir_operand_from_bool(true);
-                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_BOOL, operand);
+                    const aug_ir_operand operand = aug_ir_operand_from_bool(true);
+                    aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_BOOL, operand);
                     break;
                 }
                 case AUG_TOKEN_FALSE:
                 {
-                    const aug_ir_operand& operand = aug_ir_operand_from_bool(false);
-                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_BOOL, operand);
+                    const aug_ir_operand operand = aug_ir_operand_from_bool(false);
+                    aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_BOOL, operand);
                     break;
                 }
                 default:
@@ -3655,31 +3822,33 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_VARIABLE:
         {
-            const aug_symbol& symbol = aug_ir_symbol_relative(ir, token.data);
-            if (symbol.type == AUG_SYM_NONE)
+            assert(token_data != NULL);
+
+            const aug_symbol symbol = aug_ir_symbol_relative(ir, token_data);
+            if(symbol.type == AUG_SYM_NONE)
             {
-                ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Variable %s not defined in current block", token.data.c_str());
+                ir->valid = false;
+                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Variable %s not defined in current block", token_data->buffer);
                 return;
             }
 
-            if (symbol.type == AUG_SYM_FUNC)
+            if(symbol.type == AUG_SYM_FUNC)
             {
-                ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function %s can not be used as a variable", token.data.c_str());
+                ir->valid = false;
+                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Function %s can not be used as a variable", token_data->buffer);
                 return;
             }
 
-            const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+            const aug_ir_operand address_operand = aug_ir_operand_from_int(symbol.offset);
             if(symbol.scope == AUG_SYM_SCOPE_GLOBAL)
-                aug_ir_add_operation(ir, AUG_OPCODE_PUSH_GLOBAL, address_operand);
+                aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_GLOBAL, address_operand);
             else
-                aug_ir_add_operation(ir, AUG_OPCODE_PUSH_LOCAL, address_operand);
+                aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_LOCAL, address_operand);
             break;
         }
         case AUG_AST_UNARY_OP:
         {
-            assert(children.size() == 1); // token [0]
+            assert(children_size == 1); // token [0]
 
             aug_ast_to_ir(vm, children[0], ir);
 
@@ -3694,7 +3863,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_BINARY_OP:
         {
-            assert(children.size() == 2); // [0] token [1]
+            assert(children_size == 2); // [0] token [1]
 
             aug_ast_to_ir(vm, children[0], ir); // LHS
             aug_ast_to_ir(vm, children[1], ir); // RHS
@@ -3722,17 +3891,17 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_ARRAY:
         {
-            const int expr_count = children.size();
-            for (int i = expr_count - 1; i >= 0; --i)
+            int i;
+            for(i = children_size - 1; i >= 0; --i)
                 aug_ast_to_ir(vm, children[i], ir);
 
-            const aug_ir_operand& count_operand = aug_ir_operand_from_int(expr_count);
-            aug_ir_add_operation(ir, AUG_OPCODE_PUSH_ARRAY, count_operand);
+            const aug_ir_operand count_operand = aug_ir_operand_from_int(children_size);
+            aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_ARRAY, count_operand);
             break;
         }
         case AUG_AST_ELEMENT:
         {
-            assert(children.size() == 2); // 0[1]
+            assert(children_size == 2); // 0[1]
             aug_ast_to_ir(vm, children[0], ir); // push container var
             aug_ast_to_ir(vm, children[1], ir); // push index
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_ELEMENT);
@@ -3740,7 +3909,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_STMT_EXPR:
         {
-            if (children.size() == 1)
+            if(children_size == 1)
             {
                 aug_ast_to_ir(vm, children[0], ir);
                 // discard the top if a non-assignment binop
@@ -3750,52 +3919,54 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
         }
         case AUG_AST_STMT_ASSIGN_VAR:
         {
-            assert(children.size() == 1); // token = [0]
+            assert(token_data != NULL);
+            assert(children_size == 1); // token = [0]
             
             aug_ast_to_ir(vm, children[0], ir);
 
-            const aug_symbol& symbol = aug_ir_symbol_relative(ir, token.data);
-            if (symbol.type == AUG_SYM_NONE)
+            const aug_symbol symbol = aug_ir_symbol_relative(ir, token_data);
+            if(symbol.type == AUG_SYM_NONE)
             {
-                aug_ir_set_var(ir, token.data);
-                return;
+                aug_ir_set_var(ir, token_data);
+                break;
             }
-            else if (symbol.type == AUG_SYM_FUNC)
+            else if(symbol.type == AUG_SYM_FUNC)
             {
-                ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Can not assign function %s as a variable", token.data.c_str());
-                return;
+                ir->valid = false;
+                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Can not assign function %s as a variable", token_data->buffer);
+                break;
             }
 
-            const aug_ir_operand& address_operand = aug_ir_operand_from_int(symbol.offset);
+            const aug_ir_operand address_operand = aug_ir_operand_from_int(symbol.offset);
             if(symbol.scope == AUG_SYM_SCOPE_GLOBAL)
-                aug_ir_add_operation(ir, AUG_OPCODE_LOAD_GLOBAL, address_operand);
+                aug_ir_add_operation_arg(ir, AUG_OPCODE_LOAD_GLOBAL, address_operand);
             else
-                aug_ir_add_operation(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
+                aug_ir_add_operation_arg(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
             break;
         }
         case AUG_AST_STMT_DEFINE_VAR:
         {
-            if (children.size() == 1) // token = [0]
+            if(children_size == 1) // token = [0]
                 aug_ast_to_ir(vm, children[0], ir);
             else
                 aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
 
-            const aug_symbol symbol = aug_ir_get_symbol_local(ir, token.data);
-            if (symbol.offset != AUG_OPCODE_INVALID)
+            // Get variable in the current block. If it exists, error out. If it does not exist, set in table
+            aug_ir_scope* scope = aug_ir_current_scope(ir);
+            const aug_symbol symbol =  aug_symtable_get(scope->symtable, token_data);
+            if(symbol.offset != AUG_OPCODE_INVALID)
             {
-                ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Variable %s already defined in block", token.data.c_str());
-                return;
+                ir->valid = false;
+                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Variable %s already defined in block", token_data->buffer);
+                break;
             }
-
-            aug_ir_set_var(ir, token.data);
+            aug_ir_set_var(ir, token_data);
         
             break;
         }
         case AUG_AST_STMT_IF:
         {
-            assert(children.size() == 2); //if ([0]) {[1]}
+            assert(children_size == 2); //if([0]) {[1]}
 
             const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
 
@@ -3803,24 +3974,23 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
             aug_ast_to_ir(vm, children[0], ir);
 
             //Jump to end if false
-            const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
+            const size_t end_block_jmp = aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
 
             // True block
             aug_ir_push_scope(ir);
             aug_ast_to_ir(vm, children[1], ir);
             aug_ir_pop_scope(ir);
 
-            const size_t end_block_addr = ir.bytecode_offset;
+            const size_t end_block_addr = ir->bytecode_offset;
 
             // Fixup stubbed block offsets
-            aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
-            end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
+            aug_ir_get_operation(ir, end_block_jmp)->operand = aug_ir_operand_from_int(end_block_addr);
 
             break;
         }
         case AUG_AST_STMT_IF_ELSE:
         {
-            assert(children.size() == 3); //if ([0]) {[1]} else {[2]}
+            assert(children_size == 3); //if([0]) {[1]} else {[2]}
 
             const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
 
@@ -3828,7 +3998,7 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
             aug_ast_to_ir(vm, children[0], ir);
 
             //Jump to else if false
-            const size_t else_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
+            const size_t else_block_jmp = aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
 
             // True block
             aug_ir_push_scope(ir);
@@ -3836,8 +4006,8 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
             aug_ir_pop_scope(ir);
 
             //Jump to end after true
-            const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP, stub_operand);
-            const size_t else_block_addr = ir.bytecode_offset;
+            const size_t end_block_jmp = aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP, stub_operand);
+            const size_t else_block_addr = ir->bytecode_offset;
 
             // Else block
             aug_ir_push_scope(ir);
@@ -3845,30 +4015,27 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
             aug_ir_pop_scope(ir);
 
             // Tag end address
-            const size_t end_block_addr = ir.bytecode_offset;
+            const size_t end_block_addr = ir->bytecode_offset;
 
             // Fixup stubbed block offsets
-            aug_ir_operation& else_block_jmp_operation = aug_ir_get_operation(ir, else_block_jmp);
-            else_block_jmp_operation.operand = aug_ir_operand_from_int(else_block_addr);
-
-            aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
-            end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
+            aug_ir_get_operation(ir, else_block_jmp)->operand = aug_ir_operand_from_int(else_block_addr);
+            aug_ir_get_operation(ir, end_block_jmp)->operand = aug_ir_operand_from_int(end_block_addr);
 
             break;
         }
         case AUG_AST_STMT_WHILE:
         {
-            assert(children.size() == 2); //while ([0]) {[1]}
+            assert(children_size == 2); //while([0]) {[1]}
 
             const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
 
-            const aug_ir_operand& begin_block_operand = aug_ir_operand_from_int(ir.bytecode_offset);
+            const aug_ir_operand begin_block_operand = aug_ir_operand_from_int(ir->bytecode_offset);
 
             // Evaluate expression. 
             aug_ast_to_ir(vm, children[0], ir);
 
             //Jump to end if false
-            const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
+            const size_t end_block_jmp = aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
 
             // Loop block
             aug_ir_push_scope(ir);
@@ -3876,134 +4043,129 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
             aug_ir_pop_scope(ir);
 
             // Jump back to beginning, expr evaluation 
-            aug_ir_add_operation(ir, AUG_OPCODE_JUMP, begin_block_operand);
+            aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP, begin_block_operand);
 
             // Tag end address
-            const size_t end_block_addr = ir.bytecode_offset;
+            const size_t end_block_addr = ir->bytecode_offset;
 
             // Fixup stubbed block offsets
-            aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
-            end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
-
+            aug_ir_get_operation(ir, end_block_jmp)->operand = aug_ir_operand_from_int(end_block_addr);
             break;
         }
         case AUG_AST_FUNC_CALL:
         {
-            const char* func_name = token.data.c_str();
-            const int arg_count = children.size();
-            const aug_symbol& symbol = aug_ir_get_symbol(ir, func_name);
+            assert(token_data != NULL); // func name is token data
+            const int arg_count = children_size;
 
-            if (symbol.type == AUG_SYM_VAR)
+            const aug_symbol symbol = aug_ir_get_symbol(ir, token_data);
+            if(symbol.type == AUG_SYM_VAR)
             {
-                ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Can not call variable %s as a function", func_name);
+                ir->valid = false;
+                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Can not call variable %s as a function", token_data->buffer);
                 break;
             }
 
             // If the symbol is a user defined function.
-            if (symbol.type == AUG_SYM_FUNC)
+            if(symbol.type == AUG_SYM_FUNC)
             {
-                if (symbol.argc != arg_count)
+                if(symbol.argc != arg_count)
                 {
-                    ir.valid = false;
-                    AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function Call %s passed %d arguments, expected %d", func_name, arg_count, symbol.argc);
+                    ir->valid = false;
+                    AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Function Call %s passed %d arguments, expected %d", token_data->buffer, arg_count, symbol.argc);
                 }
                 else
                 {
                     // offset to account for the pushed base
-                    size_t push_frame = aug_ir_add_operation(ir, AUG_OPCODE_PUSH_CALL_FRAME, aug_ir_operand_from_int(0));
+                    size_t push_frame = aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_CALL_FRAME, aug_ir_operand_from_int(0));
 
-                    for (const aug_ast* arg : children)
-                        aug_ast_to_ir(vm, arg, ir);
+                    // push args
+                    int i;
+                    for(i = 0; i < children_size; ++ i)
+                        aug_ast_to_ir(vm, children[i], ir);
 
-                    const aug_ir_operand& func_addr = aug_ir_operand_from_int(symbol.offset); // func addr
-                    aug_ir_add_operation(ir, AUG_OPCODE_CALL, func_addr);
+                    aug_ir_operand func_addr = aug_ir_operand_from_int(symbol.offset); // func addr
+                    aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL, func_addr);
 
                     // fixup the return address to after the call
-                    aug_ir_get_operation(ir, push_frame).operand = aug_ir_operand_from_int(ir.bytecode_offset);
+                    aug_ir_get_operation(ir, push_frame)->operand = aug_ir_operand_from_int(ir->bytecode_offset);
                 }
                 break;
             }
 
             // Check if the symbol is a registered function
             int func_index = -1;
-            for (int i = 0; i < (int)vm.external_function_names.size(); ++i)
+            int i;
+            for(i = 0; i < AUG_EXTENSION_SIZE; ++i)
             {
-                if (vm.external_function_names[i] == func_name)
+                if(vm->extensions[i] != NULL && aug_string_compare(vm->extension_names[i], token_data))
                 {
                     func_index = i;
                     break;
                 }
             }
 
-            if (func_index == -1)
+            if(func_index == -1)
             {
-                ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function %s not defined", func_name);
-                break;
-            }
-            if (vm.external_functions[func_index] == nullptr)
-            {
-                ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "External Function %s was not properly registered.", func_name);
+                ir->valid = false;
+                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Function extension %s not registered", token_data->buffer);
                 break;
             }
 
-            for (int i = arg_count - 1; i >= 0; --i)
+            for(i = arg_count - 1; i >= 0; --i)
                 aug_ast_to_ir(vm, children[i], ir);
 
-            const aug_ir_operand& func_index_operand = aug_ir_operand_from_int(func_index);
-            aug_ir_add_operation(ir, AUG_OPCODE_PUSH_INT, func_index_operand);
+            const aug_ir_operand func_index_operand = aug_ir_operand_from_int(func_index);
+            aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_INT, func_index_operand);
 
-            const aug_ir_operand& arg_count_operand = aug_ir_operand_from_int(arg_count);
-            aug_ir_add_operation(ir, AUG_OPCODE_CALL_EXT, arg_count_operand);
+            const aug_ir_operand arg_count_operand = aug_ir_operand_from_int(arg_count);
+            aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL_EXT, arg_count_operand);
             break;
         }
         case AUG_AST_RETURN:
         {
-            const aug_ir_operand& offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
-            if (children.size() == 1) //return [0];
+            const aug_ir_operand offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
+            if(children_size == 1) //return [0];
             {
                 aug_ast_to_ir(vm, children[0], ir);
-                aug_ir_add_operation(ir, AUG_OPCODE_RETURN, offset);
+                aug_ir_add_operation_arg(ir, AUG_OPCODE_RETURN, offset);
             }
             else
             {
                 aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
-                aug_ir_add_operation(ir, AUG_OPCODE_RETURN, offset);
+                aug_ir_add_operation_arg(ir, AUG_OPCODE_RETURN, offset);
             }
             break;
         }
         case AUG_AST_PARAM:
         {
-            aug_ir_set_param(ir, token.data);
+            assert(token_data != NULL);
+            aug_ir_set_param(ir, token_data);
             break;
         }
         case AUG_AST_PARAM_LIST:
         {
-            // start stack offset at beginning of parameter (this will be nagative relative to the current frame)
-            for (const aug_ast* param : children)
-                aug_ast_to_ir(vm, param, ir);
+            int i;
+            for(i = 0; i < children_size; ++ i)
+                aug_ast_to_ir(vm, children[i], ir);
             break;
         }
         case AUG_AST_FUNC_DEF:
         {
-            assert(children.size() == 2); //func token [0] {[1]};
+            assert(token_data != NULL && children_size == 2); //func token [0] {[1]};
 
             // Jump over the func def
             const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
-            const size_t end_block_jmp = aug_ir_add_operation(ir, AUG_OPCODE_JUMP, stub_operand);
-
-            const char* func_name = token.data.c_str();
+            const size_t end_block_jmp = aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP, stub_operand);
 
             aug_ast* params = children[0];
             assert(params && params->id == AUG_AST_PARAM_LIST);
-            const int param_count = params->children.size();
+            const int param_count = params->children_size;
 
-            if (!aug_ir_set_func(ir, func_name, param_count))
+            // Try to set function in symbol table. Func name is token
+            if(!aug_ir_set_func(ir, token_data, param_count))
             {
-                ir.valid = false;
-                AUG_INPUT_ERROR_AT(ir.input, &token.pos, "Function %s already defined", func_name);
+                ir->valid = false;
+                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Function %s already defined", token_data->buffer);
                 break;
             }
 
@@ -4016,21 +4178,19 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
             aug_ast_to_ir(vm, children[1], ir);
 
             // Ensure there is a return
-            if (ir.operations.at(ir.operations.size() - 1).opcode != AUG_OPCODE_RETURN)
+            if(aug_ir_last_operation(ir)->opcode != AUG_OPCODE_RETURN)
             {
-                const aug_ir_operand& offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
+                const aug_ir_operand offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
                 aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
-                aug_ir_add_operation(ir, AUG_OPCODE_RETURN, offset);
+                aug_ir_add_operation_arg(ir, AUG_OPCODE_RETURN, offset);
             }
 
             aug_ir_pop_frame(ir);
             aug_ir_pop_scope(ir);
 
-            const size_t end_block_addr = ir.bytecode_offset;
-
             // fixup jump operand
-            aug_ir_operation& end_block_jmp_operation = aug_ir_get_operation(ir, end_block_jmp);
-            end_block_jmp_operation.operand = aug_ir_operand_from_int(end_block_addr);
+            const size_t end_block_addr = ir->bytecode_offset;
+            aug_ir_get_operation(ir, end_block_jmp)->operand = aug_ir_operand_from_int(end_block_addr);
 
             break;
         }
@@ -4040,18 +4200,21 @@ void aug_ast_to_ir(aug_vm& vm, const aug_ast* node, aug_ir& ir)
     }
 }
 
-void aug_ir_to_bytecode(aug_ir& ir, aug_std_array<char>& bytecode)
+char* aug_ir_to_bytecode(aug_ir* ir)
 {  
-    bytecode.resize(ir.bytecode_offset, AUG_OPCODE_NO_OP) ;
+    char* bytecode = AUG_ALLOC_ARRAY(char, ir->bytecode_offset);
+    char* instruction = bytecode;
 
-    char* instruction = &bytecode[0];
-
-    for(const aug_ir_operation& operation : ir.operations)
+    size_t i;
+    for(i = 0; i < ir->operations.length; ++i)
     {
-        *instruction = (char)operation.opcode;
-        ++instruction;    
+        aug_ir_operation* operation = (aug_ir_operation*)aug_container_at(&ir->operations, i);
+        aug_ir_operand operand = operation->operand;
 
-        const aug_ir_operand& operand = operation.operand;
+        // push operation opcode
+        (*instruction++) = (aug_opcode_repr)operation->opcode;
+
+        // push operation arguments
         switch (operand.type)
         {
         case AUG_IR_OPERAND_NONE:
@@ -4060,197 +4223,203 @@ void aug_ir_to_bytecode(aug_ir& ir, aug_std_array<char>& bytecode)
         case AUG_IR_OPERAND_CHAR:
         case AUG_IR_OPERAND_INT:
         case AUG_IR_OPERAND_FLOAT:
-            for (size_t i = 0; i < aug_ir_operand_size(operand); ++i)
+            for(size_t i = 0; i < aug_ir_operand_size(operand); ++i)
                 *(instruction++) = operand.data.bytes[i];
             break;
         case AUG_IR_OPERAND_BYTES:
-            for (size_t i = 0; i < strlen(operand.data.str); ++i)
+            for(size_t i = 0; i < strlen(operand.data.str); ++i)
                 *(instruction++) = operand.data.str[i];
-
             *(instruction++) = 0; // null terminate
             break;
         }
     }
+
+    assert((size_t) (instruction - bytecode) == ir->bytecode_offset);
+    return bytecode;
 }
 
 // -------------------------------------- API ---------------------------------------------// 
-
-bool aug_compile_script(aug_vm& vm, aug_input* input, aug_ast* root, aug_script& script)
+aug_script* aug_script_new(aug_symtable* globals, char* bytecode)
 {
-    script.bytecode.clear();
-    script.globals.clear();
-    script.stack_state.clear();
-
-    if (root == NULL)
-        return false;
-
-    // Generate IR
-    aug_ir ir;
-    aug_ir_init(ir, input);
-    aug_ast_to_ir(vm, root, ir);
-
-    if (!ir.valid)
-        return false;
-
-    // Load script globals
-    script.globals = ir.globals;
-
-    // Load bytecode into VM
-    aug_ir_to_bytecode(ir, script.bytecode);
-    return true;
+    aug_script* script = AUG_ALLOC(aug_script);
+    script->stack_state = NULL;
+    script->bytecode = bytecode;
+    script->globals = globals;
+    aug_symtable_incref(script->globals);
+    return script;
 }
 
-void aug_startup(aug_vm& vm, aug_error_callback* error_callback)
+void aug_script_delete(aug_script* script)
 {
-    vm.error_callback = NULL;
-    vm.external_functions.clear();
-    vm.external_function_names.clear();
-    vm.stack = AUG_NEW_ARRAY(aug_value, AUG_STACK_SIZE);
-    for(int i = 0; i < AUG_STACK_SIZE; ++i)
-        vm.stack[i] = aug_none();
+    if(script == NULL)
+        return;
 
-    // Initialize
-    vm.error_callback = error_callback;
-    aug_vm_startup(vm);
-}
-
-void aug_shutdown(aug_vm& vm)
-{
-    aug_vm_shutdown(vm);
-    AUG_DELETE_ARRAY(vm.stack);
-    vm.stack = nullptr;
-
-    vm.error_callback = NULL;
-    vm.external_functions.clear();
-    vm.external_function_names.clear();
-}
-
-void aug_register(aug_vm& vm, const char* func_name, aug_function_callback *callback)
-{
-    for (int i = 0; i < (int)vm.external_functions.size(); ++i)
+    if(script->stack_state != NULL)
     {
-        if (vm.external_functions[i] == NULL)
+        for(size_t i = 0; i < script->stack_state->length; ++i)
         {
-            vm.external_functions[i] = callback;
-            vm.external_function_names[i] = func_name;
-            return;
+            aug_value* value = aug_array_at( script->stack_state, i );
+            aug_decref(value);
         }
     }
-    vm.external_functions.push_back(callback);
-    vm.external_function_names.push_back(func_name);
+    aug_symtable_decref(script->globals);
+    script->stack_state = aug_array_decref(script->stack_state);
+
+    if(script->bytecode != NULL)
+        AUG_FREE_ARRAY(script->bytecode);
+    AUG_FREE(script);
 }
 
-void aug_unregister(aug_vm& vm, const char* func_name)
+aug_vm* aug_startup(aug_error_function* error_callback)
 {
-    for (int i = 0; i < (int)vm.external_functions.size(); ++i)
+    aug_vm* vm = AUG_ALLOC(aug_vm);
+    int i;
+    for(i = 0; i < AUG_EXTENSION_SIZE; ++i)
     {
-        if (vm.external_function_names[i] == func_name)
+        vm->extensions[i] = NULL;
+        vm->extension_names[i] = NULL;
+    }
+
+    for(i = 0; i < AUG_STACK_SIZE; ++i)
+        vm->stack[i] = aug_none();
+
+    // Initialize
+    vm->error_callback = error_callback;
+    aug_vm_startup(vm);
+    return vm;
+}
+
+void aug_shutdown(aug_vm* vm)
+{
+    aug_vm_shutdown(vm);
+
+    int i;
+    for(i = 0; i < AUG_EXTENSION_SIZE; ++i)
+    {
+        vm->extensions[i] = NULL;
+        vm->extension_names[i] = aug_string_decref(vm->extension_names[i]);
+    }
+
+    AUG_FREE(vm);
+}
+
+void aug_register(aug_vm* vm, const char* name, aug_extension *extension)
+{
+    int i;
+    for(i = 0; i < AUG_EXTENSION_SIZE; ++i)
+    {
+        if(vm->extensions[i] == NULL)
         {
-            vm.external_functions[i] = NULL;
+            vm->extensions[i] = extension;
+            vm->extension_names[i] =  aug_string_create(name);
             break;
         }
     }
 }
 
-void aug_execute(aug_vm& vm, const char* filename)
+void aug_unregister(aug_vm* vm, const char* func_name)
 {
-    aug_script script;
-    bool success = aug_compile(vm, script, filename);
-    if (!success)
-        return;
+    int i;
+    for(i = 0; i < AUG_EXTENSION_SIZE; ++i)
+    {
+        if(aug_string_compare_bytes(vm->extension_names[i], func_name))
+        {
+            vm->extensions[i] = NULL;
+            vm->extension_names[i] = aug_string_decref(vm->extension_names[i]);
+            break;
+        }
+    }
+}
+
+void aug_execute(aug_vm* vm, const char* filename)
+{
+    aug_script* script = aug_compile(vm, filename);
 
     aug_vm_startup(vm);
     aug_vm_load_script(vm, script);
     aug_vm_execute(vm);
     aug_vm_shutdown(vm);
+
+    aug_script_delete(script);
 }
 
-void aug_evaluate(aug_vm& vm, const char* code)
+aug_script* aug_compile(aug_vm* vm, const char* filename)
 {
-    aug_input* input = aug_input_open(code, vm.error_callback, false);
-    if (input == NULL)
-        return;
-
-    // Parse file
-    aug_script script;
-    aug_ast* root = aug_parse(vm, input);
-    script.valid = aug_compile_script(vm, input, root, script);
-
-    // Cleanup 
-    aug_ast_delete(root);
-    aug_input_close(input);
-
-    if (!script.valid)
-        return;
-
-    aug_vm_startup(vm);
-    aug_vm_load_script(vm, script);
-    aug_vm_execute(vm);
-    aug_vm_shutdown(vm);
-}
-
-bool aug_compile(aug_vm& vm, aug_script& script, const char* filename)
-{
-    script.valid = false;
-
-    aug_input* input = aug_input_open(filename, vm.error_callback, true);
-    if (input == NULL)
+    aug_input* input = aug_input_open(filename, vm->error_callback);
+    if(input == NULL)
         return NULL;
 
     // Parse file
     aug_ast* root = aug_parse(vm, input);
-    script.valid = aug_compile_script(vm, input, root, script);
+    if(root == NULL)
+    {
+        aug_input_close(input);
+        return NULL;
+    }
+
+
+    // Generate IR
+    aug_ir* ir = aug_ir_new(input);
+    aug_ast_to_ir(vm, root, ir);
+
+    // Load script
+    char* bytecode = aug_ir_to_bytecode(ir);
+    aug_script* script = aug_script_new(ir->globals, bytecode);
     
     // Cleanup 
+    aug_ir_delete(ir);
     aug_ast_delete(root);
     aug_input_close(input);
-
-    return script.valid;
+    
+    return script;
 }
 
-void aug_load(aug_vm& vm, aug_script& script)
+void aug_load(aug_vm* vm, aug_script* script)
 {
     aug_vm_load_script(vm, script);
     aug_vm_execute(vm);
     aug_vm_save_script(vm, script);
 }
 
-void aug_unload(aug_vm& vm, aug_script& script)
+void aug_unload(aug_vm* vm, aug_script* script)
 {
-    aug_free_script(vm, script);
+    aug_vm_unload_script(vm, script);
 }
 
-aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name, const aug_std_array<aug_value>& args)
+aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, int argc, aug_value* args)
 {
-    aug_value ret_value = aug_none();
-    if (!script.valid)
-        return ret_value;
+    if(vm == NULL)
+        return aug_none();
 
-    if (script.globals.count(func_name) == 0)
+    aug_value ret_value = aug_none();
+    if(script->bytecode == NULL)
+        return ret_value;
+    
+    aug_symbol symbol = aug_symtable_get_bytes(script->globals, func_name);
+    if(symbol.type == AUG_SYM_NONE)
     {
-        AUG_LOG_ERROR(vm.error_callback, "Function %s not defined", func_name);
+        AUG_LOG_ERROR(vm->error_callback, "Function %s not defined", func_name);
         return ret_value;
     }
 
-    const aug_symbol& symbol = script.globals[func_name];
-    switch (symbol.type)
+    switch(symbol.type)
     {
         case AUG_SYM_FUNC:
             break;
         case AUG_SYM_VAR:
         {
-            AUG_LOG_ERROR(vm.error_callback, "Can not call variable %s a function", func_name);
+            AUG_LOG_ERROR(vm->error_callback, "Can not call variable %s a function", func_name);
             return ret_value;
         }
         default:
         {
-            AUG_LOG_ERROR(vm.error_callback, "Symbol %s not defined as a function", func_name);
+            AUG_LOG_ERROR(vm->error_callback, "Symbol %s not defined as a function", func_name);
             return ret_value;
         }
     }
-    if (symbol.argc != (int)args.size())
+    if(symbol.argc != argc)
     {
-        AUG_LOG_ERROR(vm.error_callback, "Function %s passed %d arguments, expected %d", func_name, (int)args.size(), symbol.argc);
+        AUG_LOG_ERROR(vm->error_callback, "Function %s passed %d arguments, expected %d", func_name, argc, symbol.argc);
         return ret_value;
     }
 
@@ -4259,7 +4428,7 @@ aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name, const 
 
     // Setup base index to be current stack index
     const int func_addr = symbol.offset;
-    ret_value = aug_vm_execute_from_frame(vm, func_addr, args);
+    ret_value = aug_vm_execute_from_frame(vm, func_addr, argc, args);
 
     aug_vm_save_script(vm, script);
     aug_vm_shutdown(vm);
@@ -4267,10 +4436,9 @@ aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name, const 
     return ret_value;
 }
 
-aug_value aug_call(aug_vm& vm, aug_script& script, const char* func_name)
+aug_value aug_call(aug_vm* vm, aug_script* script, const char* func_name)
 {
-    const aug_std_array<aug_value> args;
-    return aug_call(vm, script, func_name, args);
+    return aug_call_args(vm, script, func_name, 0, NULL);
 }
 
 aug_value aug_from_bool(bool data)
@@ -4308,4 +4476,292 @@ aug_value aug_from_string(const char* data)
     return value;
 }
 
+// ------------------------------- Data Structures --------------------------------//
+
+aug_string* aug_string_new(size_t size) 
+{
+	aug_string* string = AUG_ALLOC(aug_string);
+	string->ref_count = 1;
+	string->length = 0;
+	string->capacity = size;
+	string->buffer = AUG_ALLOC_ARRAY(char, string->capacity);
+	return string;
+}
+
+aug_string* aug_string_create(const char* bytes) 
+{
+	aug_string* string = AUG_ALLOC(aug_string);
+	string->ref_count = 1;
+	string->length = strlen(bytes);
+	string->capacity = string->length + 1;
+	string->buffer = AUG_ALLOC_ARRAY(char, string->capacity);
+    strcpy(string->buffer, bytes);
+	return string;
+}
+
+void aug_string_resize(aug_string* string, size_t size) 
+{
+	string->capacity = size;
+    string->buffer = AUG_REALLOC_ARRAY(string->buffer, char, string->capacity);
+}
+
+void aug_string_push(aug_string* string, char c) 
+{
+	if(string->length + 1 >= string->capacity) 
+        aug_string_resize(string, 2 * string->capacity);
+    string->buffer[string->length++] = c;
+    string->buffer[string->length] = '\0';
+}
+
+char aug_string_pop(aug_string* string) 
+{
+	return string->length > 0 ? string->buffer[--string->length] : -1;
+}
+
+char aug_string_at(const aug_string* string, size_t index) 
+{
+	return index < string->length ? string->buffer[index] : -1;
+}
+
+char aug_string_back(const aug_string* string) 
+{
+	return string->length > 0 ? string->buffer[string->length-1] : -1;
+}
+
+bool aug_string_compare(const aug_string* a, const aug_string* b) 
+{
+    if(a == NULL || b == NULL || a->length != b->length)
+        return false; 
+    return strncmp(a->buffer, b->buffer, a->length) == 0;
+}
+
+bool aug_string_compare_bytes(const aug_string* a, const char* bytes) 
+{
+    if(bytes == NULL)
+        return a->buffer == NULL;
+
+    size_t len = strlen(bytes);
+    if(len != a->length)
+        return false;
+
+    size_t i;
+    for(i = 0; i < a->length; ++i)
+    {
+        if(a->buffer[i] != bytes[i])
+            return false;
+
+    }
+    return true;
+}
+
+void aug_string_incref(aug_string* string) 
+{
+    if(string != NULL)
+	    string->ref_count++;
+}
+
+aug_string* aug_string_decref(aug_string* string) 
+{
+	if(string != NULL && --string->ref_count == 0)
+    {
+        AUG_FREE_ARRAY(string->buffer);
+        AUG_FREE(string);
+        return NULL;
+    }
+    return string;
+}
+
+// -------------------------------- Array ----------------------------------------------------//
+aug_array* aug_array_new(size_t size)
+{                
+	aug_array* array = AUG_ALLOC(aug_array);
+	array->ref_count = 1;   
+	array->length = 0;      
+	array->capacity = size; 
+	array->buffer = AUG_ALLOC_ARRAY(aug_value, array->capacity );
+	return array;
+}
+
+void aug_array_incref(aug_array* array) 
+{
+    if(array != NULL)       
+	    array->ref_count++; 
+}
+ 
+aug_array* aug_array_decref(aug_array* array)
+{
+	if(array != NULL && --array->ref_count == 0)
+    {            
+        AUG_FREE_ARRAY(array->buffer);
+        AUG_FREE(array);
+        return NULL;
+    }            
+    return array;
+}       
+
+void aug_array_resize(aug_array* array, size_t size)    
+{
+	array->capacity = size; 
+	array->buffer = AUG_REALLOC_ARRAY(array->buffer, aug_value, array->capacity);
+}
+ 
+aug_value* aug_array_push(aug_array* array)  
+{
+	if(array->length + 1 >= array->capacity)   
+        aug_array_resize(array, 2 * array->capacity);     
+    return &array->buffer[array->length++];     
+}
+ 
+aug_value* aug_array_pop(aug_array* array)
+{
+	return array->length > 0 ? &array->buffer[--array->length] : NULL; 
+}
+ 
+aug_value* aug_array_at(const aug_array* array, size_t index) 
+{
+	return index < array->length ? &array->buffer[index] : NULL;       
+}
+ 
+aug_value* aug_array_back(const aug_array* array)             
+{
+	return array->length > 0 ? &array->buffer[array->length-1] : NULL; 
+}
+
+// ------------------------------- Generic Containers ------------------------------------//
+aug_container aug_container_new(size_t size)
+{ 
+	aug_container container;
+	container.length = 0;
+	container.capacity = size; 
+	container.buffer = AUG_ALLOC_ARRAY(void*, container.capacity);
+	return container;
+}
+ 
+void aug_container_delete(aug_container* container)
+{
+    AUG_FREE_ARRAY(container->buffer);
+    container->buffer = NULL;
+}
+
+void aug_container_resize(aug_container* container, size_t size)    
+{
+	container->capacity = size; 
+	container->buffer = AUG_REALLOC_ARRAY(container->buffer, void*, container->capacity);
+}
+ 
+void aug_container_push(aug_container* container, void* data)  
+{
+	if(container->length + 1 >= container->capacity) 
+        aug_container_resize(container, 2 * container->capacity);
+    container->buffer[container->length++] = data;
+}
+ 
+void* aug_container_pop(aug_container* container)
+{
+	return container->length > 0 ? container->buffer[--container->length] : NULL; 
+}
+ 
+void* aug_container_at(const aug_container* container, size_t index) 
+{
+	return index >= 0 && index < container->length ? container->buffer[index] : NULL;
+}
+ 
+void* aug_container_back(const aug_container* container)
+{
+	return container->length > 0 ? container->buffer[container->length-1] : NULL; 
+}
+
+// ------------------------------- Symtable ------------------------------------------//
+aug_symtable* aug_symtable_new(size_t size)
+{
+    aug_symtable* symtable = AUG_ALLOC(aug_symtable);
+	symtable->length = 0;
+	symtable->capacity = size; 
+    symtable->ref_count = 1;
+	symtable->buffer = AUG_ALLOC_ARRAY(aug_symbol, symtable->capacity);
+	return symtable;
+}
+
+void aug_symtable_incref(aug_symtable* symtable)
+{
+    if(symtable)
+        ++symtable->ref_count;
+}
+
+aug_symtable* aug_symtable_decref(aug_symtable* symtable)
+{    
+    if(symtable != NULL && --symtable->ref_count == 0)
+    {
+        size_t i;
+        for(i = 0; i < symtable->length; ++i)
+        {
+            aug_symbol symbol = symtable->buffer[i];
+            aug_string_decref(symbol.name);
+        }
+        AUG_FREE_ARRAY(symtable->buffer);
+        AUG_FREE(symtable);
+        return NULL;
+    }
+    return symtable;
+}
+
+void  aug_symtable_resize(aug_symtable* symtable, size_t size)
+{
+	symtable->capacity = size; 
+	symtable->buffer = AUG_REALLOC_ARRAY(symtable->buffer, aug_symbol, symtable->capacity);
+}
+
+bool aug_symtable_set(aug_symtable* symtable, aug_symbol symbol)
+{
+    aug_symbol existing_symbol = aug_symtable_get(symtable, symbol.name);
+    if(existing_symbol.type != AUG_SYM_NONE)
+        return false;
+
+    if(symtable->length + 1 >= symtable->capacity) 
+        aug_symtable_resize(symtable, 2 * symtable->capacity);
+    
+    
+    aug_symbol new_symbol = symbol;
+    aug_string_incref(new_symbol.name);
+
+    symtable->buffer[symtable->length++] = new_symbol;
+    return true;
+}
+
+aug_symbol aug_symtable_get(aug_symtable* symtable, aug_string* name)
+{
+    size_t i;
+    for(i = 0; i < symtable->length; ++i)
+    {
+        aug_symbol symbol = symtable->buffer[i];
+        if(aug_string_compare(symbol.name, name))
+            return symbol;
+    }
+    aug_symbol symbol;
+    symbol.offset = AUG_OPCODE_INVALID;
+    symbol.type = AUG_SYM_NONE;
+    symbol.argc = 0;
+    return symbol;
+}
+
+aug_symbol aug_symtable_get_bytes(aug_symtable* symtable, const char* name)
+{
+    size_t i;
+    for(i = 0; i < symtable->length; ++i)
+    {
+        aug_symbol symbol = symtable->buffer[i];
+        if(aug_string_compare_bytes(symbol.name, name))
+            return symbol;
+    }
+    aug_symbol symbol;
+    symbol.offset = AUG_OPCODE_INVALID;
+    symbol.type = AUG_SYM_NONE;
+    symbol.argc = 0;
+    return symbol;
+}
+
+#ifdef __cplusplus
+} // extern C
 #endif
+
+#endif //AUG_IMPLEMENTATION
