@@ -17,3 +17,4 @@ func fibonacci(n) {
 
 var a = fibonacci(2000000);
 print(a);
+expect(true);

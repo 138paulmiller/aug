@@ -5,17 +5,9 @@ func count(a) {
     return count(a-1) + 1;
 }
 
-func call_func(a, x) {
-    return a(x);
+func call_func(callback, x) {
+    return callback(x);
 }
 
-a = [ 0, 1, [ 2, 3, 4 ], 5, [6]];
-print(a);
-print(a);
-
-f = count;
-a = call_func(f, 1000);
-expect(a == 1000, "call_func(count, 1000) = ", a);
-
-a = call_func(count, 1000);
-expect(a == 1000, "call_func(count, 1000) = ", a);
+a = call_func(count, 10);
+expect(a == 10, "call_func(count, 1000) = ", a);

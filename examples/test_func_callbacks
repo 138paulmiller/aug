@@ -1,0 +1,51 @@
+var global = 0;
+
+func count(a) {
+    if a <= 0 { 
+        return 0; 
+    }
+    global += 1;
+    return count(a-1) + 1;
+}
+
+a = count(1000);
+expect(a == 1000, "count(1000) = ", a);
+expect(global == a, "global = ", global);
+
+func call_func(a, x) {
+    return a(x);
+}
+
+f = count;
+a = call_func(f, 1000);
+expect(a == 1000, "call_func(count, 1000) = ", a);
+
+a = call_func(count, 1000);
+expect(a == 1000, "call_func(count, 1000) = ", a);
+
+func delay_call_func(callback, x){
+    func _internal_call_func(a, y) {
+        return a(y);
+    }
+    var a = _internal_call_func(count, x);
+    expect(a == x, "_internal_call_func = ", a);
+}
+
+delay_call_func(count, 10);
+
+func local_call_func(){
+    func _local_call_func(a, x) {
+        return a(x);
+    }
+
+    func count(a) {
+        if a <= 0 { 
+            return 0; 
+        }
+        global += 1;
+        return count(a-1) + 1;
+    }
+    var a = _local_call_func(count, 10);
+    expect(a == 10, "_local_call_func(count, 10) = ", a);
+}
+

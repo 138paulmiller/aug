@@ -9,6 +9,7 @@ valgrind  --main-stacksize=1048576 --tool=memcheck --leak-check=full \
  --test ../examples/test_fib_recursive  \
  --test ../examples/test_binops         \
  --test ../examples/test_func           \
+ --test ../examples/test_func_callbacks \
  --test ../examples/test_func_local     \
  --test ../examples/test_stackoverflow  \
  --test ../examples/test_array          \

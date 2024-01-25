@@ -22,7 +22,7 @@ int print_value(aug_value value)
     return 0;
 }
 
-aug_value print(int argc, const aug_value* args)
+aug_value print(int argc, aug_value* args)
 {
 	for( int i = 0; i < argc; ++i)
 		print_value(args[i]);

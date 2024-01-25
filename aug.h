@@ -30,6 +30,9 @@ SOFTWARE. */
         #include "aug.h"
 
     Todo: 
+    - Runtime argument checks for function types. Should pass arg count when calling user defined func. 
+        Also create an ASSERT x opcode. generated func def bytecode should assert x on first line 
+        VM should pop and assert that argcount matches function argcount 
     - Create Programs for loading/unloading compiled code. The compiled scripts will also dump symtables to allow aug_call*s
     - Implement for loops
     - Serialize Bytecode to external file. Execute compiled bytecode from file
@@ -46,7 +49,7 @@ extern "C" {
 #ifndef __AUG_HEADER__
 #define __AUG_HEADER__
 
-#define AUG_DEBUG_VM 0 // for console debug
+#define AUG_DEBUG_VM 0
 
 // Size of the virtual machine's value stack 
 #ifndef AUG_STACK_SIZE
@@ -131,7 +134,7 @@ typedef enum aug_value_type
 } aug_value_type;
 
 #if defined(AUG_IMPLEMENTATION)
-const char* aug_value_type_labels[] =
+static const char* aug_value_type_labels[] =
 {
     "bool", "char", "int", "float", "string", "array", "object", "function", "none"
 };
@@ -1697,7 +1700,6 @@ aug_ast* aug_parse_stmt_if_else(aug_lexer* lexer, aug_ast* expr, aug_ast* block)
     if_else_stmt->children[0] = expr;
     if_else_stmt->children[1] = block;
 
-
     // Handling else if becomes else { if ... }
     if(lexer->curr.id == AUG_TOKEN_IF)
     {
@@ -2061,6 +2063,7 @@ aug_ast* aug_parse(aug_vm* vm, aug_input* input)
 	AUG_OPCODE(PUSH_FLOAT)        \
 	AUG_OPCODE(PUSH_STRING)       \
 	AUG_OPCODE(PUSH_ARRAY)        \
+	AUG_OPCODE(PUSH_FUNCTION)     \
 	AUG_OPCODE(PUSH_LOCAL)        \
 	AUG_OPCODE(PUSH_GLOBAL)       \
 	AUG_OPCODE(PUSH_ELEMENT)      \
@@ -2099,21 +2102,20 @@ aug_ast* aug_parse(aug_vm* vm, aug_input* input)
 	AUG_OPCODE(JUMP_NZERO)        \
 	AUG_OPCODE(RETURN)            \
 	AUG_OPCODE(CALL)              \
+	AUG_OPCODE(CALL_LOCAL)        \
+	AUG_OPCODE(CALL_GLOBAL)       \
 	AUG_OPCODE(CALL_EXT)          \
     AUG_OPCODE(DEC_STACK)         \
 
 
-// Special value used in bytecode to denote an invalid vm offset
-#define AUG_OPCODE_INVALID -1
-#define aug_opcode_repr uint8_t
-
-typedef enum aug_opcode
+enum aug_opcodes
 { 
 #define AUG_OPCODE(opcode) AUG_OPCODE_##opcode,
 	AUG_OPCODE_LIST
 #undef AUG_OPCODE
     AUG_OPCODE_COUNT
-}aug_opcode;
+};
+typedef uint8_t aug_opcode;
 
 static_assert(AUG_OPCODE_COUNT < 255, "AUG Opcode count too large. This will affect bytecode instruction set");
 
@@ -2125,6 +2127,10 @@ static const char* aug_opcode_labels[] =
 }; 
 
 #undef AUG_OPCODE_LIST
+
+// Special value used in bytecode to denote an invalid vm offset
+#define AUG_OPCODE_INVALID -1
+#define AUG_FRAME_STACK_SIZE 2
 
 // -------------------------------------- IR --------------------------------------------// 
 
@@ -2247,7 +2253,7 @@ static inline size_t aug_ir_operation_size(const aug_ir_operation* operation)
 {
     if(operation == 0)
         return 0;
-    size_t size = sizeof(aug_opcode_repr);
+    size_t size = sizeof(aug_opcode);
     size += aug_ir_operand_size(operation->operand);
     return size;
 }
@@ -2534,7 +2540,7 @@ static inline aug_symbol aug_ir_symbol_relative(aug_ir*ir, aug_string* name)
                     const aug_ir_frame* frame = aug_ir_current_frame(ir);
                     //If this variable is a local variable in an outer frame. Offset by 2 (ret addr and base index) for each frame delta
                     int frame_delta = (ir->frame_stack.length-1) - i;
-                    symbol.offset = symbol.offset - frame->base_index - frame_delta * 2;
+                    symbol.offset = symbol.offset - frame->base_index - frame_delta * AUG_FRAME_STACK_SIZE;
                     break;
                 }
                 }
@@ -2607,6 +2613,15 @@ static inline bool aug_set_array(aug_value* value)
     return true;
 }
 
+static inline bool aug_set_func(aug_value* value, int data)
+{
+    if(value == NULL)
+        return false;
+    value->type = AUG_FUNCTION;
+    value->i = data;
+    return true;
+}
+
 aug_value aug_none()
 {
     aug_value value;
@@ -2653,7 +2668,7 @@ bool aug_get_bool(const aug_value* value)
 int aug_get_int(const aug_value* value)
 {    
     if(value == NULL)
-        return false;
+        return 0;
 
     switch (value->type)
     {
@@ -2670,7 +2685,7 @@ int aug_get_int(const aug_value* value)
     case AUG_CHAR:
         return (int)value->c;
     case AUG_FLOAT:
-        return (int)value->f;    
+        return (int)value->f;
     }
     return 0;
 }
@@ -2678,7 +2693,7 @@ int aug_get_int(const aug_value* value)
 float aug_get_float(const aug_value* value)
 {
     if(value == NULL)
-        return false;
+        return 0;
 
     switch (value->type)
     {
@@ -2687,7 +2702,7 @@ float aug_get_float(const aug_value* value)
     case AUG_OBJECT:
     case AUG_ARRAY:
     case AUG_FUNCTION:
-       return 0.0f;
+        break;    
     case AUG_BOOL:
         return value->b ? 1.0f : 0.0f;
     case AUG_INT:
@@ -2790,32 +2805,36 @@ static inline bool aug_get_element(aug_value* container, aug_value* index, aug_v
     if(container == NULL || index == NULL || element == NULL)
         return false;
 
-    int i = aug_get_int(index);
+    size_t i = (size_t)aug_get_int(index);
     if(i < 0)
+    {
+        *element = aug_none();
         return false;
+    }
 
     switch (container->type)
     {
     case AUG_STRING:
     {
+        if( i >= container->str->length)
+            return false;
         *element = aug_create_char(aug_string_at(container->str, i));
         return true;
     }
     case AUG_ARRAY:
     {
+        if( i >= container->array->length)
+            return false;
         aug_value* value = aug_array_at(container->array, i);
-        if(value)
-        {
-            *element = *value;
-            return true;
-        }    
-         
+        *element = *value;
+        return true;
     }
     case AUG_NONE:
     case AUG_BOOL:
     case AUG_INT:
     case AUG_CHAR:
     case AUG_FLOAT:
+    case AUG_OBJECT:
     case AUG_FUNCTION:
         break;
     }
@@ -3133,6 +3152,7 @@ static inline aug_value* aug_vm_get_global(aug_vm* vm, int stack_offset)
 
 static inline void aug_vm_push_call_frame(aug_vm* vm, int return_addr)
 {
+    // NOTE: pushing 2 values onto stack. if this changes, must modify AUG_FRAME_STACK_SIZE 
     aug_value* ret_value = aug_vm_push(vm);
     if(ret_value == NULL)
         return;
@@ -3288,7 +3308,7 @@ void aug_vm_execute(aug_vm* vm)
 
     while(vm->instruction)
     {
-        aug_opcode_repr opcode = (aug_opcode_repr)(*vm->instruction++);
+        aug_opcode opcode = (aug_opcode)(*vm->instruction++);
         switch(opcode)
         {
             case AUG_OPCODE_NO_OP:
@@ -3372,6 +3392,14 @@ void aug_vm_execute(aug_vm* vm)
                 aug_move(top, &value);
                 break;
             }
+            case AUG_OPCODE_PUSH_FUNCTION:   
+            {
+                aug_value* value = aug_vm_push(vm);
+                if(value == NULL) 
+                    break;
+                aug_set_func(value, aug_vm_read_int(vm));
+                break;
+            }
             case AUG_OPCODE_PUSH_LOCAL:
             {
                 const int stack_offset = aug_vm_read_int(vm);
@@ -3414,7 +3442,6 @@ void aug_vm_execute(aug_vm* vm)
             {
                 const int stack_offset = aug_vm_read_int(vm);
                 aug_value* local = aug_vm_get_local(vm, stack_offset);
-
                 aug_value* top = aug_vm_pop(vm);
                 aug_move(local, top);
                 break;
@@ -3422,10 +3449,9 @@ void aug_vm_execute(aug_vm* vm)
             case AUG_OPCODE_LOAD_GLOBAL:
             {
                 const int stack_offset = aug_vm_read_int(vm);
-                aug_value* local = aug_vm_get_global(vm, stack_offset);
-
+                aug_value* global = aug_vm_get_global(vm, stack_offset);
                 aug_value* top = aug_vm_pop(vm);
-                aug_move(local, top);
+                aug_move(global, top);
                 break;
             }            
             case AUG_OPCODE_ADD:
@@ -3580,24 +3606,24 @@ void aug_vm_execute(aug_vm* vm)
             case AUG_OPCODE_JUMP_NZERO:
             {
                 const int instruction_offset = aug_vm_read_int(vm);
-                aug_value* top = aug_vm_pop(vm);
-                if(aug_get_bool(top) != 0)
+                aug_value* cond = aug_vm_pop(vm);
+                if(aug_get_bool(cond) != 0)
                     vm->instruction = vm->bytecode + instruction_offset;
-                aug_decref(top);
+                aug_decref(cond);
                 break;
             }
             case AUG_OPCODE_JUMP_ZERO:
             {
                 const int instruction_offset = aug_vm_read_int(vm);
-                aug_value* top = aug_vm_pop(vm);
-                if(aug_get_bool(top) == 0)
+                aug_value* cond = aug_vm_pop(vm);
+                if(aug_get_bool(cond) == 0)
                     vm->instruction = vm->bytecode + instruction_offset;
-                aug_decref(top);
+                aug_decref(cond);
                 break;
             }
             case AUG_OPCODE_DEC_STACK:
             {
-                const int delta = aug_vm_read_int(vm);
+                int delta = aug_vm_read_int(vm);
                 int i;
                 for(i = 0; i < delta; ++i)
                     aug_decref(aug_vm_pop(vm));
@@ -3616,47 +3642,33 @@ void aug_vm_execute(aug_vm* vm)
                 vm->base_index = vm->stack_index;
                 break;
             }
-            case AUG_OPCODE_RETURN:
+            case AUG_OPCODE_CALL_LOCAL:
             {
-                // get func return value
-                aug_value* ret_value = aug_vm_pop(vm);
-                
-                // Free locals
-                const int delta = aug_vm_read_int(vm);
-                int i;
-                for(i = 0; i < delta; ++i)
-                    aug_decref(aug_vm_pop(vm));
-                
-                // Restore base index
-                aug_value* ret_base = aug_vm_pop(vm);
-                if(ret_base == NULL)
+                const int stack_offset = aug_vm_read_int(vm);
+                aug_value* local = aug_vm_get_local(vm, stack_offset);
+                if(local == NULL || local->type != AUG_FUNCTION)
                 {                    
-                    AUG_VM_ERROR(vm, "Calling frame setup incorrectly. Stack missing stack base");
+                    AUG_VM_ERROR(vm, "Local value can not be called as a function");
                     break;
                 }
 
-                vm->base_index = ret_base->i;
-                aug_decref(ret_base);
-
-                // jump to return instruction
-                aug_value* ret_addr = aug_vm_pop(vm);
-                if(ret_addr == NULL)
+                const int func_addr = local->i;
+                vm->instruction = vm->bytecode + func_addr;
+                vm->base_index = vm->stack_index;
+                break;
+            }
+            case AUG_OPCODE_CALL_GLOBAL:
+            {
+                const int stack_offset = aug_vm_read_int(vm);
+                aug_value* global = aug_vm_get_global(vm, stack_offset);
+                if(global == NULL || global->type != AUG_FUNCTION)
                 {                    
-                    AUG_VM_ERROR(vm, "Calling frame setup incorrectly. Stack missing return address");
+                    AUG_VM_ERROR(vm, "Local value can not be called as a function");
                     break;
                 }
-                
-                if(ret_addr->i == AUG_OPCODE_INVALID)
-                    vm->instruction = NULL;
-                else
-                    vm->instruction = vm->bytecode + ret_addr->i;
-                aug_decref(ret_addr);
 
-                // push return value back onto stack, for callee
-                aug_value* top = aug_vm_push(vm);
-                if(ret_value != NULL && top != NULL)
-                    *top = *ret_value;
-
+                vm->instruction = vm->bytecode + global->i;
+                vm->base_index = vm->stack_index;
                 break;
             }
             case AUG_OPCODE_CALL_EXT:
@@ -3708,6 +3720,49 @@ void aug_vm_execute(aug_vm* vm)
                 AUG_FREE_ARRAY(args);
                 break;
             }
+            case AUG_OPCODE_RETURN:
+            {
+                // get func return value
+                aug_value* ret_value = aug_vm_pop(vm);
+                
+                // Free locals
+                const int delta = aug_vm_read_int(vm);
+                int i;
+                for(i = 0; i < delta; ++i)
+                    aug_decref(aug_vm_pop(vm));
+                
+                // Restore base index
+                aug_value* ret_base = aug_vm_pop(vm);
+                if(ret_base == NULL)
+                {                    
+                    AUG_VM_ERROR(vm, "Calling frame setup incorrectly. Stack missing stack base");
+                    break;
+                }
+
+                vm->base_index = ret_base->i;
+                aug_decref(ret_base);
+
+                // jump to return instruction
+                aug_value* ret_addr = aug_vm_pop(vm);
+                if(ret_addr == NULL)
+                {                    
+                    AUG_VM_ERROR(vm, "Calling frame setup incorrectly. Stack missing return address");
+                    break;
+                }
+                
+                if(ret_addr->i == AUG_OPCODE_INVALID)
+                    vm->instruction = NULL;
+                else
+                    vm->instruction = vm->bytecode + ret_addr->i;
+                aug_decref(ret_addr);
+
+                // push return value back onto stack, for callee
+                aug_value* top = aug_vm_push(vm);
+                if(ret_value != NULL && top != NULL)
+                    *top = *ret_value;
+
+                break;
+            }
             default:
                 // UNSUPPORTED!!!!
             break;
@@ -3715,15 +3770,15 @@ void aug_vm_execute(aug_vm* vm)
 
 #if AUG_DEBUG_VM
         printf("OP:   %s\n", aug_opcode_labels[(int)opcode]);
-        for(size_t i = 0; i < 16; ++i)
+        for(size_t i = 0; i < 5; ++i)
         {
             aug_value val = vm->stack[i];
-            printf("%s %d: %s ", (vm->stack_index-1) == i ? ">" : " ", i, aug_value_type_labels[(int)val.type]);
+            printf("%s %ld: %s ", (vm->stack_index-1) == i ? ">" : " ", i, aug_value_type_labels[(int)val.type]);
             switch(val.type)
             {
                 case AUG_INT: printf("%d", val.i); break;
                 case AUG_FLOAT: printf("%f", val.f); break;
-                case AUG_STRING: printf("%s", val.str->c_str()); break;
+                case AUG_STRING: printf("%s", val.str->buffer); break;
                 case AUG_BOOL: printf("%s", val.b ? "true" : "false"); break;
                 case AUG_CHAR: printf("%c", val.c); break;
                 default: break;
@@ -3878,17 +3933,18 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 return;
             }
 
-            //if(symbol.type == AUG_SYM_FUNC)
-            //{
-            //    ir->valid = false;
-            //    AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Function %s can not be used as a variable", token_data->buffer);
-            //    return;
-            //}
+            if(symbol.type == AUG_SYM_FUNC)
+            {
+                //TODO: create function type
+                const aug_ir_operand address_operand = aug_ir_operand_from_int(symbol.offset);
+                aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_FUNCTION, address_operand);
+                break;
+            }
 
             const aug_ir_operand address_operand = aug_ir_operand_from_int(symbol.offset);
             if(symbol.scope == AUG_SYM_SCOPE_GLOBAL)
                 aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_GLOBAL, address_operand);
-            else
+            else // if local or param
                 aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_LOCAL, address_operand);
             break;
         }
@@ -3986,7 +4042,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             const aug_ir_operand address_operand = aug_ir_operand_from_int(symbol.offset);
             if(symbol.scope == AUG_SYM_SCOPE_GLOBAL)
                 aug_ir_add_operation_arg(ir, AUG_OPCODE_LOAD_GLOBAL, address_operand);
-            else
+            else // if local or param
                 aug_ir_add_operation_arg(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
             break;
         }
@@ -4122,23 +4178,36 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 else
                 {
                     // offset to account for the pushed base
-                    size_t push_frame = aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_CALL_FRAME, aug_ir_operand_from_int(0));
+                    aug_ir_operand stub = aug_ir_operand_from_int(0);
+                    size_t push_frame = aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_CALL_FRAME, stub);
 
-                    // push args
+                    // TODO: Push arg count, and have the function body check that arg count matches in the vm runtime
                     int i;
                     for(i = 0; i < children_size; ++ i)
                         aug_ast_to_ir(vm, children[i], ir);
 
-                    aug_ir_operand func_addr = aug_ir_operand_from_int(symbol.offset); // func addr
-                    aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL, func_addr);
-
+                    if(symbol.type == AUG_SYM_FUNC)  
+                    {
+                        aug_ir_operand address_operand = aug_ir_operand_from_int(symbol.offset);
+                        aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL, address_operand);
+                    }
+                    if(symbol.type == AUG_SYM_VAR)
+                    {
+                        const aug_symbol var_symbol = aug_ir_symbol_relative(ir, token_data);
+                        aug_ir_operand address_operand = aug_ir_operand_from_int(var_symbol.offset);
+                        if(var_symbol.scope == AUG_SYM_SCOPE_GLOBAL)
+                            aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL_GLOBAL, address_operand);
+                        else // if local or param
+                            aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL_LOCAL, address_operand);
+                    }
+                    
                     // fixup the return address to after the call
                     aug_ir_get_operation(ir, push_frame)->operand = aug_ir_operand_from_int(ir->bytecode_offset);
                 }
                 break;
             }
 
-            // Check if the symbol is a registered function
+            // Check if the symbol is a registered extension function
             int func_index = -1;
             int i;
             for(i = 0; i < AUG_EXTENSION_SIZE; ++i)
@@ -4156,7 +4225,6 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Function extension %s not registered", token_data->buffer);
                 break;
             }
-
             for(i = arg_count - 1; i >= 0; --i)
                 aug_ast_to_ir(vm, children[i], ir);
 
@@ -4258,7 +4326,7 @@ char* aug_ir_to_bytecode(aug_ir* ir)
         aug_ir_operand operand = operation->operand;
 
         // push operation opcode
-        (*instruction++) = (aug_opcode_repr)operation->opcode;
+        (*instruction++) = (aug_opcode)operation->opcode;
 
         // push operation arguments
         switch (operand.type)

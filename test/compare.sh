@@ -1,8 +1,3 @@
-clear 
-make clean 
-make
-clear
-
 echo running aug
 time ../build/aug_test --test ../examples/compare
 echo running python
