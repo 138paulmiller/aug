@@ -323,20 +323,49 @@ extern "C" {
 
 // --------------------------------------- Generic Containers -----------------------------------------//
 
-typedef struct aug_container
-{
-	void** buffer;
-	size_t capacity;
-	size_t length;
-} aug_container;
-
-aug_container aug_container_new(size_t size);
-void aug_container_delete(aug_container* array);
-void  aug_container_resize(aug_container* array, size_t size);
-void aug_container_push(aug_container* array, void* data);
-void* aug_container_pop(aug_container* array);
-void* aug_container_at(const aug_container* array, size_t index);
-void* aug_container_back(const aug_container* array);
+#define AUG_DEFINE_CONTAINER(name, type)                                                    \
+typedef struct name                                                                         \
+{                                                                                           \
+	type* buffer;                                                                           \
+	size_t capacity;                                                                        \
+	size_t length;                                                                          \
+} name;                                                                                     \
+name name##_new(size_t size)                                                                \
+{                                                                                           \
+    name container;                                                                         \
+    container.length = 0;                                                                   \
+    container.capacity = size;                                                              \
+    container.buffer = AUG_ALLOC_ARRAY(type, container.capacity);                           \
+    return container;                                                                       \
+}                                                                                           \
+void name##_delete(name* container)                                                         \
+{                                                                                           \
+    AUG_FREE_ARRAY(container->buffer);                                                      \
+    container->buffer = NULL;                                                               \
+}                                                                                           \
+void name##_resize(name* container, size_t size)                                            \
+{                                                                                           \
+    container->capacity = size;                                                             \
+    container->buffer = AUG_REALLOC_ARRAY(container->buffer, type, container->capacity);    \
+}                                                                                           \
+void name##_push(name* container, type data)                                                \
+{                                                                                           \
+    if (container->length + 1 >= container->capacity)                                       \
+        name##_resize(container, 2 * container->capacity);                                  \
+    container->buffer[container->length++] = data;                                          \
+}                                                                                           \
+type* name##_pop(name* container)                                                           \
+{                                                                                           \
+    return container->length > 0 ? &container->buffer[--container->length] : NULL;          \
+}                                                                                           \
+type* name##_at(const name* container, size_t index)                                        \
+{                                                                                           \
+    return index >= 0 && index < container->length ? &container->buffer[index] : NULL;      \
+}                                                                                           \
+type* name##_back(const name* container)                                                    \
+{                                                                                           \
+    return container->length > 0 ? &container->buffer[container->length - 1] : NULL;        \
+}                                                                                           \
 
 // --------------------------------------- Input/Logging ---------------------------------------//
 
@@ -1256,12 +1285,12 @@ static inline void aug_ast_add(aug_ast* node, aug_ast* child)
     node->children[node->children_size++] = child;
 }
 
-static inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_container* op_stack, aug_container* expr_stack)
+AUG_DEFINE_CONTAINER(aug_token_stack, aug_token);
+AUG_DEFINE_CONTAINER(aug_expr_stack, aug_ast*);
+
+static inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_token_stack* op_stack, aug_expr_stack* expr_stack)
 {
-    //op_stack : aug_token*
-    //expr_stack : aug_ast*
-    
-    aug_token* next_op = (aug_token*)aug_container_pop(op_stack);
+    aug_token* next_op = aug_token_stack_pop(op_stack);
 
     const int op_argc = next_op->detail->argc;
     assert(op_argc == 1 || op_argc == 2); // Only supported operator types
@@ -1270,12 +1299,10 @@ static inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_container* op_stack,
     {
         while(expr_stack->length > 0)
         {
-            aug_ast* expr = (aug_ast*)aug_container_pop(expr_stack);
-            aug_ast_delete(expr);
+            aug_ast** expr = aug_expr_stack_pop(expr_stack);
+            aug_ast_delete(*expr);
         }
         AUG_INPUT_ERROR(lexer->input, "Invalid number of arguments to operator %s", next_op->detail->label);
-        
-        AUG_FREE(next_op);
         return false;
     }
 
@@ -1287,36 +1314,32 @@ static inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_container* op_stack,
     int i;
     for(i = 0; i < op_argc; ++i)
     {
-        aug_ast* expr = (aug_ast*)aug_container_pop(expr_stack);
-        binaryop->children[(op_argc-1) - i] = expr; // add in reverse
+        // Not, length is checked above, guaranteed to be valid pointer
+        aug_ast** expr = aug_expr_stack_pop(expr_stack);
+        binaryop->children[(op_argc-1) - i] = *expr; // add in reverse
     }
 
-    aug_container_push(expr_stack, binaryop); 
-    AUG_FREE(next_op);
+    aug_expr_stack_push(expr_stack, binaryop);
     return true;
 }
 
-static inline void aug_parse_expr_stack_cleanup(aug_container* op_stack, aug_container* expr_stack)
+static inline void aug_parse_expr_stack_cleanup(aug_token_stack* op_stack, aug_expr_stack* expr_stack)
 {
-    while(op_stack->length > 0)
-    {
-        aug_token* token = (aug_token*) aug_container_pop(op_stack);
-        AUG_FREE(token);
-    }
+    aug_token_stack_delete(op_stack);
+
     while(expr_stack->length > 0)
     {
-        aug_ast* expr = (aug_ast*) aug_container_pop(expr_stack);
-        aug_ast_delete(expr);
+        aug_ast** expr = aug_expr_stack_pop(expr_stack);
+        aug_ast_delete(*expr);
     }
-    aug_container_delete(op_stack);
-    aug_container_delete(expr_stack);
+    aug_expr_stack_delete(expr_stack);
 }
 
 aug_ast* aug_parse_expr(aug_lexer* lexer)
 {
     // Shunting yard algorithm
-    aug_container op_stack = aug_container_new(1);
-    aug_container expr_stack = aug_container_new(1);
+    aug_token_stack op_stack = aug_token_stack_new(1);
+    aug_expr_stack expr_stack = aug_expr_stack_new(1);
     while(lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_token op = lexer->curr;
@@ -1326,17 +1349,14 @@ aug_ast* aug_parse_expr(aug_lexer* lexer)
             // left associate by default (for right, <= becomes <)
             while(op_stack.length)
             {
-                aug_token* next_op = (aug_token*)aug_container_back(&op_stack);
+                aug_token* next_op = aug_token_stack_back(&op_stack);
 
                 if(next_op->detail->prec < op.detail->prec)
                     break;
                 if(!aug_parse_expr_pop(lexer, &op_stack, &expr_stack))
                     return NULL;
             }
-            aug_token* new_op = AUG_ALLOC(aug_token);
-            *new_op = op;
-            
-            aug_container_push(&op_stack, new_op);
+            aug_token_stack_push(&op_stack, op);
             aug_lexer_move(lexer);
         }
         else
@@ -1345,15 +1365,15 @@ aug_ast* aug_parse_expr(aug_lexer* lexer)
             if(value == NULL)
                 break;
 
-            aug_container_push(&expr_stack, value);
+            aug_expr_stack_push(&expr_stack, value);
         }
     }
 
     // Not an expression
     if(op_stack.length == 0 && expr_stack.length == 0)
     {
-        aug_container_delete(&op_stack);
-        aug_container_delete(&expr_stack);
+        aug_token_stack_delete(&op_stack);
+        aug_expr_stack_delete(&expr_stack);
         return NULL;
     }
 
@@ -1374,9 +1394,9 @@ aug_ast* aug_parse_expr(aug_lexer* lexer)
         return NULL;
     }
 
-    aug_ast* expr = (aug_ast*) aug_container_back(&expr_stack);
-    aug_container_delete(&op_stack);
-    aug_container_delete(&expr_stack);
+    aug_ast* expr = *aug_expr_stack_back(&expr_stack);
+    aug_token_stack_delete(&op_stack);
+    aug_expr_stack_delete(&expr_stack);
     return expr;
 }
 
@@ -2180,6 +2200,8 @@ typedef struct aug_ir_operation
     size_t bytecode_offset;
 } aug_ir_operation;
 
+AUG_DEFINE_CONTAINER(aug_ir_operation_array, aug_ir_operation);
+
 typedef struct aug_ir_scope
 {
     int base_index;
@@ -2187,12 +2209,16 @@ typedef struct aug_ir_scope
     aug_symtable* symtable;
 } aug_ir_scope;
 
+AUG_DEFINE_CONTAINER(aug_ir_scope_stack, aug_ir_scope);
+
 typedef struct aug_ir_frame
 {
     int base_index;
     int arg_count;
-    aug_container scope_stack; //aug_ir_scope
+    aug_ir_scope_stack scope_stack; //aug_ir_scope
 } aug_ir_frame;
+
+AUG_DEFINE_CONTAINER(aug_ir_frame_stack, aug_ir_frame);
 
 // All the blocks within a compilation/translation unit (i.e. file, code literal)
 typedef struct aug_ir
@@ -2200,11 +2226,11 @@ typedef struct aug_ir
     aug_input* input; // weak ref to source file/code
 
     // Transient IR data
-    aug_container frame_stack; //aug_ir_frame
+    aug_ir_frame_stack frame_stack; //aug_ir_frame
     int label_count;
 
     // Generated data
-    aug_container operations; //aug_ir_operation
+    aug_ir_operation_array operations; //aug_ir_operation
     size_t bytecode_offset;
     
     // Assigned to the outer-most frame's symbol table. 
@@ -2220,21 +2246,15 @@ static inline aug_ir* aug_ir_new(aug_input* input)
     ir->input = input;
     ir->label_count = 0;
     ir->bytecode_offset = 0;
-    ir->frame_stack =  aug_container_new(1);
-    ir->operations = aug_container_new(1);
+    ir->frame_stack =  aug_ir_frame_stack_new(1);
+    ir->operations = aug_ir_operation_array_new(1);
     return ir;
 }
 
 static inline void aug_ir_delete(aug_ir* ir)
 {
-    size_t i;
-    for(i = 0; i < ir->operations.length; ++i)
-    {
-        aug_ir_operation* operation = (aug_ir_operation*)aug_container_at(&ir->operations, i);
-        AUG_FREE(operation);
-    }
-    aug_container_delete(&ir->operations);
-    aug_container_delete(&ir->frame_stack);
+    aug_ir_operation_array_delete(&ir->operations);
+    aug_ir_frame_stack_delete(&ir->frame_stack);
     aug_symtable_decref(ir->globals);
     AUG_FREE(ir);
 }
@@ -2259,24 +2279,22 @@ static inline size_t aug_ir_operand_size(aug_ir_operand operand)
     return 0;
 }
 
-static inline size_t aug_ir_operation_size(const aug_ir_operation* operation)
+static inline size_t aug_ir_operation_size(aug_ir_operation operation)
 {
-    if(operation == 0)
-        return 0;
     size_t size = sizeof(aug_opcode);
-    size += aug_ir_operand_size(operation->operand);
+    size += aug_ir_operand_size(operation.operand);
     return size;
 }
 
 static inline size_t aug_ir_add_operation_arg(aug_ir*ir, aug_opcode opcode, aug_ir_operand operand)
 {
-    aug_ir_operation* operation = AUG_ALLOC(aug_ir_operation);
-    operation->opcode = opcode;
-    operation->operand = operand;
-    operation->bytecode_offset = ir->bytecode_offset;
+    aug_ir_operation operation;
+    operation.opcode = opcode;
+    operation.operand = operand;
+    operation.bytecode_offset = ir->bytecode_offset;
 
     ir->bytecode_offset += aug_ir_operation_size(operation);
-    aug_container_push(&ir->operations, operation);
+    aug_ir_operation_array_push(&ir->operations, operation);
     return ir->operations.length-1;
 }
 
@@ -2290,13 +2308,13 @@ static inline size_t aug_ir_add_operation(aug_ir*ir, aug_opcode opcode)
 static inline aug_ir_operation* aug_ir_last_operation(aug_ir*ir)
 {
     assert(ir->operations.length > 0);
-    return (aug_ir_operation*)aug_container_at(&ir->operations, ir->operations.length - 1);
+    return aug_ir_operation_array_at(&ir->operations, ir->operations.length - 1);
 }
 
 static inline aug_ir_operation* aug_ir_get_operation(aug_ir*ir, size_t operation_index)
 {
     assert(operation_index < ir->operations.length);
-    return (aug_ir_operation*)aug_container_at(&ir->operations, operation_index);
+    return aug_ir_operation_array_at(&ir->operations, operation_index);
 }
 
 static inline aug_ir_operand aug_ir_operand_from_bool(bool data)
@@ -2342,14 +2360,14 @@ static inline aug_ir_operand aug_ir_operand_from_str(const char* data)
 static inline aug_ir_frame* aug_ir_current_frame(aug_ir*ir)
 {
     assert(ir->frame_stack.length > 0);
-    return (aug_ir_frame*)aug_container_back(&ir->frame_stack);
+    return aug_ir_frame_stack_back(&ir->frame_stack);
 }
 
 static inline aug_ir_scope* aug_ir_current_scope(aug_ir*ir)
 {
     aug_ir_frame* frame = aug_ir_current_frame(ir);
     assert(frame->scope_stack.length > 0);
-    return (aug_ir_scope*)aug_container_back(&frame->scope_stack);
+    return aug_ir_scope_stack_back(&frame->scope_stack);
 }
 
 static inline bool aug_ir_current_scope_is_global(aug_ir*ir)
@@ -2375,27 +2393,28 @@ static inline int aug_ir_calling_offset(aug_ir*ir)
 
 static inline void aug_ir_push_frame(aug_ir*ir, int arg_count)
 {
-    aug_ir_frame* frame = AUG_ALLOC(aug_ir_frame);
-    frame->arg_count = arg_count;
+    aug_ir_frame frame;
+    frame.arg_count = arg_count;
 
     if(ir->frame_stack.length > 0)
     {
         const aug_ir_scope* scope = aug_ir_current_scope(ir);
-        frame->base_index = scope->stack_offset;
+        frame.base_index = scope->stack_offset;
     }
     else
     {
-        frame->base_index = 0;
+        frame.base_index = 0;
     }
 
-    aug_ir_scope* scope = AUG_ALLOC(aug_ir_scope);
-    scope->base_index = frame->base_index;
-    scope->stack_offset = frame->base_index;
-    scope->symtable = aug_symtable_new(1);
+    aug_ir_scope scope;
+    scope.base_index = frame.base_index;
+    scope.stack_offset = frame.base_index;
+    scope.symtable = aug_symtable_new(1);
     
-    frame->scope_stack = aug_container_new(1);
-    aug_container_push(&frame->scope_stack, scope);
-    aug_container_push(&ir->frame_stack, frame);
+    frame.scope_stack = aug_ir_scope_stack_new(1);
+    aug_ir_scope_stack_push(&frame.scope_stack, scope);
+
+    aug_ir_frame_stack_push(&ir->frame_stack, frame);
 }
 
 static inline void aug_ir_pop_frame(aug_ir*ir)
@@ -2407,29 +2426,27 @@ static inline void aug_ir_pop_frame(aug_ir*ir)
         scope->symtable = NULL; // Move to globals
     }
     
-    aug_ir_frame* frame = (aug_ir_frame*)aug_container_pop(&ir->frame_stack);
+    aug_ir_frame* frame = aug_ir_frame_stack_pop(&ir->frame_stack);
 
     size_t i;
     for(i = 0; i < frame->scope_stack.length; ++i)
     {
-        aug_ir_scope* scope = (aug_ir_scope*)aug_container_at(&frame->scope_stack, i);
+        aug_ir_scope* scope = aug_ir_scope_stack_at(&frame->scope_stack, i);
         aug_symtable_decref(scope->symtable);
-        AUG_FREE(scope);
     }
-    aug_container_delete(&frame->scope_stack);
-    AUG_FREE(frame);
+    aug_ir_scope_stack_delete(&frame->scope_stack);
 }
 
 static inline void aug_ir_push_scope(aug_ir*ir)
 {
     const aug_ir_scope* current_scope = aug_ir_current_scope(ir);
-    aug_ir_scope* scope = AUG_ALLOC(aug_ir_scope);
-    scope->base_index = current_scope->stack_offset;
-    scope->stack_offset = current_scope->stack_offset;
-    scope->symtable = aug_symtable_new(1);
-
     aug_ir_frame* frame = aug_ir_current_frame(ir);
-    aug_container_push(&frame->scope_stack, scope);
+
+    aug_ir_scope scope;
+    scope.base_index = current_scope->stack_offset;
+    scope.stack_offset = current_scope->stack_offset;
+    scope.symtable = aug_symtable_new(1);
+    aug_ir_scope_stack_push(&frame->scope_stack, scope);
 }
 
 static inline void aug_ir_pop_scope(aug_ir*ir)
@@ -2438,9 +2455,8 @@ static inline void aug_ir_pop_scope(aug_ir*ir)
     aug_ir_add_operation_arg(ir, AUG_OPCODE_DEC_STACK, delta);
 
     aug_ir_frame* frame = aug_ir_current_frame(ir);
-    aug_ir_scope* scope = (aug_ir_scope*)aug_container_pop(&frame->scope_stack);
+    aug_ir_scope* scope = aug_ir_scope_stack_pop(&frame->scope_stack);
     aug_symtable_decref(scope->symtable);
-    AUG_FREE(scope);
 }
 
 static inline bool aug_ir_set_var(aug_ir*ir, aug_string* var_name)
@@ -2506,10 +2522,10 @@ static inline aug_symbol aug_ir_get_symbol(aug_ir*ir, aug_string* name)
     int i,j;
     for(i = ir->frame_stack.length - 1; i >= 0; --i)
     {
-        aug_ir_frame* frame = (aug_ir_frame*) aug_container_at(&ir->frame_stack, i);
+        aug_ir_frame* frame = aug_ir_frame_stack_at(&ir->frame_stack, i);
         for(j = frame->scope_stack.length - 1; j >= 0; --j)
         {
-            aug_ir_scope* scope = (aug_ir_scope*) aug_container_at(&frame->scope_stack, j);
+            aug_ir_scope* scope = aug_ir_scope_stack_at(&frame->scope_stack, j);
             aug_symbol symbol = aug_symtable_get(scope->symtable, name);
             if(symbol.type != AUG_SYM_NONE)
                 return symbol;
@@ -2528,10 +2544,10 @@ static inline aug_symbol aug_ir_symbol_relative(aug_ir*ir, aug_string* name)
     int i,j;
     for(i = ir->frame_stack.length - 1; i >= 0; --i)
     {
-        aug_ir_frame* frame = (aug_ir_frame*) aug_container_at(&ir->frame_stack, i);
+        aug_ir_frame* frame = aug_ir_frame_stack_at(&ir->frame_stack, i);
         for(j = frame->scope_stack.length - 1; j >= 0; --j)
         {
-            aug_ir_scope* scope = (aug_ir_scope*) aug_container_at(&frame->scope_stack, j);
+            aug_ir_scope* scope = aug_ir_scope_stack_at(&frame->scope_stack, j);
             aug_symbol symbol = aug_symtable_get(scope->symtable, name);
             if(symbol.type != AUG_SYM_NONE)
             {
@@ -4352,7 +4368,7 @@ char* aug_ir_to_bytecode(aug_ir* ir)
     size_t i;
     for(i = 0; i < ir->operations.length; ++i)
     {
-        aug_ir_operation* operation = (aug_ir_operation*)aug_container_at(&ir->operations, i);
+        aug_ir_operation* operation = aug_ir_operation_array_at(&ir->operations, i);
         aug_ir_operand operand = operation->operand;
 
         // push operation opcode
@@ -4778,50 +4794,6 @@ aug_value* aug_array_at(const aug_array* array, size_t index)
 aug_value* aug_array_back(const aug_array* array)             
 {
 	return array->length > 0 ? &array->buffer[array->length-1] : NULL; 
-}
-
-// ------------------------------- Generic Containers ------------------------------------//
-aug_container aug_container_new(size_t size)
-{ 
-	aug_container container;
-	container.length = 0;
-	container.capacity = size; 
-	container.buffer = AUG_ALLOC_ARRAY(void*, container.capacity);
-	return container;
-}
- 
-void aug_container_delete(aug_container* container)
-{
-    AUG_FREE_ARRAY(container->buffer);
-    container->buffer = NULL;
-}
-
-void aug_container_resize(aug_container* container, size_t size)    
-{
-	container->capacity = size; 
-	container->buffer = AUG_REALLOC_ARRAY(container->buffer, void*, container->capacity);
-}
- 
-void aug_container_push(aug_container* container, void* data)  
-{
-	if(container->length + 1 >= container->capacity) 
-        aug_container_resize(container, 2 * container->capacity);
-    container->buffer[container->length++] = data;
-}
- 
-void* aug_container_pop(aug_container* container)
-{
-	return container->length > 0 ? container->buffer[--container->length] : NULL; 
-}
- 
-void* aug_container_at(const aug_container* container, size_t index) 
-{
-	return index >= 0 && index < container->length ? container->buffer[index] : NULL;
-}
- 
-void* aug_container_back(const aug_container* container)
-{
-	return container->length > 0 ? container->buffer[container->length-1] : NULL; 
 }
 
 // ------------------------------- Symtable ------------------------------------------//
