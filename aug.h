@@ -245,8 +245,9 @@ typedef struct aug_vm
     const char* bytecode;
  
     aug_value stack[AUG_STACK_SIZE];
-    int stack_index;
-    int base_index;
+    int stack_index; // Current position on stack (ESP)
+    int base_index;  // Current frame stack offset (EBP)
+    int arg_count; // Current argument count expected when entering a call frame
 
     // Extensions are external functions are native functions that can be called from scripts   
     // This external function map contains the user's registered functions. 
@@ -1188,7 +1189,7 @@ typedef enum aug_ast_id
     AUG_AST_UNARY_OP, 
     AUG_AST_BINARY_OP, 
     AUG_AST_FUNC_CALL,
-    AUG_AST_FUNC_DEF, 
+    AUG_AST_STMT_DEFINE_FUNC, 
     AUG_AST_PARAM_LIST,
     AUG_AST_PARAM,
     AUG_AST_RETURN,
@@ -1868,7 +1869,7 @@ aug_ast* aug_parse_stmt_func(aug_lexer* lexer)
         return NULL;
     }
 
-    aug_ast* func_def = aug_ast_new(AUG_AST_FUNC_DEF, func_name_token);
+    aug_ast* func_def = aug_ast_new(AUG_AST_STMT_DEFINE_FUNC, func_name_token);
     aug_ast_resize(func_def, 2);
     func_def->children[0] = param_list;
     func_def->children[1] = block;
@@ -2067,7 +2068,6 @@ aug_ast* aug_parse(aug_vm* vm, aug_input* input)
 	AUG_OPCODE(PUSH_LOCAL)        \
 	AUG_OPCODE(PUSH_GLOBAL)       \
 	AUG_OPCODE(PUSH_ELEMENT)      \
-    AUG_OPCODE(PUSH_CALL_FRAME)   \
     AUG_OPCODE(LOAD_LOCAL)        \
 	AUG_OPCODE(LOAD_GLOBAL)       \
 	AUG_OPCODE(ADD)               \
@@ -2100,11 +2100,14 @@ aug_ast* aug_parse(aug_vm* vm, aug_input* input)
 	AUG_OPCODE(JUMP)              \
 	AUG_OPCODE(JUMP_ZERO)         \
 	AUG_OPCODE(JUMP_NZERO)        \
-	AUG_OPCODE(RETURN)            \
+    AUG_OPCODE(CALL_FRAME)        \
+    AUG_OPCODE(ARG_COUNT)         \
 	AUG_OPCODE(CALL)              \
 	AUG_OPCODE(CALL_LOCAL)        \
 	AUG_OPCODE(CALL_GLOBAL)       \
 	AUG_OPCODE(CALL_EXT)          \
+	AUG_OPCODE(ENTER)             \
+	AUG_OPCODE(RETURN)            \
     AUG_OPCODE(DEC_STACK)         \
 
 
@@ -2130,7 +2133,8 @@ static const char* aug_opcode_labels[] =
 
 // Special value used in bytecode to denote an invalid vm offset
 #define AUG_OPCODE_INVALID -1
-#define AUG_FRAME_STACK_SIZE 2
+// Values pushes onto stack to track function calls. (return address, calling base index)  
+#define AUG_CALL_FRAME_STACK_SIZE 2
 
 // -------------------------------------- IR --------------------------------------------// 
 
@@ -2540,7 +2544,7 @@ static inline aug_symbol aug_ir_symbol_relative(aug_ir*ir, aug_string* name)
                     const aug_ir_frame* frame = aug_ir_current_frame(ir);
                     //If this variable is a local variable in an outer frame. Offset by 2 (ret addr and base index) for each frame delta
                     int frame_delta = (ir->frame_stack.length-1) - i;
-                    symbol.offset = symbol.offset - frame->base_index - frame_delta * AUG_FRAME_STACK_SIZE;
+                    symbol.offset = symbol.offset - frame->base_index - frame_delta * AUG_CALL_FRAME_STACK_SIZE;
                     break;
                 }
                 }
@@ -3152,7 +3156,8 @@ static inline aug_value* aug_vm_get_global(aug_vm* vm, int stack_offset)
 
 static inline void aug_vm_push_call_frame(aug_vm* vm, int return_addr)
 {
-    // NOTE: pushing 2 values onto stack. if this changes, must modify AUG_FRAME_STACK_SIZE 
+    // NOTE: pushing 2 values onto stack. if this changes, must modify AUG_CALL_FRAME_STACK_SIZE 
+    //       note that the call also pushes the argument count
     aug_value* ret_value = aug_vm_push(vm);
     if(ret_value == NULL)
         return;
@@ -3217,6 +3222,7 @@ void aug_vm_startup(aug_vm* vm)
     vm->instruction = NULL;
     vm->stack_index = 0;
     vm->base_index = 0;
+    vm->arg_count = 0;
     vm->valid = false; 
 }
 
@@ -3629,7 +3635,7 @@ void aug_vm_execute(aug_vm* vm)
                     aug_decref(aug_vm_pop(vm));
                 break;
             }
-            case AUG_OPCODE_PUSH_CALL_FRAME:
+            case AUG_OPCODE_CALL_FRAME:
             {
                 const int ret_addr = aug_vm_read_int(vm);
                 aug_vm_push_call_frame(vm, ret_addr);
@@ -3720,6 +3726,22 @@ void aug_vm_execute(aug_vm* vm)
                 AUG_FREE_ARRAY(args);
                 break;
             }
+            case AUG_OPCODE_ARG_COUNT:
+            {                
+                vm->arg_count = aug_vm_read_int(vm);
+                break;
+            }
+            case AUG_OPCODE_ENTER:
+            {                
+                const int param_count = aug_vm_read_int(vm);
+                if (vm->arg_count != param_count)
+                {
+                    AUG_VM_ERROR(vm, "Incorrect number of arguments passed to function. Received %d expected %d ", 
+                        param_count, vm->arg_count);
+                    break;
+                }
+                break;
+            }
             case AUG_OPCODE_RETURN:
             {
                 // get func return value
@@ -3794,6 +3816,8 @@ aug_value aug_vm_execute_from_frame(aug_vm* vm, int func_addr, int argc, aug_val
 {
     // Manually set expected call frame
     aug_vm_push_call_frame(vm, AUG_OPCODE_INVALID);
+
+    vm->arg_count = argc; // setup expected argument count 
 
     // Jump to function call
     vm->instruction = vm->bytecode + func_addr;
@@ -4160,13 +4184,6 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             const int arg_count = children_size;
 
             const aug_symbol symbol = aug_ir_get_symbol(ir, token_data);
-            //if(symbol.type == AUG_SYM_VAR)
-            //{
-            //    ir->valid = false;
-            //    AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Can not call variable %s as a function", token_data->buffer);
-            //    break;
-            //}
-
             if(symbol.type != AUG_SYM_NONE)
             {
                 // If the symbol is a user defined function, check arg count.
@@ -4179,12 +4196,16 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 {
                     // offset to account for the pushed base
                     aug_ir_operand stub = aug_ir_operand_from_int(0);
-                    size_t push_frame = aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_CALL_FRAME, stub);
+                    size_t push_frame = aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL_FRAME, stub);
 
-                    // TODO: Push arg count, and have the function body check that arg count matches in the vm runtime
+                    // Push arguments onto stack
                     int i;
                     for(i = 0; i < children_size; ++ i)
                         aug_ast_to_ir(vm, children[i], ir);
+
+                    // TODO: Push arg count, and have the function body check that arg count matches in the vm runtime
+                    aug_ir_operand arg_count = aug_ir_operand_from_int(children_size);
+                    aug_ir_add_operation_arg(ir, AUG_OPCODE_ARG_COUNT, arg_count);
 
                     if(symbol.type == AUG_SYM_FUNC)  
                     {
@@ -4263,7 +4284,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 aug_ast_to_ir(vm, children[i], ir);
             break;
         }
-        case AUG_AST_FUNC_DEF:
+        case AUG_AST_STMT_DEFINE_FUNC:
         {
             assert(token_data != NULL && children_size == 2); //func token [0] {[1]};
 
@@ -4286,6 +4307,10 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             // Parameter frame
             aug_ir_push_scope(ir);
             aug_ast_to_ir(vm, children[0], ir);
+
+            // TODO: Argument count check
+            aug_ir_operand param_count_arg = aug_ir_operand_from_int(param_count);
+            aug_ir_add_operation_arg(ir, AUG_OPCODE_ENTER, param_count_arg);
 
             // Function block frame
             aug_ir_push_frame(ir, param_count);

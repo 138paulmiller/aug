@@ -118,7 +118,7 @@ void dump_ast_tree(const aug_ast* node, std::string prefix, bool is_leaf)
 			for (int i = 0; i < children_size; ++i)
 				dump_ast_tree(children[i], prefix, i == children_size-1);
 			break;
-		case AUG_AST_FUNC_DEF:
+		case AUG_AST_STMT_DEFINE_FUNC:
 			assert(children_size == 2);
 			printf("FUNCDEF: %s\n",token.data ?  token.data->buffer : "(null)");
 			for (int i = 0; i < children_size; ++i)
