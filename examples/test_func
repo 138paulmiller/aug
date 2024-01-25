@@ -82,5 +82,18 @@ a = count(1000);
 expect(a == 1000, "count(1000) = ", a);
 expect(global == a, "global = ", global);
 
+func call_func(a, x) {
+    return a(x);
+}
+
+f = count;
+a = call_func(f, 1000);
+expect(a == 1000, "call_func(count, 1000) = ", a);
+
+a = call_func(count, 1000);
+expect(a == 1000, "call_func(count, 1000) = ", a);
+
+
+
 
 

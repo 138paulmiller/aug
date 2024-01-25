@@ -126,13 +126,14 @@ typedef enum aug_value_type
     AUG_STRING, 
     AUG_ARRAY,
     AUG_OBJECT,
+    AUG_FUNCTION,
     AUG_NONE,
 } aug_value_type;
 
 #if defined(AUG_IMPLEMENTATION)
 const char* aug_value_type_labels[] =
 {
-    "bool", "char", "int", "float", "string", "array", "object", "none"
+    "bool", "char", "int", "float", "string", "array", "object", "function", "none"
 };
 #endif //AUG_IMPLEMENTATION
 
@@ -2628,7 +2629,7 @@ bool aug_get_bool(const aug_value* value)
     switch (value->type)
     {
     case AUG_NONE:
-        return false;
+        return false;    
     case AUG_BOOL:
         return value->b;
     case AUG_INT:
@@ -2643,6 +2644,8 @@ bool aug_get_bool(const aug_value* value)
         return value->obj != NULL;
     case AUG_ARRAY:
         return value->array != NULL;
+    case AUG_FUNCTION:
+        return value->i != 0;
     }
     return false;
 }
@@ -2658,6 +2661,7 @@ int aug_get_int(const aug_value* value)
     case AUG_STRING:
     case AUG_OBJECT:
     case AUG_ARRAY:
+    case AUG_FUNCTION:
         return 0;
     case AUG_BOOL:
         return value->b ? 1 : 0;
@@ -2666,7 +2670,7 @@ int aug_get_int(const aug_value* value)
     case AUG_CHAR:
         return (int)value->c;
     case AUG_FLOAT:
-        return (int)value->f;
+        return (int)value->f;    
     }
     return 0;
 }
@@ -2682,6 +2686,7 @@ float aug_get_float(const aug_value* value)
     case AUG_STRING:
     case AUG_OBJECT:
     case AUG_ARRAY:
+    case AUG_FUNCTION:
        return 0.0f;
     case AUG_BOOL:
         return value->b ? 1.0f : 0.0f;
@@ -2707,19 +2712,21 @@ static inline void aug_decref(aug_value* value)
     case AUG_INT:
     case AUG_CHAR:
     case AUG_FLOAT:
+    case AUG_FUNCTION:
         break;
     case AUG_STRING:
         value->str = aug_string_decref(value->str);
         break;
     case AUG_ARRAY:
-        if(value->array)
+        // If will be dereferenced, ensure children are as well
+        if (value->array && value->array->ref_count == 1)
         {
-            for(size_t i = 0; i < value->array->length; ++i)
+            for (size_t i = 0; i < value->array->length; ++i)
             {
                 aug_decref(aug_array_at(value->array, i));
             }
-            value->array = aug_array_decref(value->array);
         }
+        value->array = aug_array_decref(value->array);
         break;
     case AUG_OBJECT:
         if(value->obj && --value->obj->ref_count <= 0)
@@ -2738,6 +2745,13 @@ static inline void aug_incref(aug_value* value)
 
     switch (value->type)
     {
+    case AUG_NONE:
+    case AUG_BOOL:
+    case AUG_INT:
+    case AUG_CHAR:
+    case AUG_FLOAT:
+    case AUG_FUNCTION:
+        break;
     case AUG_STRING:
         aug_string_incref(value->str);
         break;
@@ -2747,8 +2761,6 @@ static inline void aug_incref(aug_value* value)
     case AUG_OBJECT:
         assert(value->obj);
         ++value->obj->ref_count;
-        break;
-    default:
         break;
     }
 }
@@ -2799,7 +2811,12 @@ static inline bool aug_get_element(aug_value* container, aug_value* index, aug_v
         }    
          
     }
-    default:
+    case AUG_NONE:
+    case AUG_BOOL:
+    case AUG_INT:
+    case AUG_CHAR:
+    case AUG_FLOAT:
+    case AUG_FUNCTION:
         break;
     }
     *element = aug_none();
@@ -3861,12 +3878,12 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 return;
             }
 
-            if(symbol.type == AUG_SYM_FUNC)
-            {
-                ir->valid = false;
-                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Function %s can not be used as a variable", token_data->buffer);
-                return;
-            }
+            //if(symbol.type == AUG_SYM_FUNC)
+            //{
+            //    ir->valid = false;
+            //    AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Function %s can not be used as a variable", token_data->buffer);
+            //    return;
+            //}
 
             const aug_ir_operand address_operand = aug_ir_operand_from_int(symbol.offset);
             if(symbol.scope == AUG_SYM_SCOPE_GLOBAL)
@@ -3962,7 +3979,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             else if(symbol.type == AUG_SYM_FUNC)
             {
                 ir->valid = false;
-                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Can not assign function %s as a variable", token_data->buffer);
+                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Can not assign function %s to a value", token_data->buffer);
                 break;
             }
 
@@ -4087,17 +4104,17 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             const int arg_count = children_size;
 
             const aug_symbol symbol = aug_ir_get_symbol(ir, token_data);
-            if(symbol.type == AUG_SYM_VAR)
-            {
-                ir->valid = false;
-                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Can not call variable %s as a function", token_data->buffer);
-                break;
-            }
+            //if(symbol.type == AUG_SYM_VAR)
+            //{
+            //    ir->valid = false;
+            //    AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Can not call variable %s as a function", token_data->buffer);
+            //    break;
+            //}
 
-            // If the symbol is a user defined function.
-            if(symbol.type == AUG_SYM_FUNC)
+            if(symbol.type != AUG_SYM_NONE)
             {
-                if(symbol.argc != arg_count)
+                // If the symbol is a user defined function, check arg count.
+                if(symbol.type == AUG_SYM_FUNC && symbol.argc != arg_count)
                 {
                     ir->valid = false;
                     AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Function Call %s passed %d arguments, expected %d", token_data->buffer, arg_count, symbol.argc);

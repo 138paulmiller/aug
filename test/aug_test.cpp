@@ -9,11 +9,17 @@ void aug_dump_file(aug_vm* vm, const char* filename);
 struct aug_tester;
 typedef void(aug_tester_func)(aug_vm*);
 
-#define STDOUT_RED(txt) "\u001b[31m" txt "\u001b[0m"
-#define STDOUT_GREEN(txt) "\u001b[32m" txt "\u001b[0m"
+#define STDOUT_RED  "\u001b[31m" 
+#define STDOUT_GREEN  "\u001b[32m"
+#define STDOUT_YELLOW  "\u001b[33m"
+#define STDOUT_BLUE  "\u001b[34m"
+#define STDOUT_CLEAR "\u001b[0m"
 
 struct aug_tester
 {
+	int session_passed;
+	int session_total;
+
 	int passed = 0;
 	int total = 0;
 	int verbose = 0;
@@ -27,10 +33,15 @@ public:
 	static void startup()
 	{
 		s_tester = new aug_tester();
+		s_tester->session_passed = 0;
+		s_tester->session_total = 0;
 	}
 
 	static void shutdown()
 	{
+		bool success = s_tester->session_total > 0 && s_tester->session_passed == s_tester->session_total;
+		const char* msg = success ? STDOUT_GREEN "PASS" : STDOUT_RED "FAIL";
+		printf("[%s%s]\t Session Ended. Passed %d / %d\n", msg, STDOUT_CLEAR, s_tester->session_passed, s_tester->session_total);
 		delete s_tester;
 		s_tester = NULL;
 	}
@@ -47,11 +58,12 @@ public:
 		total = 0;
 
 		if (verbose)
-			printf("[TEST]\t%s\n", filename.c_str());
+			printf("%s%s%s\n", STDOUT_YELLOW, filename.c_str(), STDOUT_CLEAR);
 	}
 
 	void run(aug_vm* vm, aug_tester_func* func = nullptr)
 	{
+
 		if (dump)
 			aug_dump_file(vm, filename.c_str());
 
@@ -63,10 +75,15 @@ public:
 
 	void end()
 	{
-		if (verbose)
-			printf("[TEST]\tEnded. Passed %d / %d\n", passed, total);
 		bool success = total > 0 && passed == total;
-		printf("[%s]\t", success ? STDOUT_GREEN("PASS") : STDOUT_RED("FAIL"));
+		if (success)
+			++s_tester->session_passed;
+		++session_total;
+
+		if (verbose)
+			printf("%s%s: Passed %d / %d%s\n", STDOUT_YELLOW, filename.c_str(), passed, total, STDOUT_CLEAR);
+		else 
+			printf("[%s%s]\t%s", success ? STDOUT_GREEN "PASS" : STDOUT_RED "FAIL", STDOUT_CLEAR, filename.c_str());
 		printf("%s\n", filename.c_str());
 	}
 
@@ -79,7 +96,7 @@ public:
 
 		if (verbose)
 		{
-			printf("[%s]\t", success ? STDOUT_GREEN("PASS") : STDOUT_RED("FAIL"));
+			printf("[%s%s]\t", success ? STDOUT_GREEN "PASS" : STDOUT_RED "FAIL", STDOUT_CLEAR);
 
 			if (message.size())
 				printf("%s", message.c_str());
