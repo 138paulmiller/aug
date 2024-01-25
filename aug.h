@@ -373,9 +373,9 @@ if(input->valid)                            \
         __VA_ARGS__);                       \
 }
 
-#define AUG_INPUT_ERROR(input, ...) \
-    AUG_INPUT_ERROR_AT(input,       \
-        aug_input_prev_pos(input),  \
+#define AUG_INPUT_ERROR(input, ...)    \
+    AUG_INPUT_ERROR_AT(input,          \
+        aug_input_get_pos(input, -1),  \
         __VA_ARGS__);
 
 typedef struct aug_pos
@@ -395,7 +395,7 @@ typedef struct aug_input
     aug_string* filename;
     size_t track_pos;
     size_t pos_buffer_index;
-    aug_pos pos_buffer[2];
+    aug_pos pos_buffer[2]; //store, prev, curr
 
     aug_error_function* error_callback;
 }aug_input;
@@ -410,34 +410,37 @@ static inline void aug_input_error_hint(aug_input* input, const aug_pos* pos)
     // go to line
     fseek(input->file, pos->linepos, SEEK_SET);
 
-    char buffer[4096];
-    size_t n = 0;
-
-    char c = fgetc(input->file);
     // skip leading whitespace
-    while(isspace(c))
+    int ws_skipped = 0;
+    char c = fgetc(input->file);
+    while(isspace(c) && ++ws_skipped)
         c = fgetc(input->file);
 
-    while(c != EOF && c != '\n' && n < (int)(sizeof(buffer) / sizeof(buffer[0]) - 1))
+    AUG_LOG_ERROR(input->error_callback, "Error %s:(%d,%d) ",
+        input->filename->buffer, pos->line + 1, pos->col + 1);
+
+    // Draw line
+    const int buff_size = 4096;
+    char buffer[buff_size];
+    size_t n = 0;
+    while (c != EOF && c != '\n' && n < (buff_size - 1))
     {
         buffer[n++] = c;
         c = fgetc(input->file);
     }
     buffer[n] = '\0';
 
-    AUG_LOG_ERROR(input->error_callback, "Error %s:(%d,%d) ",
-        input->filename->buffer, pos->line + 1, pos->col + 1);
-
     AUG_LOG_ERROR(input->error_callback, "%s", buffer);
 
     // Draw arrow to the error if within buffer
-    if(pos->col < n-1)
+    int tok_col = pos->col - ws_skipped;
+    if(tok_col > 0 && tok_col < n-1)
     {
         size_t i;
-        for(i = 0; i < pos->col; ++i)
+        for(i = 0; i < tok_col; ++i)
             buffer[i] = ' ';
-        buffer[pos->col] = '^';
-        buffer[pos->col+1] = '\0';
+        buffer[tok_col] = '^';
+        buffer[tok_col+1] = '\0';
     }
 
     AUG_LOG_ERROR(input->error_callback, "%s", buffer);
@@ -451,20 +454,22 @@ static inline aug_pos* aug_input_pos(aug_input* input)
     return &input->pos_buffer[input->pos_buffer_index];
 }
 
-static inline aug_pos* aug_input_prev_pos(aug_input* input)
+static inline aug_pos* aug_input_get_pos(aug_input* input, int dir)
 {
     assert(input != NULL);
-    input->pos_buffer_index--;
-    if(input->pos_buffer_index < 0)
-        input->pos_buffer_index = (sizeof(input->pos_buffer) / sizeof(input->pos_buffer[0])) - 1;
-    return aug_input_pos(input);
+    const int buffer_len = (sizeof(input->pos_buffer) / sizeof(input->pos_buffer[0]));
+    const int len = (input->pos_buffer_index + dir) % buffer_len;
+    if (len < 0) input->pos_buffer_index = buffer_len - input->pos_buffer_index;
+    return &input->pos_buffer[len];
 }
 
-static inline aug_pos* aug_input_next_pos(aug_input* input)
+static inline aug_pos* aug_input_move_pos(aug_input* input, int dir)
 {
     assert(input != NULL);
-    input->pos_buffer_index = (input->pos_buffer_index + 1) % (sizeof(input->pos_buffer) / sizeof(input->pos_buffer[0]));
-    return aug_input_pos(input);
+    const int buffer_len = (sizeof(input->pos_buffer) / sizeof(input->pos_buffer[0]));
+    input->pos_buffer_index = (input->pos_buffer_index + dir) % buffer_len;
+    if (input->pos_buffer_index < 0) input->pos_buffer_index = buffer_len - input->pos_buffer_index;
+    return &input->pos_buffer[input->pos_buffer_index];
 }
 
 static inline char aug_input_get(aug_input* input)
@@ -475,8 +480,7 @@ static inline char aug_input_get(aug_input* input)
     char c = fgetc(input->file);
 
     aug_pos* pos = aug_input_pos(input);
-    aug_pos* next_pos = aug_input_next_pos(input);
-    
+    aug_pos* next_pos = aug_input_move_pos(input, 1);
     next_pos->c = c;
     next_pos->line = pos->line;
     next_pos->col = pos->col + 1;
@@ -485,8 +489,8 @@ static inline char aug_input_get(aug_input* input)
 
     if(c == '\n')
     {
-        next_pos->col = pos->line + 1;
-        next_pos->line = pos->line;
+        next_pos->col = 0;
+        next_pos->line = pos->line + 1;
         next_pos->linepos = ftell(input->file);
     }
     return c;
@@ -505,6 +509,7 @@ static inline void aug_input_unget(aug_input* input)
     assert(input != NULL && input->file != NULL);
     aug_pos* pos = aug_input_pos(input);
     ungetc(pos->c, input->file);
+    aug_input_move_pos(input, -1);
 }
 
 aug_input* aug_input_open(const char* filename, aug_error_function* error_callback)
@@ -675,6 +680,7 @@ typedef struct  aug_token
     const aug_token_detail* detail; 
     aug_string* data;
     aug_pos pos;
+
 } aug_token;
 
 // Lexer state
@@ -3736,8 +3742,7 @@ void aug_vm_execute(aug_vm* vm)
                 const int param_count = aug_vm_read_int(vm);
                 if (vm->arg_count != param_count)
                 {
-                    AUG_VM_ERROR(vm, "Incorrect number of arguments passed to function. Received %d expected %d ", 
-                        param_count, vm->arg_count);
+                    AUG_VM_ERROR(vm, "Incorrect number of arguments passed to function. Received %d expected %d ",  vm->arg_count, param_count);
                     break;
                 }
                 break;
@@ -4243,7 +4248,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             if(func_index == -1)
             {
                 ir->valid = false;
-                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Function extension %s not registered", token_data->buffer);
+                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Function %s not defined", token_data->buffer);
                 break;
             }
             for(i = arg_count - 1; i >= 0; --i)

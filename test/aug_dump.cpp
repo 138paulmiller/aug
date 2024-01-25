@@ -6,17 +6,15 @@
 
 void dump_token(aug_token* token)
 {
-	printf("\tCURR: %s (%s) %ld:%ld\n", 
-		token->detail ? token->detail->label : "", 
-		token->data ? token->data->buffer : "", 
-		token->pos.line, 
-		token->pos.col
+	printf("%ld:%ld %s\t%s\n", 
+		token->pos.line, token->pos.col,
+		token->detail ? token->detail->label : "",
+		token->data ? token->data->buffer : "" 
 	);
 }
 
 void dump_lexer(const char* filename)
 {
-	return;
 	printf("Tokens \n");
 
 	aug_input* input = aug_input_open(filename, nullptr);
@@ -201,7 +199,7 @@ void dump_ir(aug_ir* ir)
 
 void aug_dump_file(aug_vm* vm, const char* filename)
 {
-	printf("----------%s------------\n", filename);
+	printf("----------%s Dump------------\n", filename);
 
 	dump_lexer(filename);
 
