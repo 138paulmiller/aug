@@ -377,11 +377,11 @@ void name##_push(name* array, type data)                                        
     if (array->length+1 >= array->capacity) name##_resize(array, 2 * array->capacity);    \
     array->buffer[array->length++] = data;                                                \
 }                                                                                         \
-type* name##_pop(name* container)                                                         \
+type* name##_pop(name* array)                                                             \
 {                                                                                         \
     return array->length > 0 ? &array->buffer[--array->length] : NULL;                    \
 }                                                                                         \
-type* name##_at(const name* container, size_t index)                                      \
+type* name##_at(const name* array, size_t index)                                          \
 {                                                                                         \
     return index >= 0 && index < array->length ? &array->buffer[index] : NULL;            \
 }                                                                                         \
@@ -583,7 +583,7 @@ static inline void aug_log_input_error_hint(aug_input* input, const aug_pos* pos
     fseek(input->file, pos->linepos, SEEK_SET);
 
     // skip leading whitespace
-    int ws_skipped = 0;
+    size_t ws_skipped = 0;
     int c = fgetc(input->file);
     while (isspace(c) && ++ws_skipped)
         c = fgetc(input->file);
@@ -605,7 +605,7 @@ static inline void aug_log_input_error_hint(aug_input* input, const aug_pos* pos
     aug_log_error(input->error_callback, "%s", buffer);
 
     // Draw arrow to the error if within buffer
-    int tok_col = pos->col - ws_skipped;
+    size_t tok_col = pos->col - ws_skipped;
     if (tok_col > 0 && tok_col < n - 1)
     {
         size_t i;
