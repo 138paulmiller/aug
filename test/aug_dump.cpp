@@ -6,7 +6,6 @@
 #include <crtdbg.h>
 #endif  //_WIN32
 
-
 #define AUG_IMPLEMENTATION
 #define AUG_LOG_VERBOSE
 #define AUG_DEBUG

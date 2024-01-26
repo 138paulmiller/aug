@@ -317,6 +317,12 @@ aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, i
 extern "C" {
 #endif
 
+#include <ctype.h>
+#include <assert.h>
+#include <math.h>
+#include <stdarg.h>
+#include <string.h>
+
 #if defined(_WIN32) && defined(__STDC_WANT_SECURE_LIB__)
 #define AUG_SECURE
 #endif
@@ -341,56 +347,47 @@ extern "C" {
 #define AUG_FREE_ARRAY(ptr) free(ptr)
 #endif//AUG_FREE_ARRAY
 
-#include <ctype.h>
-#include <assert.h>
-#include <math.h>
-#include <stdarg.h>
-#include <string.h>
-
-// --------------------------------------- Generic Containers -----------------------------------------//
-
-#define AUG_DEFINE_CONTAINER(name, type)                                                    \
-typedef struct name                                                                         \
-{                                                                                           \
-	type* buffer;                                                                           \
-	size_t capacity;                                                                        \
-	size_t length;                                                                          \
-} name;                                                                                     \
-name name##_new(size_t size)                                                                \
-{                                                                                           \
-    name container;                                                                         \
-    container.length = 0;                                                                   \
-    container.capacity = size;                                                              \
-    container.buffer = AUG_ALLOC_ARRAY(type, container.capacity);                           \
-    return container;                                                                       \
-}                                                                                           \
-void name##_delete(name* container)                                                         \
-{                                                                                           \
-    AUG_FREE_ARRAY(container->buffer);                                                      \
-    container->buffer = NULL;                                                               \
-}                                                                                           \
-void name##_resize(name* container, size_t size)                                            \
-{                                                                                           \
-    container->capacity = size;                                                             \
-    container->buffer = AUG_REALLOC_ARRAY(container->buffer, type, container->capacity);    \
-}                                                                                           \
-void name##_push(name* container, type data)                                                \
-{                                                                                           \
-    if (container->length + 1 >= container->capacity)                                       \
-        name##_resize(container, 2 * container->capacity);                                  \
-    container->buffer[container->length++] = data;                                          \
-}                                                                                           \
-type* name##_pop(name* container)                                                           \
-{                                                                                           \
-    return container->length > 0 ? &container->buffer[--container->length] : NULL;          \
-}                                                                                           \
-type* name##_at(const name* container, size_t index)                                        \
-{                                                                                           \
-    return index >= 0 && index < container->length ? &container->buffer[index] : NULL;      \
-}                                                                                           \
-type* name##_back(const name* container)                                                    \
-{                                                                                           \
-    return container->length > 0 ? &container->buffer[container->length - 1] : NULL;        \
+#define AUG_DEFINE_ARRAY(name, type)                                                      \
+typedef struct name                                                                       \
+{                                                                                         \
+	type* buffer;                                                                         \
+	size_t capacity;                                                                      \
+	size_t length;                                                                        \
+} name;                                                                                   \
+name name##_new(size_t size)                                                              \
+{                                                                                         \
+    name array;                                                                           \
+    array.length = 0;                                                                     \
+    array.capacity = size;                                                                \
+    array.buffer = AUG_ALLOC_ARRAY(type, array.capacity);                                 \
+    return array;                                                                         \
+}                                                                                         \
+void name##_delete(name* array)                                                           \
+{                                                                                         \
+    AUG_FREE_ARRAY(array->buffer);                                                        \
+    array->buffer = NULL;                                                                 \
+}                                                                                         \
+void name##_resize(name* array, size_t size)                                              \
+{                                                                                         \
+    array->capacity = size;                                                               \
+    array->buffer = AUG_REALLOC_ARRAY(array->buffer, type, array->capacity);              \
+}                                                                                         \
+void name##_push(name* array, type data)                                                  \
+{                                                                                         \
+    if (array->length+1 >= array->capacity) name##_resize(array, 2 * array->capacity);    \
+    array->buffer[array->length++] = data;                                                \
+}                                                                                         \
+type* name##_pop(name* container)                                                         \
+{                                                                                         \
+    return array->length > 0 ? &array->buffer[--array->length] : NULL;                    \
+}                                                                                         \
+type* name##_at(const name* container, size_t index)                                      \
+{                                                                                         \
+    return index >= 0 && index < array->length ? &array->buffer[index] : NULL;            \
+}                                                                                         \
+type* name##_back(const name* array)                                                      \
+{                                                                                         \
+    return array->length > 0 ? &array->buffer[array->length - 1] : NULL;                  \
 }
 
 // --------------------------------------- Logging ---------------------------------------//
@@ -1319,8 +1316,8 @@ static inline void aug_ast_add(aug_ast* node, aug_ast* child)
     node->children[node->children_size++] = child;
 }
 
-AUG_DEFINE_CONTAINER(aug_token_stack, aug_token);
-AUG_DEFINE_CONTAINER(aug_expr_stack, aug_ast*);
+AUG_DEFINE_ARRAY(aug_token_stack, aug_token);
+AUG_DEFINE_ARRAY(aug_expr_stack, aug_ast*);
 
 static inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_token_stack* op_stack, aug_expr_stack* expr_stack)
 {
@@ -2187,7 +2184,7 @@ typedef struct aug_ir_operation
     size_t bytecode_offset;
 } aug_ir_operation;
 
-AUG_DEFINE_CONTAINER(aug_ir_operation_array, aug_ir_operation);
+AUG_DEFINE_ARRAY(aug_ir_operation_array, aug_ir_operation);
 
 typedef struct aug_ir_scope
 {
@@ -2196,7 +2193,7 @@ typedef struct aug_ir_scope
     aug_symtable* symtable;
 } aug_ir_scope;
 
-AUG_DEFINE_CONTAINER(aug_ir_scope_stack, aug_ir_scope);
+AUG_DEFINE_ARRAY(aug_ir_scope_stack, aug_ir_scope);
 
 typedef struct aug_ir_frame
 {
@@ -2205,7 +2202,7 @@ typedef struct aug_ir_frame
     aug_ir_scope_stack scope_stack;
 } aug_ir_frame;
 
-AUG_DEFINE_CONTAINER(aug_ir_frame_stack, aug_ir_frame);
+AUG_DEFINE_ARRAY(aug_ir_frame_stack, aug_ir_frame);
 
 // All the blocks within a compilation/translation unit (i.e. file, code literal)
 typedef struct aug_ir
