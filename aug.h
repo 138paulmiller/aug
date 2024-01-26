@@ -38,7 +38,9 @@ SOFTWARE. */
     - Implement objects 
     - Serialize debug symbols to file. Link from bytecode to source file.
         - Better runtime error handling, add source file and line to debug symbols
+    - Vector Matrix primitive types ?
 */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -47,7 +49,6 @@ extern "C" {
 #define __AUG_HEADER__
 
 #define AUG_DEBUG_VM 0
-#define AUG_DEBUG_SYMBOLS
 
 // Size of the virtual machine's value stack 
 #ifndef AUG_STACK_SIZE
@@ -207,8 +208,6 @@ bool aug_symtable_set(aug_symtable* symtable, aug_symbol symbol);
 aug_symbol aug_symtable_get(aug_symtable* symtable, aug_string* name);
 aug_symbol aug_symtable_get_bytes(aug_symtable* symtable, const char* name);
 
-#ifdef AUG_DEBUG_SYMBOLS
- 
 typedef struct aug_debug_symbol
 {
     int bytecode_addr;
@@ -230,8 +229,6 @@ void  aug_debug_symbols_resize(aug_debug_symbols* symtable, size_t size);
 bool aug_debug_symbols_set(aug_debug_symbols* symtable, aug_debug_symbol debug_symbol);
 aug_debug_symbol aug_debug_symbols_get(aug_debug_symbols* symtable, int bytecode_addr);
 
-#endif // AUG_DEBUG_SYMBOLS
-
 // Represents a "compiled" script
 typedef struct aug_script
 {
@@ -239,9 +236,7 @@ typedef struct aug_script
     char* bytecode;
     aug_array* stack_state;
 
-#ifdef AUG_DEBUG_SYMBOLS
     aug_debug_symbols* debug_symbols;
-#endif // AUG_DEBUG_SYMBOLS
 } aug_script;
 
 // Calling frames are used to presize and access parameters and local variables from the stack within a calling context
@@ -249,8 +244,8 @@ typedef struct aug_frame
 {
     int base_index;
     int stack_index;
-    // For function frames, there will be a return instruction and arg count. Otherwise, the frame is used for local scope 
 
+    // For function call frames, the following fields will be used. Otherwise, the frame is used only for local scope 
     bool func_call;
     int arg_count;
     const char* instruction; 
@@ -268,7 +263,7 @@ typedef struct aug_vm
     aug_value stack[AUG_STACK_SIZE];
     int stack_index; // Current position on stack (ESP)
     int base_index;  // Current frame stack offset (EBP)
-    int arg_count; // Current argument count expected when entering a call frame
+    int arg_count;   // Current argument count expected when entering a call frame
 
     // Extensions are external functions are native functions that can be called from scripts   
     // This external function map contains the user's registered functions. 
@@ -277,9 +272,7 @@ typedef struct aug_vm
     aug_string* extension_names[AUG_EXTENSION_SIZE]; 
     int extension_count;
 
-#ifdef AUG_DEBUG_SYMBOLS
     aug_debug_symbols* debug_symbols; //weak pointer to script debug symbols
-#endif // AUG_DEBUG_SYMBOLS
 } aug_vm;
 
 // VM Must call both startup before using the VM. When done, must call shutdown.
@@ -294,9 +287,13 @@ void aug_unregister(aug_vm* vm, const char* func_name);
 // Will reboot the VM to execute the standalone script or code
 void aug_execute(aug_vm* vm, const char* filename);
 
+// Compiles, executes and loads script into globals into memory from file
 aug_script* aug_load(aug_vm* vm, const char* filename);
+
+// Unload the script globals from the VM and memory
 void aug_unload(aug_vm* vm, aug_script* script);
 
+// Used to call global functions within the script
 aug_value aug_call(aug_vm* vm, aug_script* script, const char* func_name);
 aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, int argc, aug_value* args);
 
@@ -414,7 +411,7 @@ void aug_log_error(aug_error_function* error_callback, const char* format, ...)
     va_end(args);
 }
 
-// --------------------------------------- Input ---------------------------------------//
+// INPUT ========================================   INPUT   ======================================================== INPUT // 
 
 typedef struct aug_pos
 {
@@ -636,7 +633,7 @@ void aug_log_input_error_at(aug_input* input, const aug_pos* pos, const char* fo
     va_end(args);
 }
 
-// -------------------------------------- Lexer  ---------------------------------------// 
+// TOKENS ========================================   TOKENS   ====================================================== TOKENS // 
 
 // Static token details
 typedef struct aug_token_detail
@@ -737,6 +734,8 @@ typedef struct  aug_token
     aug_pos pos;
 
 } aug_token;
+
+// LEXER ==========================================   LEXER   ======================================================= LEXER // 
 
 // Lexer state
 typedef struct aug_lexer
@@ -1231,7 +1230,7 @@ bool aug_lexer_move(aug_lexer* lexer)
     return lexer->curr.id != AUG_TOKEN_NONE;
 }
 
-// -------------------------------------- Parser / Abstract Syntax Tree ---------------------------------------// 
+// AST ================================================   AST   ======================================================= AST // 
 
 typedef enum aug_ast_id
 {
@@ -1310,6 +1309,8 @@ static inline void aug_ast_add(aug_ast* node, aug_ast* child)
     }
     node->children[node->children_size++] = child;
 }
+
+// PARSER =============================================   PARSER   ================================================= PARSER // 
 
 AUG_DEFINE_ARRAY(aug_token_stack, aug_token);
 AUG_DEFINE_ARRAY(aug_expr_stack, aug_ast*);
@@ -2055,7 +2056,7 @@ aug_ast* aug_parse(aug_input* input)
     return root;
 }
 
-// -------------------------------------- OPCODE -----------------------------------------// 
+// OPCODE =============================================   OPCODE   ================================================= OPCODE // 
 
 #define AUG_OPCODE_LIST           \
 	AUG_OPCODE(EXIT)              \
@@ -2141,7 +2142,7 @@ static const char* aug_opcode_labels[] =
 #define AUG_CALL_FRAME_STACK_SIZE 2
 
 
-// -------------------------------------- IR --------------------------------------------// 
+// IR ===================================================   IR   ======================================================= IR // 
 
 typedef enum aug_ir_operand_type
 {
@@ -2218,9 +2219,7 @@ typedef struct aug_ir
     bool valid;
 
     // Debug table, index from bytecode addr
-#ifdef AUG_DEBUG_SYMBOLS
     aug_debug_symbols* debug_symbols;
-#endif // AUG_DEBUG_SYMBOLS
 
 } aug_ir;
 
@@ -2233,11 +2232,7 @@ static inline aug_ir* aug_ir_new(aug_input* input)
     ir->bytecode_offset = 0;
     ir->frame_stack =  aug_ir_frame_stack_new(1);
     ir->operations = aug_ir_operation_array_new(1);
-
-#ifdef AUG_DEBUG_SYMBOLS
     ir->debug_symbols = aug_debug_symbols_new(1);
-#endif // AUG_DEBUG_SYMBOLS
-
     return ir;
 }
 
@@ -2247,10 +2242,7 @@ static inline void aug_ir_delete(aug_ir* ir)
     aug_ir_frame_stack_delete(&ir->frame_stack);
  
     aug_symtable_decref(ir->globals);
-
-#ifdef AUG_DEBUG_SYMBOLS
     aug_debug_symbols_decref(ir->debug_symbols);
-#endif // AUG_DEBUG_SYMBOLS
 
     AUG_FREE(ir);
 }
@@ -2457,14 +2449,10 @@ static inline void aug_ir_pop_scope(aug_ir*ir)
 
 static inline void aug_ir_add_debug_symbol(aug_ir* ir, aug_symbol symbol)
 {
-#ifdef AUG_DEBUG_SYMBOLS
     aug_debug_symbol debug_symbol;
     debug_symbol.symbol = symbol;
     debug_symbol.bytecode_addr = ir->bytecode_offset;
     aug_debug_symbols_set(ir->debug_symbols, debug_symbol);
-#else 
-    (void)ir; (void)symbol;
-#endif // AUG_DEBUG_SYMBOLS
 }
 
 static inline bool aug_ir_set_var(aug_ir*ir, aug_string* var_name)
@@ -2591,7 +2579,8 @@ static inline aug_symbol aug_ir_symbol_relative(aug_ir*ir, aug_string* name)
     return sym;
 }
 
-// --------------------------------------- Value Operations -------------------------------------------------------//
+// VALUE ===============================================   VALUE   ================================================== VALUE // 
+
 static inline bool aug_set_bool(aug_value* value, bool data)
 {
     if(value == NULL)
@@ -3125,7 +3114,7 @@ static inline bool aug_or(aug_value* result, aug_value* lhs, aug_value* rhs)
 
 #undef AUG_DEFINE_BINOP
 
-// -------------------------------------- Virtual Machine / Bytecode ----------------------------------------------// 
+// VM  =====================================================  VM  ====================================================== VM // 
 
 // Used to convert values to/from bytes for constant values
 typedef union aug_vm_bytecode_value
@@ -3265,14 +3254,12 @@ static inline const char* aug_vm_read_bytes(aug_vm* vm)
     return vm->instruction - len;
 }
 
-#ifdef  AUG_DEBUG_SYMBOLS
 aug_debug_symbol aug_vm_get_debug_symbol(aug_vm* vm, size_t operand_size)
 {
     // not the -1 is to account for the immediate instruction advance befreo switch statement
     const int addr = (vm->instruction-1) - operand_size - vm->bytecode;
     return aug_debug_symbols_get(vm->debug_symbols, addr);
 }
-#endif // AUG_DEBUG_SYMBOLS
 
 void aug_vm_startup(aug_vm* vm)
 {
@@ -3307,9 +3294,7 @@ void aug_vm_load_script(aug_vm* vm, const aug_script* script)
     
     vm->instruction = vm->bytecode;
     vm->valid = (vm->bytecode != NULL);
-#ifdef  AUG_DEBUG_SYMBOLS
     vm->debug_symbols = script->debug_symbols;
-#endif //AUG_DEBUG_SYMBOLS
 
     if(script->stack_state != NULL)
     {
@@ -3715,11 +3700,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* local = aug_vm_get_local(vm, stack_offset);
                 if(local == NULL || local->type != AUG_FUNCTION)
                 {
-#ifdef  AUG_DEBUG_SYMBOLS
                     aug_string* sym_name = aug_vm_get_debug_symbol(vm, sizeof(int)).symbol.name;
-#else 
-                    aug_string* sym_name = NULL;
-#endif //AUG_DEBUG_SYMBOLS
                     aug_log_vm_error(vm, "Local variable %s can not be called as a function", sym_name ? sym_name->buffer : "(anonymous)");
                     break;
                 }
@@ -3735,13 +3716,8 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* global = aug_vm_get_global(vm, stack_offset);
                 if(global == NULL || global->type != AUG_FUNCTION)
                 {                    
-#ifdef  AUG_DEBUG_SYMBOLS
                     aug_string* sym_name = aug_vm_get_debug_symbol(vm, sizeof(int)).symbol.name;
-#else 
-                    aug_string* sym_name = NULL;
-#endif //AUG_DEBUG_SYMBOLS
                     aug_log_vm_error(vm, "Global variable %s can not be called as a function", sym_name ? sym_name->buffer : "(anonymous)");
-                    break;
                     break;
                 }
 
@@ -3806,11 +3782,7 @@ void aug_vm_execute(aug_vm* vm)
                 const int param_count = aug_vm_read_int(vm);
                 if (vm->arg_count != param_count)
                 {
-#ifdef  AUG_DEBUG_SYMBOLS
                     aug_string* sym_name = aug_vm_get_debug_symbol(vm, sizeof(int)).symbol.name;
-#else 
-                    aug_string* sym_name = NULL;
-#endif //AUG_DEBUG_SYMBOLS
                     aug_log_vm_error(vm, "Incorrect number of arguments passed to %s function. Received %d expected %d ", sym_name ? sym_name->buffer : "anonymous", vm->arg_count, param_count);
                     break;
                 }
@@ -3917,6 +3889,8 @@ aug_value aug_vm_execute_from_frame(aug_vm* vm, int func_addr, int argc, aug_val
     }
     return ret_value;
 }
+
+// COMPILER ============================================== COMPILER =============================================== COMPILER // 
 
 void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
 {
@@ -4462,264 +4436,7 @@ char* aug_ir_to_bytecode(aug_ir* ir)
     return bytecode;
 }
 
-aug_script* aug_script_new(aug_symtable* globals, char* bytecode
-#ifdef  AUG_DEBUG_SYMBOLS
-    , aug_debug_symbols* debug_symbols
-#endif //AUG_DEBUG_SYMBOLS
-)
-{
-    aug_script* script = AUG_ALLOC(aug_script);
-    script->stack_state = NULL;
-    script->bytecode = bytecode;
-    
-    script->globals = globals;
-    aug_symtable_incref(script->globals);
-
-#ifdef  AUG_DEBUG_SYMBOLS
-    script->debug_symbols = debug_symbols;
-    aug_debug_symbols_incref(script->debug_symbols);
-#endif //AUG_DEBUG_SYMBOLS
-
-    return script;
-}
-
-void aug_script_delete(aug_script* script)
-{
-    if(script == NULL)
-        return;
-
-    if(script->stack_state != NULL)
-    {
-        for(size_t i = 0; i < script->stack_state->length; ++i)
-        {
-            aug_value* value = aug_array_at( script->stack_state, i );
-            aug_decref(value);
-        }
-    }
-    script->globals = aug_symtable_decref(script->globals);
-    script->stack_state = aug_array_decref(script->stack_state);
-#ifdef  AUG_DEBUG_SYMBOLS
-    script->debug_symbols = aug_debug_symbols_decref(script->debug_symbols);
-#endif //AUG_DEBUG_SYMBOLS
-
-    if(script->bytecode != NULL)
-        AUG_FREE_ARRAY(script->bytecode);
-    AUG_FREE(script);
-}
-
-aug_vm* aug_startup(aug_error_function* error_callback)
-{
-    aug_vm* vm = AUG_ALLOC(aug_vm);
-    int i;
-    for(i = 0; i < AUG_EXTENSION_SIZE; ++i)
-    {
-        vm->extensions[i] = NULL;
-        vm->extension_names[i] = NULL;
-    }
-
-    for(i = 0; i < AUG_STACK_SIZE; ++i)
-        vm->stack[i] = aug_none();
-
-    // Initialize
-    vm->error_callback = error_callback;
-    aug_vm_startup(vm);
-    return vm;
-}
-
-void aug_shutdown(aug_vm* vm)
-{
-    aug_vm_shutdown(vm);
-
-    int i;
-    for(i = 0; i < AUG_EXTENSION_SIZE; ++i)
-    {
-        vm->extensions[i] = NULL;
-        vm->extension_names[i] = aug_string_decref(vm->extension_names[i]);
-    }
-
-    AUG_FREE(vm);
-}
-
-void aug_register(aug_vm* vm, const char* name, aug_extension *extension)
-{
-    int i;
-    for(i = 0; i < AUG_EXTENSION_SIZE; ++i)
-    {
-        if(vm->extensions[i] == NULL)
-        {
-            vm->extensions[i] = extension;
-            vm->extension_names[i] =  aug_string_create(name);
-            break;
-        }
-    }
-}
-
-void aug_unregister(aug_vm* vm, const char* func_name)
-{
-    int i;
-    for(i = 0; i < AUG_EXTENSION_SIZE; ++i)
-    {
-        if(aug_string_compare_bytes(vm->extension_names[i], func_name))
-        {
-            vm->extensions[i] = NULL;
-            vm->extension_names[i] = aug_string_decref(vm->extension_names[i]);
-            break;
-        }
-    }
-}
-
-aug_script* aug_compile(aug_vm* vm, const char* filename)
-{
-    aug_input* input = aug_input_open(filename, vm->error_callback);
-    if(input == NULL)
-        return NULL;
-
-    // Parse file
-    aug_ast* root = aug_parse(input);
-    if(root == NULL)
-    {
-        aug_input_close(input);
-        return NULL;
-    }
-
-    // Generate IR
-    aug_ir* ir = aug_ir_new(input);
-    aug_ast_to_ir(vm, root, ir);
-
-    // Load script
-    char* bytecode = aug_ir_to_bytecode(ir);
-    aug_script* script = aug_script_new(ir->globals, bytecode
-#ifdef  AUG_DEBUG_SYMBOLS
-        , ir->debug_symbols
-#endif //AUG_DEBUG_SYMBOLS
-    );
-    
-    // Cleanup 
-    aug_ir_delete(ir);
-    aug_ast_delete(root);
-    aug_input_close(input);
-    return script;
-}
-
-void aug_execute(aug_vm* vm, const char* filename)
-{
-    aug_script* script = aug_compile(vm, filename);
-
-    aug_vm_startup(vm);
-    aug_vm_load_script(vm, script);
-    aug_vm_execute(vm);
-    aug_vm_shutdown(vm);
-
-    aug_script_delete(script);
-}
-
-aug_script* aug_load(aug_vm* vm, const char* filename)
-{
-    // TODO: check file ext. If is a script, compile, else load bytecode
-    aug_script* script = aug_compile(vm, filename);
-    aug_vm_load_script(vm, script);
-    aug_vm_execute(vm);
-    aug_vm_save_script(vm, script);
-    return script;
-}
-
-void aug_unload(aug_vm* vm, aug_script* script)
-{
-    aug_vm_unload_script(vm, script);
-    aug_script_delete(script);
-}
-
-aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, int argc, aug_value* args)
-{
-    if(vm == NULL)
-        return aug_none();
-
-    aug_value ret_value = aug_none();
-    if(script->bytecode == NULL)
-        return ret_value;
-    
-    aug_symbol symbol = aug_symtable_get_bytes(script->globals, func_name);
-    if(symbol.type == AUG_SYM_NONE)
-    {
-        aug_log_error(vm->error_callback, "Function %s not defined", func_name);
-        return ret_value;
-    }
-
-    switch(symbol.type)
-    {
-        case AUG_SYM_FUNC:
-            break;
-        case AUG_SYM_VAR:
-        {
-            aug_log_error(vm->error_callback, "Can not call variable %s a function", func_name);
-            return ret_value;
-        }
-        default:
-        {
-            aug_log_error(vm->error_callback, "Symbol %s not defined as a function", func_name);
-            return ret_value;
-        }
-    }
-    if(symbol.argc != argc)
-    {
-        aug_log_error(vm->error_callback, "Function %s passed %d arguments, expected %d", func_name, argc, symbol.argc);
-        return ret_value;
-    }
-
-    aug_vm_startup(vm);
-    aug_vm_load_script(vm, script);
-
-    // Setup base index to be current stack index
-    const int func_addr = symbol.offset;
-    ret_value = aug_vm_execute_from_frame(vm, func_addr, argc, args);
-
-    aug_vm_save_script(vm, script);
-    aug_vm_shutdown(vm);
-
-    return ret_value;
-}
-
-aug_value aug_call(aug_vm* vm, aug_script* script, const char* func_name)
-{
-    return aug_call_args(vm, script, func_name, 0, NULL);
-}
-
-aug_value aug_create_bool(bool data)
-{
-    aug_value value;
-    aug_set_bool(&value, data);
-    return value;
-}
-
-aug_value aug_create_int(int data)
-{
-    aug_value value;
-    aug_set_int(&value, data);
-    return value;
-}
-
-aug_value aug_create_char(char data)
-{
-    aug_value value;
-    aug_set_char(&value, data);
-    return value;
-}
-
-aug_value aug_create_float(float data)
-{
-    aug_value value;
-    aug_set_float(&value, data);
-    return value;
-}
-
-aug_value aug_create_string(const char* data)
-{
-    aug_value value;
-    aug_set_string(&value, data);
-    return value;
-}
-
-// ------------------------------- Data Structures --------------------------------//
+// STRING ================================================= STRING ================================================== STRING // 
 
 aug_string* aug_string_new(size_t size) 
 {
@@ -4819,7 +4536,8 @@ aug_string* aug_string_decref(aug_string* string)
     return string;
 }
 
-// -------------------------------- Array ----------------------------------------------------//
+// ARRAY ================================================== ARRAY ==================================================== ARRAY // 
+
 aug_array* aug_array_new(size_t size)
 {                
 	aug_array* array = AUG_ALLOC(aug_array);
@@ -4875,7 +4593,8 @@ aug_value* aug_array_back(const aug_array* array)
 	return array->length > 0 ? &array->buffer[array->length-1] : NULL; 
 }
 
-// ------------------------------- Symtable ------------------------------------------//
+// SYMTABLE ============================================== SYMTABLE =============================================== SYMTABLE // 
+
 aug_symtable* aug_symtable_new(size_t size)
 {
     aug_symtable* symtable = AUG_ALLOC(aug_symtable);
@@ -4964,8 +4683,7 @@ aug_symbol aug_symtable_get_bytes(aug_symtable* symtable, const char* name)
     return symbol;
 }
 
-// --------------------------------------------------- Debug Symtable ---------------------------- //
-#ifdef  AUG_DEBUG_SYMBOLS
+// DEBUG SYMBOLS ======================================= DEBUG SYMBOLS ====================================== DEBUG SYMBOLS // 
 
 aug_debug_symbols* aug_debug_symbols_new(size_t size)
 {
@@ -5033,7 +4751,251 @@ aug_debug_symbol aug_debug_symbols_get(aug_debug_symbols* symtable, int bytecode
     return debug_symbol;
 }
 
-#endif //AUG_DEBUG_SYMBOLS
+// SCRIPT ================================================= SCRIPT ================================================= SCRIPT // 
+
+aug_script* aug_script_new(aug_symtable* globals, char* bytecode, aug_debug_symbols* debug_symbols
+)
+{
+    aug_script* script = AUG_ALLOC(aug_script);
+    script->stack_state = NULL;
+    script->bytecode = bytecode;
+
+    script->globals = globals;
+    aug_symtable_incref(script->globals);
+
+    script->debug_symbols = debug_symbols;
+    aug_debug_symbols_incref(script->debug_symbols);
+    return script;
+}
+
+void aug_script_delete(aug_script* script)
+{
+    if (script == NULL)
+        return;
+
+    if (script->stack_state != NULL)
+    {
+        for (size_t i = 0; i < script->stack_state->length; ++i)
+        {
+            aug_value* value = aug_array_at(script->stack_state, i);
+            aug_decref(value);
+        }
+    }
+    script->globals = aug_symtable_decref(script->globals);
+    script->stack_state = aug_array_decref(script->stack_state);
+    script->debug_symbols = aug_debug_symbols_decref(script->debug_symbols);
+
+    if (script->bytecode != NULL)
+        AUG_FREE_ARRAY(script->bytecode);
+    AUG_FREE(script);
+}
+
+// API ====================================================== API ====================================================== API // 
+
+aug_vm* aug_startup(aug_error_function* error_callback)
+{
+    aug_vm* vm = AUG_ALLOC(aug_vm);
+    int i;
+    for (i = 0; i < AUG_EXTENSION_SIZE; ++i)
+    {
+        vm->extensions[i] = NULL;
+        vm->extension_names[i] = NULL;
+    }
+
+    for (i = 0; i < AUG_STACK_SIZE; ++i)
+        vm->stack[i] = aug_none();
+
+    // Initialize
+    vm->error_callback = error_callback;
+    aug_vm_startup(vm);
+    return vm;
+}
+
+void aug_shutdown(aug_vm* vm)
+{
+    aug_vm_shutdown(vm);
+
+    int i;
+    for (i = 0; i < AUG_EXTENSION_SIZE; ++i)
+    {
+        vm->extensions[i] = NULL;
+        vm->extension_names[i] = aug_string_decref(vm->extension_names[i]);
+    }
+
+    AUG_FREE(vm);
+}
+
+void aug_register(aug_vm* vm, const char* name, aug_extension* extension)
+{
+    int i;
+    for (i = 0; i < AUG_EXTENSION_SIZE; ++i)
+    {
+        if (vm->extensions[i] == NULL)
+        {
+            vm->extensions[i] = extension;
+            vm->extension_names[i] = aug_string_create(name);
+            break;
+        }
+    }
+}
+
+void aug_unregister(aug_vm* vm, const char* func_name)
+{
+    int i;
+    for (i = 0; i < AUG_EXTENSION_SIZE; ++i)
+    {
+        if (aug_string_compare_bytes(vm->extension_names[i], func_name))
+        {
+            vm->extensions[i] = NULL;
+            vm->extension_names[i] = aug_string_decref(vm->extension_names[i]);
+            break;
+        }
+    }
+}
+
+aug_script* aug_compile(aug_vm* vm, const char* filename)
+{
+    aug_input* input = aug_input_open(filename, vm->error_callback);
+    if (input == NULL)
+        return NULL;
+
+    // Parse file
+    aug_ast* root = aug_parse(input);
+    if (root == NULL)
+    {
+        aug_input_close(input);
+        return NULL;
+    }
+
+    // Generate IR
+    aug_ir* ir = aug_ir_new(input);
+    aug_ast_to_ir(vm, root, ir);
+
+    // Load script
+    char* bytecode = aug_ir_to_bytecode(ir);
+    aug_script* script = aug_script_new(ir->globals, bytecode, ir->debug_symbols);
+
+    // Cleanup 
+    aug_ir_delete(ir);
+    aug_ast_delete(root);
+    aug_input_close(input);
+    return script;
+}
+
+void aug_execute(aug_vm* vm, const char* filename)
+{
+    aug_script* script = aug_compile(vm, filename);
+
+    aug_vm_startup(vm);
+    aug_vm_load_script(vm, script);
+    aug_vm_execute(vm);
+    aug_vm_shutdown(vm);
+
+    aug_script_delete(script);
+}
+
+aug_script* aug_load(aug_vm* vm, const char* filename)
+{
+    // TODO: check file ext. If is a script, compile, else load bytecode
+    aug_script* script = aug_compile(vm, filename);
+    aug_vm_load_script(vm, script);
+    aug_vm_execute(vm);
+    aug_vm_save_script(vm, script);
+    return script;
+}
+
+void aug_unload(aug_vm* vm, aug_script* script)
+{
+    aug_vm_unload_script(vm, script);
+    aug_script_delete(script);
+}
+
+aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, int argc, aug_value* args)
+{
+    if (vm == NULL)
+        return aug_none();
+
+    aug_value ret_value = aug_none();
+    if (script->bytecode == NULL)
+        return ret_value;
+
+    aug_symbol symbol = aug_symtable_get_bytes(script->globals, func_name);
+    if (symbol.type == AUG_SYM_NONE)
+    {
+        aug_log_error(vm->error_callback, "Function %s not defined", func_name);
+        return ret_value;
+    }
+
+    switch (symbol.type)
+    {
+    case AUG_SYM_FUNC:
+        break;
+    case AUG_SYM_VAR:
+        aug_log_error(vm->error_callback, "Can not call variable %s a function", func_name);
+        return ret_value;
+    default:
+        aug_log_error(vm->error_callback, "Symbol %s not defined as a function", func_name);
+        return ret_value;
+    }
+
+    if (symbol.argc != argc)
+    {
+        aug_log_error(vm->error_callback, "Function %s passed %d arguments, expected %d", func_name, argc, symbol.argc);
+        return ret_value;
+    }
+
+    aug_vm_startup(vm);
+    aug_vm_load_script(vm, script);
+
+    // Setup base index to be current stack index
+    const int func_addr = symbol.offset;
+    ret_value = aug_vm_execute_from_frame(vm, func_addr, argc, args);
+
+    aug_vm_save_script(vm, script);
+    aug_vm_shutdown(vm);
+
+    return ret_value;
+}
+
+aug_value aug_call(aug_vm* vm, aug_script* script, const char* func_name)
+{
+    return aug_call_args(vm, script, func_name, 0, NULL);
+}
+
+aug_value aug_create_bool(bool data)
+{
+    aug_value value;
+    aug_set_bool(&value, data);
+    return value;
+}
+
+aug_value aug_create_int(int data)
+{
+    aug_value value;
+    aug_set_int(&value, data);
+    return value;
+}
+
+aug_value aug_create_char(char data)
+{
+    aug_value value;
+    aug_set_char(&value, data);
+    return value;
+}
+
+aug_value aug_create_float(float data)
+{
+    aug_value value;
+    aug_set_float(&value, data);
+    return value;
+}
+
+aug_value aug_create_string(const char* data)
+{
+    aug_value value;
+    aug_set_string(&value, data);
+    return value;
+}
 
 #ifdef __cplusplus
 } // extern C
