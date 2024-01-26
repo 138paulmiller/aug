@@ -1,3 +1,12 @@
+
+#ifdef  _WIN32
+// compile by using: cl /EHsc /W4 /D_DEBUG /MDd
+#define _CRTDBG_MAP_ALLOC
+#include <stdlib.h>
+#include <crtdbg.h>
+#endif  //_WIN32
+
+
 #define AUG_IMPLEMENTATION
 #define AUG_LOG_VERBOSE
 #define AUG_DEBUG
@@ -15,6 +24,7 @@ void dump_token(aug_token* token)
 
 void dump_lexer(const char* filename)
 {
+	return;
 	printf("Tokens \n");
 
 	aug_input* input = aug_input_open(filename, nullptr);
@@ -195,8 +205,10 @@ void dump_ir(aug_ir* ir)
 			break;
 		}
 
+#ifdef AUG_DEBUG_SYMBOLS
 		aug_debug_symbol debug_symbol = aug_debug_symbols_get(ir->debug_symbols, (int)operation->bytecode_offset);
 		if (debug_symbol.symbol.name) printf("(%s)", debug_symbol.symbol.name->buffer);
+#endif //AUG_DEBUG_SYMBOLS
 		printf("\n");
 	}
 }
@@ -208,7 +220,7 @@ void aug_dump_file(aug_vm* vm, const char* filename)
 	dump_lexer(filename);
 
 	aug_input* input = aug_input_open(filename, vm->error_callback);
-	aug_ast* root = aug_parse(vm, input);
+	aug_ast* root = aug_parse(input);
 
 	dump_ast(root);
 

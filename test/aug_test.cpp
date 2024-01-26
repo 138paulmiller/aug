@@ -338,7 +338,7 @@ void aug_test_gameloop(aug_vm* vm)
 
 void aug_error(const char* msg)
 {
-	fprintf(stderr, "[ERROR]%s\t\n", msg);
+	fprintf(stderr, "[%sERROR%s]\t%s\t\n", STDOUT_RED, STDOUT_CLEAR, msg);
 }
 
 int aug_test(int argc, char** argv)

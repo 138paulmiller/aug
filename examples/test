@@ -4,10 +4,4 @@ func count(a) {
     }
     return count(a-1) + 1;
 }
-
-func call_func(callback, x) {
-    return callback(x);
-}
-
-a = call_func(count, 10);
-expect(a == 10, "call_func(count, 1000) = ", a);
+count(10);

@@ -2,11 +2,11 @@ func count(a) {
     if a <= 0 { 
         return 0; 
     }
-    return count(a-1, 1) + 1;
+    return count(a-1) + 1;
 }
 
 func call_func(callback, x) {
-    return callback(x);
+    return callback(x, 1);
 }
 
 a = call_func(count, 10);

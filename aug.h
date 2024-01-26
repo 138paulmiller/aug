@@ -50,6 +50,7 @@ extern "C" {
 #define __AUG_HEADER__
 
 #define AUG_DEBUG_VM 0
+#define AUG_DEBUG_SYMBOLS
 
 // Size of the virtual machine's value stack 
 #ifndef AUG_STACK_SIZE
@@ -133,13 +134,6 @@ typedef enum aug_value_type
     AUG_NONE,
 } aug_value_type;
 
-#if defined(AUG_IMPLEMENTATION)
-static const char* aug_value_type_labels[] =
-{
-    "bool", "char", "int", "float", "string", "array", "object", "function", "none"
-};
-#endif //AUG_IMPLEMENTATION
-
 // Values instance 
 typedef struct aug_value
 {
@@ -164,6 +158,7 @@ aug_value aug_none();
 bool aug_get_bool(const aug_value* value);
 int aug_get_int(const aug_value* value);
 float aug_get_float(const aug_value* value);
+const char* aug_get_type_label(const aug_value* value);
 
 aug_value aug_create_array();
 aug_value aug_create_bool(bool data);
@@ -215,6 +210,8 @@ bool aug_symtable_set(aug_symtable* symtable, aug_symbol symbol);
 aug_symbol aug_symtable_get(aug_symtable* symtable, aug_string* name);
 aug_symbol aug_symtable_get_bytes(aug_symtable* symtable, const char* name);
 
+#ifdef AUG_DEBUG_SYMBOLS
+ 
 typedef struct aug_debug_symbol
 {
     int bytecode_addr;
@@ -236,6 +233,8 @@ void  aug_debug_symbols_resize(aug_debug_symbols* symtable, size_t size);
 bool aug_debug_symbols_set(aug_debug_symbols* symtable, aug_debug_symbol debug_symbol);
 aug_debug_symbol aug_debug_symbols_get(aug_debug_symbols* symtable, int bytecode_addr);
 
+#endif // AUG_DEBUG_SYMBOLS
+
 // Represents a "compiled" script
 typedef struct aug_script
 {
@@ -243,7 +242,9 @@ typedef struct aug_script
     char* bytecode;
     aug_array* stack_state;
 
+#ifdef AUG_DEBUG_SYMBOLS
     aug_debug_symbols* debug_symbols;
+#endif // AUG_DEBUG_SYMBOLS
 } aug_script;
 
 // Calling frames are used to presize and access parameters and local variables from the stack within a calling context
@@ -279,7 +280,9 @@ typedef struct aug_vm
     aug_string* extension_names[AUG_EXTENSION_SIZE]; 
     int extension_count;
 
-    aug_debug_symbols* debug_symbols; // Weak pointer to script debug_symbols
+#ifdef AUG_DEBUG_SYMBOLS
+    aug_debug_symbols* debug_symbols; //weak pointer to script debug symbols
+#endif // AUG_DEBUG_SYMBOLS
 } aug_vm;
 
 // VM Must call both startup before using the VM. When done, must call shutdown.
@@ -390,17 +393,14 @@ type* name##_back(const name* container)                                        
     return container->length > 0 ? &container->buffer[container->length - 1] : NULL;        \
 }
 
-// --------------------------------------- Input/Logging ---------------------------------------//
+// --------------------------------------- Logging ---------------------------------------//
 
-void aug_log_error_internal(aug_error_function* error_callback, const char* format, ...)
+void aug_log_error_internal(aug_error_function* error_callback, const char* format, va_list args)
 {
-    // TODO: make thread safe
-    static char log_buffer[4096];
-
-    va_list args;
-    va_start(args, format);
     if(error_callback)
     {
+        // TODO: make thread safe
+        static char log_buffer[4096];
         vsnprintf(log_buffer, sizeof(log_buffer), format, args);
         error_callback(log_buffer);
     }
@@ -410,25 +410,17 @@ void aug_log_error_internal(aug_error_function* error_callback, const char* form
         vprintf(format, args);
     }
 #endif //defined(AUG_LOG_VERBOSE)
+}
+
+void aug_log_error(aug_error_function* error_callback, const char* format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    aug_log_error_internal(error_callback, format, args);
     va_end(args);
 }
 
-#define AUG_LOG_ERROR(error_callback, ...)   \
-    aug_log_error_internal(error_callback, __VA_ARGS__);
-
-#define AUG_INPUT_ERROR_AT(input, pos, ...) \
-if(input->valid)                            \
-{                                           \
-    input->valid = false;                   \
-    aug_input_error_hint(input, pos);       \
-    AUG_LOG_ERROR(input->error_callback,    \
-        __VA_ARGS__);                       \
-}
-
-#define AUG_INPUT_ERROR(input, ...)    \
-    AUG_INPUT_ERROR_AT(input,          \
-        aug_input_get_pos(input, -1),  \
-        __VA_ARGS__);
+// --------------------------------------- Input ---------------------------------------//
 
 typedef struct aug_pos
 {
@@ -437,7 +429,7 @@ typedef struct aug_pos
     size_t line;
     size_t col;
 
-    char c;
+    int c;
 }aug_pos;
 
 typedef struct aug_input
@@ -451,55 +443,6 @@ typedef struct aug_input
 
     aug_error_function* error_callback;
 }aug_input;
-
-static inline void aug_input_error_hint(aug_input* input, const aug_pos* pos)
-{
-    assert(input != NULL && input->file != NULL);
-    
-    // save state
-    int curr_pos = ftell(input->file);
-
-    // go to line
-    fseek(input->file, pos->linepos, SEEK_SET);
-
-    // skip leading whitespace
-    int ws_skipped = 0;
-    char c = fgetc(input->file);
-    while(isspace(c) && ++ws_skipped)
-        c = fgetc(input->file);
-
-    AUG_LOG_ERROR(input->error_callback, "Error %s:(%d,%d) ",
-        input->filename->buffer, pos->line + 1, pos->col + 1);
-
-    // Draw line
-    const int buff_size = 4096;
-    char buffer[buff_size];
-    size_t n = 0;
-    while (c != EOF && c != '\n' && n < (buff_size - 1))
-    {
-        buffer[n++] = c;
-        c = fgetc(input->file);
-    }
-    buffer[n] = '\0';
-
-    AUG_LOG_ERROR(input->error_callback, "%s", buffer);
-
-    // Draw arrow to the error if within buffer
-    int tok_col = pos->col - ws_skipped;
-    if(tok_col > 0 && tok_col < n-1)
-    {
-        size_t i;
-        for(i = 0; i < tok_col; ++i)
-            buffer[i] = ' ';
-        buffer[tok_col] = '^';
-        buffer[tok_col+1] = '\0';
-    }
-
-    AUG_LOG_ERROR(input->error_callback, "%s", buffer);
-
-    // restore state
-    fseek(input->file, curr_pos, SEEK_SET);
-}
 
 static inline aug_pos* aug_input_pos(aug_input* input)
 {
@@ -529,7 +472,7 @@ static inline char aug_input_get(aug_input* input)
     if(input == NULL || input->file == NULL)
         return -1;
 
-    char c = fgetc(input->file);
+    int c = fgetc(input->file);
 
     aug_pos* pos = aug_input_pos(input);
     aug_pos* next_pos = aug_input_move_pos(input, 1);
@@ -551,7 +494,7 @@ static inline char aug_input_get(aug_input* input)
 static inline char aug_input_peek(aug_input* input)
 {
     assert(input != NULL && input->file != NULL);
-    char c = fgetc(input->file);
+    int c = fgetc(input->file);
     ungetc(c, input->file);
     return c;
 }
@@ -574,7 +517,7 @@ aug_input* aug_input_open(const char* filename, aug_error_function* error_callba
 #endif //_WIN32
     if(file == NULL)
     {
-        AUG_LOG_ERROR(error_callback, "Input failed to open file %s", filename);
+        aug_log_error(error_callback, "Input failed to open file %s", filename);
         return NULL;
     }
 
@@ -626,11 +569,79 @@ static inline aug_string* aug_input_end_tracking(aug_input* input)
     fseek(input->file, pos_end, SEEK_SET);
     if(count != len)
     {
-        AUG_INPUT_ERROR(input, "Failed to read %d bytes! %s", len, input->filename->buffer);
+        aug_log_error(input->error_callback, "Failed to read %d bytes! %s", len, input->filename->buffer);
         fseek(input->file, pos_end, SEEK_END);
     }
-
     return string;
+}
+
+static inline void aug_log_input_error_hint(aug_input* input, const aug_pos* pos)
+{
+    assert(input != NULL && input->file != NULL);
+
+    // save state
+    int curr_pos = ftell(input->file);
+
+    // go to line
+    fseek(input->file, pos->linepos, SEEK_SET);
+
+    // skip leading whitespace
+    int ws_skipped = 0;
+    int c = fgetc(input->file);
+    while (isspace(c) && ++ws_skipped)
+        c = fgetc(input->file);
+
+    aug_log_error(input->error_callback, "Error %s:(%d,%d) ",
+        input->filename->buffer, pos->line + 1, pos->col + 1);
+
+    // Draw line
+    const int buff_size = 4096;
+    char buffer[buff_size];
+    size_t n = 0;
+    while (c != EOF && c != '\n' && n < (buff_size - 1))
+    {
+        buffer[n++] = c;
+        c = fgetc(input->file);
+    }
+    buffer[n] = '\0';
+
+    aug_log_error(input->error_callback, "%s", buffer);
+
+    // Draw arrow to the error if within buffer
+    int tok_col = pos->col - ws_skipped;
+    if (tok_col > 0 && tok_col < n - 1)
+    {
+        size_t i;
+        for (i = 0; i < tok_col; ++i)
+            buffer[i] = ' ';
+        buffer[tok_col] = '^';
+        buffer[tok_col + 1] = '\0';
+    }
+
+    aug_log_error(input->error_callback, "%s", buffer);
+
+    // restore state
+    fseek(input->file, curr_pos, SEEK_SET);
+}
+
+void aug_log_input_error(aug_input* input, const char* format, ...)
+{
+    aug_log_input_error_hint(input, aug_input_get_pos(input, -1));
+
+    va_list args;
+    va_start(args, format);
+    aug_log_error_internal(input->error_callback, format, args);
+    va_end(args);
+}
+
+void aug_log_input_error_at(aug_input* input, const aug_pos* pos, const char* format, ...)
+{
+    aug_log_input_error_hint(input, pos);
+
+    va_list args;
+    va_start(args, format);
+    aug_log_error_internal(input->error_callback, format, args);
+    va_end(args);
 }
 
 // -------------------------------------- Lexer  ---------------------------------------// 
@@ -808,7 +819,7 @@ bool aug_lexer_tokenize_char(aug_lexer* lexer, aug_token* token)
     if(c != '\'')
     {
         token->data = aug_string_decref(token->data);
-        AUG_INPUT_ERROR(lexer->input, "char literal missing closing \"");
+        aug_log_input_error(lexer->input, "char literal missing closing \"");
         return false;
     }
     return true;
@@ -829,7 +840,7 @@ bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token* token)
         if(c == EOF)
         {
             token->data = aug_string_decref(token->data);
-            AUG_INPUT_ERROR(lexer->input, "string literal missing closing \"");
+            aug_log_input_error(lexer->input, "string literal missing closing \"");
             return false;
         }
 
@@ -874,7 +885,7 @@ bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token* token)
                 break;
             default:
                 token->data = aug_string_decref(token->data);
-                AUG_INPUT_ERROR(lexer->input, "invalid escape character \\%c", c);
+                aug_log_input_error(lexer->input, "invalid escape character \\%c", c);
                 return false;
             }
         }
@@ -1098,7 +1109,7 @@ bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token* token)
 
     if(id == AUG_TOKEN_NONE)
     {
-        AUG_INPUT_ERROR(lexer->input, "invalid numeric format %s", token->data->buffer);
+        aug_log_input_error(lexer->input, "invalid numeric format %s", token->data->buffer);
         token->data = aug_string_decref(token->data);
         return false;
     }
@@ -1203,7 +1214,7 @@ aug_token aug_lexer_tokenize(aug_lexer* lexer)
     
         if(aug_lexer_tokenize_symbol(lexer, &token))
             break;
-        AUG_INPUT_ERROR(lexer->input, "invalid character %c", c);
+        aug_log_input_error(lexer->input, "invalid character %c", c);
         break;
     }
 
@@ -1325,7 +1336,7 @@ static inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_token_stack* op_stac
             aug_ast** expr = aug_expr_stack_pop(expr_stack);
             aug_ast_delete(*expr);
         }
-        AUG_INPUT_ERROR(lexer->input, "Invalid number of arguments to operator %s", next_op->detail->label);
+        aug_log_input_error(lexer->input, "Invalid number of arguments to operator %s", next_op->detail->label);
         return false;
     }
 
@@ -1413,7 +1424,7 @@ aug_ast* aug_parse_expr(aug_lexer* lexer)
     if(expr_stack.length == 0 || expr_stack.length > 1)
     {
         aug_parse_expr_stack_cleanup(&op_stack, &expr_stack);
-        AUG_INPUT_ERROR(lexer->input, "Invalid expression syntax");
+        aug_log_input_error(lexer->input, "Invalid expression syntax");
         return NULL;
     }
 
@@ -1455,7 +1466,7 @@ aug_ast* aug_parse_funccall(aug_lexer* lexer)
     if(lexer->curr.id != AUG_TOKEN_RPAREN)
     {
         aug_ast_delete(funccall);
-        AUG_INPUT_ERROR(lexer->input, "Function call missing closing parentheses");
+        aug_log_input_error(lexer->input, "Function call missing closing parentheses");
         return NULL;
     }
 
@@ -1489,7 +1500,7 @@ aug_ast* aug_parse_array(aug_lexer* lexer)
     if(lexer->curr.id != AUG_TOKEN_RBRACKET)
     {
         aug_ast_delete(array);
-        AUG_INPUT_ERROR(lexer->input, "List missing closing bracket");
+        aug_log_input_error(lexer->input, "List missing closing bracket");
         return NULL;
     }
 
@@ -1510,7 +1521,7 @@ aug_ast* aug_parse_get_element(aug_lexer* lexer)
     aug_ast* expr = aug_parse_expr(lexer);
     if(expr == NULL)
     {
-        AUG_INPUT_ERROR(lexer->input, "Index operator missing index value");
+        aug_log_input_error(lexer->input, "Index operator missing index value");
         return NULL;
     }
 
@@ -1524,7 +1535,7 @@ aug_ast* aug_parse_get_element(aug_lexer* lexer)
     if(lexer->curr.id != AUG_TOKEN_RBRACKET)
     {
         aug_ast_delete(element);
-        AUG_INPUT_ERROR(lexer->input, "Index operator missing closing bracket");
+        aug_log_input_error(lexer->input, "Index operator missing closing bracket");
         return NULL;
     }
 
@@ -1586,7 +1597,7 @@ aug_ast* aug_parse_value(aug_lexer* lexer)
         }
         else
         {
-            AUG_INPUT_ERROR(lexer->input, "Expression missing closing parentheses");
+            aug_log_input_error(lexer->input, "Expression missing closing parentheses");
             aug_ast_delete(value);    
             value = NULL;
         }
@@ -1606,7 +1617,7 @@ aug_ast* aug_parse_stmt_expr(aug_lexer* lexer)
     if(lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(expr);
-        AUG_INPUT_ERROR(lexer->input,  "Missing semicolon at end of expression");
+        aug_log_input_error(lexer->input,  "Missing semicolon at end of expression");
         return NULL;
     }
 
@@ -1626,7 +1637,7 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
 
     if(lexer->curr.id != AUG_TOKEN_NAME)
     {
-        AUG_INPUT_ERROR(lexer->input,  "Variable assignment expected name");
+        aug_log_input_error(lexer->input,  "Variable assignment expected name");
         return NULL;
     }
 
@@ -1644,7 +1655,7 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
     if(lexer->curr.id != AUG_TOKEN_ASSIGN)
     {
         aug_token_reset(&name_token);
-        AUG_INPUT_ERROR(lexer->input,  "Variable assignment expected \"=\" or ;");
+        aug_log_input_error(lexer->input,  "Variable assignment expected \"=\" or ;");
         return NULL;
     }
 
@@ -1654,14 +1665,14 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
     if(expr == NULL)
     {
         aug_token_reset(&name_token);
-        AUG_INPUT_ERROR(lexer->input,  "Variable assignment expected expression after \"=\"");
+        aug_log_input_error(lexer->input,  "Variable assignment expected expression after \"=\"");
         return NULL;
     }
     if(lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_token_reset(&name_token);
         aug_ast_delete(expr);
-        AUG_INPUT_ERROR(lexer->input,  "Variable assignment missing semicolon at end of expression");
+        aug_log_input_error(lexer->input,  "Variable assignment missing semicolon at end of expression");
         return NULL;
     }
 
@@ -1700,7 +1711,7 @@ aug_ast* aug_parse_stmt_assign_var(aug_lexer* lexer)
     if(expr == NULL)
     {
         aug_token_reset(&name_token);
-        AUG_INPUT_ERROR(lexer->input,  "Assignment expected expression after \"=\"");
+        aug_log_input_error(lexer->input,  "Assignment expected expression after \"=\"");
         return NULL;
     }
 
@@ -1708,7 +1719,7 @@ aug_ast* aug_parse_stmt_assign_var(aug_lexer* lexer)
     {
         aug_token_reset(&name_token);
         aug_ast_delete(expr);
-        AUG_INPUT_ERROR(lexer->input,  "Missing semicolon at end of expression");
+        aug_log_input_error(lexer->input,  "Missing semicolon at end of expression");
         return NULL;
     }
 
@@ -1767,7 +1778,7 @@ aug_ast* aug_parse_stmt_if_else(aug_lexer* lexer, aug_ast* expr, aug_ast* block)
         if(else_block == NULL)
         {
             aug_ast_delete(if_else_stmt);
-            AUG_INPUT_ERROR(lexer->input,  "If Else statement missing block");
+            aug_log_input_error(lexer->input,  "If Else statement missing block");
             return NULL;
         }
         if_else_stmt->children[2] = else_block;
@@ -1786,7 +1797,7 @@ aug_ast* aug_parse_stmt_if(aug_lexer* lexer)
     aug_ast* expr = aug_parse_expr(lexer);
     if(expr == NULL)
     {
-        AUG_INPUT_ERROR(lexer->input,  "If statement missing expression");
+        aug_log_input_error(lexer->input,  "If statement missing expression");
         return NULL;      
     }
 
@@ -1794,7 +1805,7 @@ aug_ast* aug_parse_stmt_if(aug_lexer* lexer)
     if(block == NULL)
     {
         aug_ast_delete(expr);
-        AUG_INPUT_ERROR(lexer->input,  "If statement missing block");
+        aug_log_input_error(lexer->input,  "If statement missing block");
         return NULL;
     }
 
@@ -1819,7 +1830,7 @@ aug_ast* aug_parse_stmt_while(aug_lexer* lexer)
     aug_ast* expr = aug_parse_expr(lexer);
     if(expr == NULL)
     {
-        AUG_INPUT_ERROR(lexer->input,  "While statement missing expression");
+        aug_log_input_error(lexer->input,  "While statement missing expression");
         return NULL;
     }
 
@@ -1827,7 +1838,7 @@ aug_ast* aug_parse_stmt_while(aug_lexer* lexer)
     if(block == NULL)
     {
         aug_ast_delete(expr);
-        AUG_INPUT_ERROR(lexer->input,  "While statement missing block");
+        aug_log_input_error(lexer->input,  "While statement missing block");
         return NULL;
     }
 
@@ -1842,7 +1853,7 @@ aug_ast* aug_parse_param_list(aug_lexer* lexer)
 {
     if(lexer->curr.id != AUG_TOKEN_LPAREN)
     {
-        AUG_INPUT_ERROR(lexer->input,  "Missing opening parentheses in function parameter list");
+        aug_log_input_error(lexer->input,  "Missing opening parentheses in function parameter list");
         return NULL;
     }
 
@@ -1862,12 +1873,12 @@ aug_ast* aug_parse_param_list(aug_lexer* lexer)
 
             if(lexer->curr.id != AUG_TOKEN_NAME)
             {
-                AUG_INPUT_ERROR(lexer->input,  "Invalid function parameter. Expected parameter name");
+                aug_log_input_error(lexer->input,  "Invalid function parameter. Expected parameter name");
                 aug_ast_delete(param_list);
                 return NULL;
             }
 
-            aug_ast* param = aug_ast_new(AUG_AST_PARAM, aug_token_copy(lexer->curr));
+            param = aug_ast_new(AUG_AST_PARAM, aug_token_copy(lexer->curr));
             aug_ast_add(param_list, param);
 
             aug_lexer_move(lexer); // eat NAME
@@ -1876,7 +1887,7 @@ aug_ast* aug_parse_param_list(aug_lexer* lexer)
 
     if(lexer->curr.id != AUG_TOKEN_RPAREN)
     {
-        AUG_INPUT_ERROR(lexer->input,  "Missing closing parentheses in function parameter list");
+        aug_log_input_error(lexer->input,  "Missing closing parentheses in function parameter list");
         aug_ast_delete(param_list);
         return NULL;
     }
@@ -1895,7 +1906,7 @@ aug_ast* aug_parse_stmt_func(aug_lexer* lexer)
 
     if(lexer->curr.id != AUG_TOKEN_NAME)
     {
-        AUG_INPUT_ERROR(lexer->input,  "Missing name in function definition");
+        aug_log_input_error(lexer->input,  "Missing name in function definition");
         return NULL;
     }
 
@@ -1941,7 +1952,7 @@ aug_ast* aug_parse_stmt_return(aug_lexer* lexer)
     if(lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_ast_delete(return_stmt);
-        AUG_INPUT_ERROR(lexer->input,  "Missing semicolon at end of expression");
+        aug_log_input_error(lexer->input,  "Missing semicolon at end of expression");
         return NULL;
     }
 
@@ -1991,7 +2002,7 @@ aug_ast* aug_parse_block(aug_lexer* lexer)
 {
     if(lexer->curr.id != AUG_TOKEN_LBRACE)
     {
-        AUG_INPUT_ERROR(lexer->input,  "Block missing opening \"{\"");
+        aug_log_input_error(lexer->input,  "Block missing opening \"{\"");
         return NULL;
     }
     aug_lexer_move(lexer); // eat LBRACE
@@ -2006,7 +2017,7 @@ aug_ast* aug_parse_block(aug_lexer* lexer)
 
     if(lexer->curr.id != AUG_TOKEN_RBRACE)
     {
-        AUG_INPUT_ERROR(lexer->input,  "Block missing closing \"}\"");
+        aug_log_input_error(lexer->input,  "Block missing closing \"}\"");
         aug_ast_delete(block);
         return NULL;
     }
@@ -2038,7 +2049,7 @@ aug_ast* aug_parse_root(aug_lexer* lexer)
     return root;
 }
 
-aug_ast* aug_parse(aug_vm* vm, aug_input* input)
+aug_ast* aug_parse(aug_input* input)
 {
     if(input == NULL)
         return NULL;
@@ -2215,7 +2226,9 @@ typedef struct aug_ir
     bool valid;
 
     // Debug table, index from bytecode addr
+#ifdef AUG_DEBUG_SYMBOLS
     aug_debug_symbols* debug_symbols;
+#endif // AUG_DEBUG_SYMBOLS
 
 } aug_ir;
 
@@ -2228,7 +2241,10 @@ static inline aug_ir* aug_ir_new(aug_input* input)
     ir->bytecode_offset = 0;
     ir->frame_stack =  aug_ir_frame_stack_new(1);
     ir->operations = aug_ir_operation_array_new(1);
+
+#ifdef AUG_DEBUG_SYMBOLS
     ir->debug_symbols = aug_debug_symbols_new(1);
+#endif // AUG_DEBUG_SYMBOLS
 
     return ir;
 }
@@ -2237,9 +2253,12 @@ static inline void aug_ir_delete(aug_ir* ir)
 {
     aug_ir_operation_array_delete(&ir->operations);
     aug_ir_frame_stack_delete(&ir->frame_stack);
-    
+ 
     aug_symtable_decref(ir->globals);
+
+#ifdef AUG_DEBUG_SYMBOLS
     aug_debug_symbols_decref(ir->debug_symbols);
+#endif // AUG_DEBUG_SYMBOLS
 
     AUG_FREE(ir);
 }
@@ -2446,11 +2465,14 @@ static inline void aug_ir_pop_scope(aug_ir*ir)
 
 static inline void aug_ir_add_debug_symbol(aug_ir* ir, aug_symbol symbol)
 {
+#ifdef AUG_DEBUG_SYMBOLS
     aug_debug_symbol debug_symbol;
     debug_symbol.symbol = symbol;
     debug_symbol.bytecode_addr = ir->bytecode_offset;
-    aug_string_incref(debug_symbol.symbol.name);
     aug_debug_symbols_set(ir->debug_symbols, debug_symbol);
+#else 
+    (void)ir; (void)symbol;
+#endif // AUG_DEBUG_SYMBOLS
 }
 
 static inline bool aug_ir_set_var(aug_ir*ir, aug_string* var_name)
@@ -2734,6 +2756,24 @@ float aug_get_float(const aug_value* value)
         return value->f;
     }
     return 0.0f;
+}
+
+const char* aug_get_type_label(const aug_value* value)
+{
+    if (value == NULL) return "null";
+    switch (value->type)
+    {
+    case AUG_NONE:      return "none";
+    case AUG_BOOL:      return "bool";
+    case AUG_INT:       return "int";
+    case AUG_CHAR:      return "char";
+    case AUG_FLOAT:     return "flaot";
+    case AUG_STRING:    return "string";
+    case AUG_OBJECT:    return "object";
+    case AUG_ARRAY:     return "array";
+    case AUG_FUNCTION:  return "function";
+    }
+    return NULL;
 }
 
 static inline void aug_decref(aug_value* value)
@@ -3107,26 +3147,29 @@ typedef union aug_vm_bytecode_value
 
 static_assert(sizeof(float) >= sizeof(int), "Ensure bytes array has enough space to contain both int and float data types");
 
-#define AUG_VM_ERROR(vm, ...)                         \
-{                                                     \
-    AUG_LOG_ERROR(vm->error_callback, __VA_ARGS__);    \
-    vm->valid = false;                                 \
-    vm->instruction = NULL;                            \
+void aug_log_vm_error(aug_vm* vm, const char* format, ...)
+{
+    // Do not cascade multiple errors
+    if (vm->instruction == NULL)
+        return;
+    vm->instruction = NULL;
+
+    // Log the source code, or debug symbol if it exists
+
+    va_list args;
+    va_start(args, format);
+    aug_log_error_internal(vm->error_callback, format, args);
+    va_end(args);
 }
 
-#define AUG_VM_UNOP_ERROR(vm, arg, op)                              \
-{                                                                   \
-    AUG_VM_ERROR(vm, "%s %s not defined",                           \
-        op,                                                         \
-        arg ? aug_value_type_labels[(int)arg->type] : "(null)");    \
+void aug_log_vm_unop_error(aug_vm* vm, aug_value* arg, const char* op)
+{
+    aug_log_vm_error(vm, "%s %s not defined", op, aug_get_type_label(arg));
 }
 
-#define AUG_VM_BINOP_ERROR(vm, lhs, rhs, op)                        \
-{                                                                   \
-    AUG_VM_ERROR(vm, "%s %s %s not defined",                        \
-        lhs ? aug_value_type_labels[(int)lhs->type] : "(null)",     \
-        op,                                                         \
-        rhs ? aug_value_type_labels[(int)rhs->type] : "(null)")     \
+void aug_log_vm_binop_error(aug_vm* vm, aug_value* lhs, aug_value* rhs, const char* op)
+{
+    aug_log_vm_error(vm, "%s %s %s not defined", aug_get_type_label(lhs), op, aug_get_type_label(rhs));
 }
 
 static inline aug_value* aug_vm_top(aug_vm* vm)
@@ -3138,8 +3181,7 @@ static inline aug_value* aug_vm_push(aug_vm* vm)
 {
     if(vm->stack_index >= AUG_STACK_SIZE)
     {                                              
-        if(vm->valid)
-            AUG_VM_ERROR(vm, "Stack overflow");      
+        aug_log_vm_error(vm, "Stack overflow");      
         return NULL;                           
     }
     aug_value* top = &vm->stack[vm->stack_index++];
@@ -3157,14 +3199,12 @@ static inline aug_value* aug_vm_get_global(aug_vm* vm, int stack_offset)
 {
     if(stack_offset < 0)
     {
-        if(vm->instruction)
-            AUG_VM_ERROR(vm, "Stack underflow");
+        aug_log_vm_error(vm, "Stack underflow");
         return NULL;
     }
     else if(stack_offset >= AUG_STACK_SIZE)
     {
-        if(vm->instruction)
-            AUG_VM_ERROR(vm, "Stack overflow");
+        aug_log_vm_error(vm, "Stack overflow");
         return NULL;
     }
 
@@ -3233,11 +3273,14 @@ static inline const char* aug_vm_read_bytes(aug_vm* vm)
     return vm->instruction - len;
 }
 
-aug_debug_symbol aug_vm_get_debug_symbol(aug_vm* vm)
+#ifdef  AUG_DEBUG_SYMBOLS
+aug_debug_symbol aug_vm_get_debug_symbol(aug_vm* vm, size_t operand_size)
 {
-    const int addr = vm->instruction - vm->bytecode;
+    // not the -1 is to account for the immediate instruction advance befreo switch statement
+    const int addr = (vm->instruction-1) - operand_size - vm->bytecode;
     return aug_debug_symbols_get(vm->debug_symbols, addr);
 }
+#endif // AUG_DEBUG_SYMBOLS
 
 void aug_vm_startup(aug_vm* vm)
 {
@@ -3257,7 +3300,7 @@ void aug_vm_shutdown(aug_vm* vm)
 
     // Ensure that stack has returned to beginning state
     if(vm->stack_index != 0)
-        AUG_LOG_ERROR(vm->error_callback, "Virtual machine shutdown error. Invalid stack state");
+        aug_log_error(vm->error_callback, "Virtual machine shutdown error. Invalid stack state");
 }
 
 void aug_vm_load_script(aug_vm* vm, const aug_script* script)
@@ -3272,7 +3315,9 @@ void aug_vm_load_script(aug_vm* vm, const aug_script* script)
     
     vm->instruction = vm->bytecode;
     vm->valid = (vm->bytecode != NULL);
+#ifdef  AUG_DEBUG_SYMBOLS
     vm->debug_symbols = script->debug_symbols;
+#endif //AUG_DEBUG_SYMBOLS
 
     if(script->stack_state != NULL)
     {
@@ -3457,7 +3502,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value value;
                 if(!aug_get_element(container, index_expr, &value))    
                 {
-                    AUG_VM_ERROR(vm, "Index of of range error"); // TODO: more descriptive
+                    aug_log_vm_error(vm, "Index of of range error"); // TODO: more descriptive
                     break;  
                 }
 
@@ -3490,7 +3535,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);    
                 if(!aug_add(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "+");
+                    aug_log_vm_binop_error(vm, lhs, rhs, "+");
                 break;
             }
             case AUG_OPCODE_SUB:
@@ -3499,7 +3544,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);    
                 if(!aug_sub(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "-");
+                    aug_log_vm_binop_error(vm, lhs, rhs, "-");
                 break;
             }
             case AUG_OPCODE_MUL:
@@ -3508,7 +3553,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);    
                 if(!aug_mul(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "*");
+                    aug_log_vm_binop_error(vm, lhs, rhs, "*");
                 break;
             }
             case AUG_OPCODE_DIV:
@@ -3517,7 +3562,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);    
                 if(!aug_div(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "/");
+                    aug_log_vm_binop_error(vm, lhs, rhs, "/");
                 break;
             }
             case AUG_OPCODE_POW:
@@ -3526,7 +3571,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if(!aug_pow(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "^");
+                    aug_log_vm_binop_error(vm, lhs, rhs, "^");
                 break;
             }
             case AUG_OPCODE_MOD:
@@ -3535,7 +3580,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if(!aug_mod(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "%%");
+                    aug_log_vm_binop_error(vm, lhs, rhs, "%%");
                 break;
             }
             case AUG_OPCODE_NOT:
@@ -3543,7 +3588,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* arg = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if(!aug_set_bool(target, !aug_get_bool(arg)))
-                    AUG_VM_UNOP_ERROR(vm, arg, "!");
+                    aug_log_vm_unop_error(vm, arg, "!");
                 break;
             }
             case AUG_OPCODE_AND:
@@ -3552,7 +3597,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if(!aug_and(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "&");
+                    aug_log_vm_binop_error(vm, lhs, rhs, "&");
                 break;
             }
             case AUG_OPCODE_OR:
@@ -3561,7 +3606,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if(!aug_or(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "|");
+                    aug_log_vm_binop_error(vm, lhs, rhs, "|");
                 break;
             }
             case AUG_OPCODE_LT:
@@ -3570,7 +3615,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if(!aug_lt(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "<");
+                    aug_log_vm_binop_error(vm, lhs, rhs, "<");
                 break;
             }
             case AUG_OPCODE_LTE:
@@ -3579,7 +3624,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if(!aug_lte(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "<=");
+                    aug_log_vm_binop_error(vm, lhs, rhs, "<=");
                 break;
             }
             case AUG_OPCODE_GT:
@@ -3588,7 +3633,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if(!aug_gt(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, ">");
+                    aug_log_vm_binop_error(vm, lhs, rhs, ">");
                 break;
             }
             case AUG_OPCODE_GTE:
@@ -3597,7 +3642,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if(!aug_gte(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, ">=");
+                    aug_log_vm_binop_error(vm, lhs, rhs, ">=");
                 break;
             }
             case AUG_OPCODE_EQ:
@@ -3606,7 +3651,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if(!aug_eq(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "==");
+                    aug_log_vm_binop_error(vm, lhs, rhs, "==");
                 break;
             }
             case AUG_OPCODE_NEQ:
@@ -3615,7 +3660,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if(!aug_neq(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "!=");
+                    aug_log_vm_binop_error(vm, lhs, rhs, "!=");
                 break;
             }
             case AUG_OPCODE_APPROXEQ:
@@ -3624,7 +3669,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* lhs = aug_vm_pop(vm);
                 aug_value* target = aug_vm_push(vm);
                 if(!aug_approxeq(target, lhs, rhs))
-                    AUG_VM_BINOP_ERROR(vm, lhs, rhs, "~=");
+                    aug_log_vm_binop_error(vm, lhs, rhs, "~=");
                 break;
             }
             case AUG_OPCODE_JUMP:
@@ -3678,15 +3723,12 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* local = aug_vm_get_local(vm, stack_offset);
                 if(local == NULL || local->type != AUG_FUNCTION)
                 {
-                    aug_string* sym_name = aug_vm_get_debug_symbol(vm).symbol.name;
-                    if (sym_name == NULL)
-                    {
-                        AUG_VM_ERROR(vm, "Variable %s can not be called as a function", sym_name->buffer);
-                    }
-                    else
-                    {
-                        AUG_VM_ERROR(vm, "Anonymous local value can not be called as a function");
-                    }
+#ifdef  AUG_DEBUG_SYMBOLS
+                    aug_string* sym_name = aug_vm_get_debug_symbol(vm, sizeof(int)).symbol.name;
+#else 
+                    aug_string* sym_name = NULL;
+#endif //AUG_DEBUG_SYMBOLS
+                    aug_log_vm_error(vm, "Local variable %s can not be called as a function", sym_name ? sym_name->buffer : "(anonymous)");
                     break;
                 }
 
@@ -3701,15 +3743,13 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* global = aug_vm_get_global(vm, stack_offset);
                 if(global == NULL || global->type != AUG_FUNCTION)
                 {                    
-                    aug_string* sym_name = aug_vm_get_debug_symbol(vm).symbol.name;
-                    if (sym_name == NULL)
-                    {
-                        AUG_VM_ERROR(vm, "Variable %s can not be called as a function", sym_name->buffer);
-                    }
-                    else
-                    {
-                        AUG_VM_ERROR(vm, "Anonymous global value can not be called as a function");
-                    }
+#ifdef  AUG_DEBUG_SYMBOLS
+                    aug_string* sym_name = aug_vm_get_debug_symbol(vm, sizeof(int)).symbol.name;
+#else 
+                    aug_string* sym_name = NULL;
+#endif //AUG_DEBUG_SYMBOLS
+                    aug_log_vm_error(vm, "Global variable %s can not be called as a function", sym_name ? sym_name->buffer : "(anonymous)");
+                    break;
                     break;
                 }
 
@@ -3724,7 +3764,7 @@ void aug_vm_execute(aug_vm* vm)
                 {
                     aug_decref(func_index_value);
 
-                    AUG_VM_ERROR(vm, "External Function Call expected function index to be pushed on stack");
+                    aug_log_vm_error(vm, "External Function Call expected function index to be pushed on stack");
                     break;                    
                 }
 
@@ -3756,7 +3796,7 @@ void aug_vm_execute(aug_vm* vm)
                 }
                 else
                 {
-                    AUG_VM_ERROR(vm, "External Function Called at index %d not registered", func_index);
+                    aug_log_vm_error(vm, "External Function Called at index %d not registered", func_index);
                 }
 
                 // Cleanup arguments
@@ -3776,15 +3816,12 @@ void aug_vm_execute(aug_vm* vm)
                 const int param_count = aug_vm_read_int(vm);
                 if (vm->arg_count != param_count)
                 {
-                    aug_string* sym_name = aug_vm_get_debug_symbol(vm).symbol.name;
-                    if (sym_name == NULL)
-                    {
-                        AUG_VM_ERROR(vm, "Incorrect number of arguments passed to %s function. Received %d expected %d ", sym_name->buffer, vm->arg_count, param_count);
-                    }
-                    else
-                    {
-                        AUG_VM_ERROR(vm, "Incorrect number of arguments passed to anonymous function. Received %d expected %d ", vm->arg_count, param_count);
-                    }
+#ifdef  AUG_DEBUG_SYMBOLS
+                    aug_string* sym_name = aug_vm_get_debug_symbol(vm, sizeof(int)).symbol.name;
+#else 
+                    aug_string* sym_name = NULL;
+#endif //AUG_DEBUG_SYMBOLS
+                    aug_log_vm_error(vm, "Incorrect number of arguments passed to %s function. Received %d expected %d ", sym_name ? sym_name->buffer : "anonymous", vm->arg_count, param_count);
                     break;
                 }
                 break;
@@ -3804,7 +3841,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* ret_base = aug_vm_pop(vm);
                 if(ret_base == NULL)
                 {                    
-                    AUG_VM_ERROR(vm, "Calling frame setup incorrectly. Stack missing stack base");
+                    aug_log_vm_error(vm, "Calling frame setup incorrectly. Stack missing stack base");
                     break;
                 }
 
@@ -3815,7 +3852,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* ret_addr = aug_vm_pop(vm);
                 if(ret_addr == NULL)
                 {                    
-                    AUG_VM_ERROR(vm, "Calling frame setup incorrectly. Stack missing return address");
+                    aug_log_vm_error(vm, "Calling frame setup incorrectly. Stack missing return address");
                     break;
                 }
                 
@@ -3833,7 +3870,7 @@ void aug_vm_execute(aug_vm* vm)
                 break;
             }
             default:
-                // UNSUPPORTED!!!!
+                assert(0);
             break;
         }
 
@@ -4000,7 +4037,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             if(symbol.type == AUG_SYM_NONE)
             {
                 ir->valid = false;
-                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Variable %s not defined in current block", token_data->buffer);
+                aug_log_input_error_at(ir->input, &token.pos, "Variable %s not defined in current block", token_data->buffer);
                 return;
             }
 
@@ -4107,7 +4144,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             else if(symbol.type == AUG_SYM_FUNC)
             {
                 ir->valid = false;
-                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Can not assign function %s to a value", token_data->buffer);
+                aug_log_input_error_at(ir->input, &token.pos, "Can not assign function %s to a value", token_data->buffer);
                 break;
             }
 
@@ -4135,7 +4172,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             if(symbol.offset != AUG_OPCODE_INVALID)
             {
                 ir->valid = false;
-                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Variable %s already defined in block", token_data->buffer);
+                aug_log_input_error_at(ir->input, &token.pos, "Variable %s already defined in block", token_data->buffer);
                 break;
             }
 
@@ -4242,7 +4279,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 if(symbol.type == AUG_SYM_FUNC && symbol.argc != arg_count)
                 {
                     ir->valid = false;
-                    AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Function Call %s passed %d arguments, expected %d", token_data->buffer, arg_count, symbol.argc);
+                    aug_log_input_error_at(ir->input, &token.pos, "Function Call %s passed %d arguments, expected %d", token_data->buffer, arg_count, symbol.argc);
                 }
                 else
                 {
@@ -4299,7 +4336,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             if(func_index == -1)
             {
                 ir->valid = false;
-                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Function %s not defined", token_data->buffer);
+                aug_log_input_error_at(ir->input, &token.pos, "Function %s not defined", token_data->buffer);
                 break;
             }
             for(i = arg_count - 1; i >= 0; --i)
@@ -4356,7 +4393,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             if(!aug_ir_set_func(ir, token_data, param_count))
             {
                 ir->valid = false;
-                AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Function %s already defined", token_data->buffer);
+                aug_log_input_error_at(ir->input, &token.pos, "Function %s already defined", token_data->buffer);
                 break;
             }
 
@@ -4435,8 +4472,11 @@ char* aug_ir_to_bytecode(aug_ir* ir)
     return bytecode;
 }
 
-// -------------------------------------- API ---------------------------------------------// 
-aug_script* aug_script_new(aug_symtable* globals, aug_debug_symbols* debug_symbols, char* bytecode)
+aug_script* aug_script_new(aug_symtable* globals, char* bytecode
+#ifdef  AUG_DEBUG_SYMBOLS
+    , aug_debug_symbols* debug_symbols
+#endif //AUG_DEBUG_SYMBOLS
+)
 {
     aug_script* script = AUG_ALLOC(aug_script);
     script->stack_state = NULL;
@@ -4445,8 +4485,11 @@ aug_script* aug_script_new(aug_symtable* globals, aug_debug_symbols* debug_symbo
     script->globals = globals;
     aug_symtable_incref(script->globals);
 
+#ifdef  AUG_DEBUG_SYMBOLS
     script->debug_symbols = debug_symbols;
     aug_debug_symbols_incref(script->debug_symbols);
+#endif //AUG_DEBUG_SYMBOLS
+
     return script;
 }
 
@@ -4463,8 +4506,11 @@ void aug_script_delete(aug_script* script)
             aug_decref(value);
         }
     }
-    aug_symtable_decref(script->globals);
+    script->globals = aug_symtable_decref(script->globals);
     script->stack_state = aug_array_decref(script->stack_state);
+#ifdef  AUG_DEBUG_SYMBOLS
+    script->debug_symbols = aug_debug_symbols_decref(script->debug_symbols);
+#endif //AUG_DEBUG_SYMBOLS
 
     if(script->bytecode != NULL)
         AUG_FREE_ARRAY(script->bytecode);
@@ -4539,13 +4585,12 @@ aug_script* aug_compile(aug_vm* vm, const char* filename)
         return NULL;
 
     // Parse file
-    aug_ast* root = aug_parse(vm, input);
+    aug_ast* root = aug_parse(input);
     if(root == NULL)
     {
         aug_input_close(input);
         return NULL;
     }
-
 
     // Generate IR
     aug_ir* ir = aug_ir_new(input);
@@ -4553,7 +4598,11 @@ aug_script* aug_compile(aug_vm* vm, const char* filename)
 
     // Load script
     char* bytecode = aug_ir_to_bytecode(ir);
-    aug_script* script = aug_script_new(ir->globals, ir->debug_symbols, bytecode);
+    aug_script* script = aug_script_new(ir->globals, bytecode
+#ifdef  AUG_DEBUG_SYMBOLS
+        , ir->debug_symbols
+#endif //AUG_DEBUG_SYMBOLS
+    );
     
     // Cleanup 
     aug_ir_delete(ir);
@@ -4602,7 +4651,7 @@ aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, i
     aug_symbol symbol = aug_symtable_get_bytes(script->globals, func_name);
     if(symbol.type == AUG_SYM_NONE)
     {
-        AUG_LOG_ERROR(vm->error_callback, "Function %s not defined", func_name);
+        aug_log_error(vm->error_callback, "Function %s not defined", func_name);
         return ret_value;
     }
 
@@ -4612,18 +4661,18 @@ aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, i
             break;
         case AUG_SYM_VAR:
         {
-            AUG_LOG_ERROR(vm->error_callback, "Can not call variable %s a function", func_name);
+            aug_log_error(vm->error_callback, "Can not call variable %s a function", func_name);
             return ret_value;
         }
         default:
         {
-            AUG_LOG_ERROR(vm->error_callback, "Symbol %s not defined as a function", func_name);
+            aug_log_error(vm->error_callback, "Symbol %s not defined as a function", func_name);
             return ret_value;
         }
     }
     if(symbol.argc != argc)
     {
-        AUG_LOG_ERROR(vm->error_callback, "Function %s passed %d arguments, expected %d", func_name, argc, symbol.argc);
+        aug_log_error(vm->error_callback, "Function %s passed %d arguments, expected %d", func_name, argc, symbol.argc);
         return ret_value;
     }
 
@@ -4926,6 +4975,8 @@ aug_symbol aug_symtable_get_bytes(aug_symtable* symtable, const char* name)
 }
 
 // --------------------------------------------------- Debug Symtable ---------------------------- //
+#ifdef  AUG_DEBUG_SYMBOLS
+
 aug_debug_symbols* aug_debug_symbols_new(size_t size)
 {
     aug_debug_symbols* symtable = AUG_ALLOC(aug_debug_symbols);
@@ -4991,6 +5042,8 @@ aug_debug_symbol aug_debug_symbols_get(aug_debug_symbols* symtable, int bytecode
     debug_symbol.symbol.type = AUG_SYM_NONE;
     return debug_symbol;
 }
+
+#endif //AUG_DEBUG_SYMBOLS
 
 #ifdef __cplusplus
 } // extern C
