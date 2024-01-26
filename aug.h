@@ -156,6 +156,9 @@ typedef struct aug_value
     };
 } aug_value;
 
+typedef void(aug_error_function)(const char* /*msg*/);
+typedef aug_value /*return*/(aug_extension)(int argc, aug_value* /*args*/);
+
 aug_value aug_none();
 
 bool aug_get_bool(const aug_value* value);
@@ -212,12 +215,35 @@ bool aug_symtable_set(aug_symtable* symtable, aug_symbol symbol);
 aug_symbol aug_symtable_get(aug_symtable* symtable, aug_string* name);
 aug_symbol aug_symtable_get_bytes(aug_symtable* symtable, const char* name);
 
+typedef struct aug_debug_symbol
+{
+    int bytecode_addr;
+    aug_symbol symbol;
+} aug_debug_symbol;
+
+typedef struct aug_debug_symbols
+{
+    aug_debug_symbol* buffer;
+    int ref_count;
+    size_t capacity;
+    size_t length;
+} aug_debug_symbols;
+
+aug_debug_symbols* aug_debug_symbols_new(size_t size);
+void aug_debug_symbols_incref(aug_debug_symbols* symtable);
+aug_debug_symbols* aug_debug_symbols_decref(aug_debug_symbols* symtable);
+void  aug_debug_symbols_resize(aug_debug_symbols* symtable, size_t size);
+bool aug_debug_symbols_set(aug_debug_symbols* symtable, aug_debug_symbol debug_symbol);
+aug_debug_symbol aug_debug_symbols_get(aug_debug_symbols* symtable, int bytecode_addr);
+
 // Represents a "compiled" script
 typedef struct aug_script
 {
     aug_symtable* globals;
     char* bytecode;
     aug_array* stack_state;
+
+    aug_debug_symbols* debug_symbols;
 } aug_script;
 
 // Calling frames are used to presize and access parameters and local variables from the stack within a calling context
@@ -232,17 +258,14 @@ typedef struct aug_frame
     const char* instruction; 
 } aug_frame;
 
-typedef void(aug_error_function)(const char* /*msg*/);
-typedef aug_value /*return*/ (aug_extension)(int argc, aug_value* /*args*/);
-
 // Running instance of the virtual machine
 typedef struct aug_vm
 {
     aug_error_function* error_callback;
     bool valid;
 
-    const char* instruction;
-    const char* bytecode;
+    const char* instruction; // Weak pointer to bytecode
+    const char* bytecode;    // Weak pointer to script bytecode
  
     aug_value stack[AUG_STACK_SIZE];
     int stack_index; // Current position on stack (ESP)
@@ -256,7 +279,7 @@ typedef struct aug_vm
     aug_string* extension_names[AUG_EXTENSION_SIZE]; 
     int extension_count;
 
-    // TODO: debug symtable from addr to func name / variable offsets
+    aug_debug_symbols* debug_symbols; // Weak pointer to script debug_symbols
 } aug_vm;
 
 // VM Must call both startup before using the VM. When done, must call shutdown.
@@ -365,7 +388,7 @@ type* name##_at(const name* container, size_t index)                            
 type* name##_back(const name* container)                                                    \
 {                                                                                           \
     return container->length > 0 ? &container->buffer[container->length - 1] : NULL;        \
-}                                                                                           \
+}
 
 // --------------------------------------- Input/Logging ---------------------------------------//
 
@@ -2015,54 +2038,6 @@ aug_ast* aug_parse_root(aug_lexer* lexer)
     return root;
 }
 
-/*
-Syntax:
-    block := { stmts }
-
-    stmt := stmt_expr
-            | stmt_assign
-            | stmt_expr
-            | stmt_while
-            | stmt_func_def
-
-    stmts := stmt stmts
-            | NULL
-
-    expr := value 
-            | expr BINOP expr 
-            | UNOP expr
-
-    func_call := NAME ( args )
-
-    args := expr args
-            | , expr args
-            | NULL
-
-    value := NAME 
-            | func_call 
-            | NUMBER 
-            | STRING 
-            | ( expr )
-            | [ args ]
-
-    stmt_expr := expr ;
-
-    stmt_assign := VAR NAME = expr ;
-
-    stmt_if := IF block 
-            |  IF block ELSE block 
-            |  IF block ELSE stmt_if
-
-    stmt_while := WHILE expr { stmts }
-
-    params := NAME  params
-            | , NAME params
-            | NULL
-
-    stmt_func_def := FUNC NAME ( params ) block 
-*/
-
-
 aug_ast* aug_parse(aug_vm* vm, aug_input* input)
 {
     if(input == NULL)
@@ -2162,6 +2137,7 @@ static const char* aug_opcode_labels[] =
 // Values pushes onto stack to track function calls. (return address, calling base index)  
 #define AUG_CALL_FRAME_STACK_SIZE 2
 
+
 // -------------------------------------- IR --------------------------------------------// 
 
 typedef enum aug_ir_operand_type
@@ -2215,7 +2191,7 @@ typedef struct aug_ir_frame
 {
     int base_index;
     int arg_count;
-    aug_ir_scope_stack scope_stack; //aug_ir_scope
+    aug_ir_scope_stack scope_stack;
 } aug_ir_frame;
 
 AUG_DEFINE_CONTAINER(aug_ir_frame_stack, aug_ir_frame);
@@ -2226,17 +2202,21 @@ typedef struct aug_ir
     aug_input* input; // weak ref to source file/code
 
     // Transient IR data
-    aug_ir_frame_stack frame_stack; //aug_ir_frame
+    aug_ir_frame_stack frame_stack;
     int label_count;
 
     // Generated data
-    aug_ir_operation_array operations; //aug_ir_operation
+    aug_ir_operation_array operations;
     size_t bytecode_offset;
     
     // Assigned to the outer-most frame's symbol table. 
     // This field is initialized after generation, so not available during the generation pass. 
     aug_symtable* globals;
     bool valid;
+
+    // Debug table, index from bytecode addr
+    aug_debug_symbols* debug_symbols;
+
 } aug_ir;
 
 static inline aug_ir* aug_ir_new(aug_input* input)
@@ -2248,6 +2228,8 @@ static inline aug_ir* aug_ir_new(aug_input* input)
     ir->bytecode_offset = 0;
     ir->frame_stack =  aug_ir_frame_stack_new(1);
     ir->operations = aug_ir_operation_array_new(1);
+    ir->debug_symbols = aug_debug_symbols_new(1);
+
     return ir;
 }
 
@@ -2255,7 +2237,10 @@ static inline void aug_ir_delete(aug_ir* ir)
 {
     aug_ir_operation_array_delete(&ir->operations);
     aug_ir_frame_stack_delete(&ir->frame_stack);
+    
     aug_symtable_decref(ir->globals);
+    aug_debug_symbols_decref(ir->debug_symbols);
+
     AUG_FREE(ir);
 }
 
@@ -2459,6 +2444,15 @@ static inline void aug_ir_pop_scope(aug_ir*ir)
     aug_symtable_decref(scope->symtable);
 }
 
+static inline void aug_ir_add_debug_symbol(aug_ir* ir, aug_symbol symbol)
+{
+    aug_debug_symbol debug_symbol;
+    debug_symbol.symbol = symbol;
+    debug_symbol.bytecode_addr = ir->bytecode_offset;
+    aug_string_incref(debug_symbol.symbol.name);
+    aug_debug_symbols_set(ir->debug_symbols, debug_symbol);
+}
+
 static inline bool aug_ir_set_var(aug_ir*ir, aug_string* var_name)
 {
     aug_ir_scope* scope = aug_ir_current_scope(ir);
@@ -2474,7 +2468,6 @@ static inline bool aug_ir_set_var(aug_ir*ir, aug_string* var_name)
         symbol.scope = AUG_SYM_SCOPE_GLOBAL;
     else
         symbol.scope = AUG_SYM_SCOPE_LOCAL;
-
 
     return aug_symtable_set(scope->symtable, symbol);
 }
@@ -2527,8 +2520,10 @@ static inline aug_symbol aug_ir_get_symbol(aug_ir*ir, aug_string* name)
         {
             aug_ir_scope* scope = aug_ir_scope_stack_at(&frame->scope_stack, j);
             aug_symbol symbol = aug_symtable_get(scope->symtable, name);
-            if(symbol.type != AUG_SYM_NONE)
+            if (symbol.type != AUG_SYM_NONE)
+            {
                 return symbol;
+            }
         }
     }
 
@@ -3238,6 +3233,12 @@ static inline const char* aug_vm_read_bytes(aug_vm* vm)
     return vm->instruction - len;
 }
 
+aug_debug_symbol aug_vm_get_debug_symbol(aug_vm* vm)
+{
+    const int addr = vm->instruction - vm->bytecode;
+    return aug_debug_symbols_get(vm->debug_symbols, addr);
+}
+
 void aug_vm_startup(aug_vm* vm)
 {
     vm->bytecode = NULL;
@@ -3271,6 +3272,7 @@ void aug_vm_load_script(aug_vm* vm, const aug_script* script)
     
     vm->instruction = vm->bytecode;
     vm->valid = (vm->bytecode != NULL);
+    vm->debug_symbols = script->debug_symbols;
 
     if(script->stack_state != NULL)
     {
@@ -3455,7 +3457,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value value;
                 if(!aug_get_element(container, index_expr, &value))    
                 {
-                    AUG_VM_ERROR(vm, "Index error"); // TODO: more descriptive
+                    AUG_VM_ERROR(vm, "Index of of range error"); // TODO: more descriptive
                     break;  
                 }
 
@@ -3675,8 +3677,16 @@ void aug_vm_execute(aug_vm* vm)
                 const int stack_offset = aug_vm_read_int(vm);
                 aug_value* local = aug_vm_get_local(vm, stack_offset);
                 if(local == NULL || local->type != AUG_FUNCTION)
-                {                    
-                    AUG_VM_ERROR(vm, "Local value can not be called as a function");
+                {
+                    aug_string* sym_name = aug_vm_get_debug_symbol(vm).symbol.name;
+                    if (sym_name == NULL)
+                    {
+                        AUG_VM_ERROR(vm, "Variable %s can not be called as a function", sym_name->buffer);
+                    }
+                    else
+                    {
+                        AUG_VM_ERROR(vm, "Anonymous local value can not be called as a function");
+                    }
                     break;
                 }
 
@@ -3691,7 +3701,15 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* global = aug_vm_get_global(vm, stack_offset);
                 if(global == NULL || global->type != AUG_FUNCTION)
                 {                    
-                    AUG_VM_ERROR(vm, "Local value can not be called as a function");
+                    aug_string* sym_name = aug_vm_get_debug_symbol(vm).symbol.name;
+                    if (sym_name == NULL)
+                    {
+                        AUG_VM_ERROR(vm, "Variable %s can not be called as a function", sym_name->buffer);
+                    }
+                    else
+                    {
+                        AUG_VM_ERROR(vm, "Anonymous global value can not be called as a function");
+                    }
                     break;
                 }
 
@@ -3758,7 +3776,15 @@ void aug_vm_execute(aug_vm* vm)
                 const int param_count = aug_vm_read_int(vm);
                 if (vm->arg_count != param_count)
                 {
-                    AUG_VM_ERROR(vm, "Incorrect number of arguments passed to function. Received %d expected %d ",  vm->arg_count, param_count);
+                    aug_string* sym_name = aug_vm_get_debug_symbol(vm).symbol.name;
+                    if (sym_name == NULL)
+                    {
+                        AUG_VM_ERROR(vm, "Incorrect number of arguments passed to %s function. Received %d expected %d ", sym_name->buffer, vm->arg_count, param_count);
+                    }
+                    else
+                    {
+                        AUG_VM_ERROR(vm, "Incorrect number of arguments passed to anonymous function. Received %d expected %d ", vm->arg_count, param_count);
+                    }
                     break;
                 }
                 break;
@@ -3978,6 +4004,8 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 return;
             }
 
+            aug_ir_add_debug_symbol(ir, symbol);
+
             if(symbol.type == AUG_SYM_FUNC)
             {
                 //TODO: create function type
@@ -4066,8 +4094,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
         }
         case AUG_AST_STMT_ASSIGN_VAR:
         {
-            assert(token_data != NULL);
-            assert(children_size == 1); // token = [0]
+            assert(token_data != NULL && children_size == 1); // token = [0]
             
             aug_ast_to_ir(vm, children[0], ir);
 
@@ -4084,6 +4111,8 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 break;
             }
 
+            aug_ir_add_debug_symbol(ir, symbol);
+
             const aug_ir_operand address_operand = aug_ir_operand_from_int(symbol.offset);
             if(symbol.scope == AUG_SYM_SCOPE_GLOBAL)
                 aug_ir_add_operation_arg(ir, AUG_OPCODE_LOAD_GLOBAL, address_operand);
@@ -4093,6 +4122,8 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
         }
         case AUG_AST_STMT_DEFINE_VAR:
         {
+            assert(token_data != NULL);
+
             if(children_size == 1) // token = [0]
                 aug_ast_to_ir(vm, children[0], ir);
             else
@@ -4100,15 +4131,15 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
 
             // Get variable in the current block. If it exists, error out. If it does not exist, set in table
             aug_ir_scope* scope = aug_ir_current_scope(ir);
-            const aug_symbol symbol =  aug_symtable_get(scope->symtable, token_data);
+            aug_symbol symbol =  aug_symtable_get(scope->symtable, token_data);
             if(symbol.offset != AUG_OPCODE_INVALID)
             {
                 ir->valid = false;
                 AUG_INPUT_ERROR_AT(ir->input, &token.pos, "Variable %s already defined in block", token_data->buffer);
                 break;
             }
+
             aug_ir_set_var(ir, token_data);
-        
             break;
         }
         case AUG_AST_STMT_IF:
@@ -4227,15 +4258,19 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                     // TODO: Push arg count, and have the function body check that arg count matches in the vm runtime
                     aug_ir_operand arg_count = aug_ir_operand_from_int(children_size);
                     aug_ir_add_operation_arg(ir, AUG_OPCODE_ARG_COUNT, arg_count);
-
+                                        
                     if(symbol.type == AUG_SYM_FUNC)  
                     {
+                        aug_ir_add_debug_symbol(ir, symbol);
+
                         aug_ir_operand address_operand = aug_ir_operand_from_int(symbol.offset);
                         aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL, address_operand);
                     }
                     if(symbol.type == AUG_SYM_VAR)
                     {
                         const aug_symbol var_symbol = aug_ir_symbol_relative(ir, token_data);
+                        aug_ir_add_debug_symbol(ir, var_symbol);
+
                         aug_ir_operand address_operand = aug_ir_operand_from_int(var_symbol.offset);
                         if(var_symbol.scope == AUG_SYM_SCOPE_GLOBAL)
                             aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL_GLOBAL, address_operand);
@@ -4329,6 +4364,8 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             aug_ir_push_scope(ir);
             aug_ast_to_ir(vm, children[0], ir);
 
+            aug_ir_add_debug_symbol(ir, aug_ir_get_symbol(ir, token_data));
+
             // TODO: Argument count check
             aug_ir_operand param_count_arg = aug_ir_operand_from_int(param_count);
             aug_ir_add_operation_arg(ir, AUG_OPCODE_ENTER, param_count_arg);
@@ -4399,13 +4436,17 @@ char* aug_ir_to_bytecode(aug_ir* ir)
 }
 
 // -------------------------------------- API ---------------------------------------------// 
-aug_script* aug_script_new(aug_symtable* globals, char* bytecode)
+aug_script* aug_script_new(aug_symtable* globals, aug_debug_symbols* debug_symbols, char* bytecode)
 {
     aug_script* script = AUG_ALLOC(aug_script);
     script->stack_state = NULL;
     script->bytecode = bytecode;
+    
     script->globals = globals;
     aug_symtable_incref(script->globals);
+
+    script->debug_symbols = debug_symbols;
+    aug_debug_symbols_incref(script->debug_symbols);
     return script;
 }
 
@@ -4512,13 +4553,12 @@ aug_script* aug_compile(aug_vm* vm, const char* filename)
 
     // Load script
     char* bytecode = aug_ir_to_bytecode(ir);
-    aug_script* script = aug_script_new(ir->globals, bytecode);
+    aug_script* script = aug_script_new(ir->globals, ir->debug_symbols, bytecode);
     
     // Cleanup 
     aug_ir_delete(ir);
     aug_ast_delete(root);
     aug_input_close(input);
-    
     return script;
 }
 
@@ -4883,6 +4923,73 @@ aug_symbol aug_symtable_get_bytes(aug_symtable* symtable, const char* name)
     symbol.type = AUG_SYM_NONE;
     symbol.argc = 0;
     return symbol;
+}
+
+// --------------------------------------------------- Debug Symtable ---------------------------- //
+aug_debug_symbols* aug_debug_symbols_new(size_t size)
+{
+    aug_debug_symbols* symtable = AUG_ALLOC(aug_debug_symbols);
+	symtable->length = 0;
+	symtable->capacity = size; 
+    symtable->ref_count = 1;
+	symtable->buffer = AUG_ALLOC_ARRAY(aug_debug_symbol, symtable->capacity);
+	return symtable;
+}
+
+void aug_debug_symbols_incref(aug_debug_symbols* symtable)
+{
+    if(symtable)
+        ++symtable->ref_count;
+}
+
+aug_debug_symbols* aug_debug_symbols_decref(aug_debug_symbols* symtable)
+{    
+    if(symtable != NULL && --symtable->ref_count == 0)
+    {
+        size_t i;
+        for(i = 0; i < symtable->length; ++i)
+        {
+            aug_debug_symbol debug_symbol = symtable->buffer[i];
+            aug_string_decref(debug_symbol.symbol.name);
+        }
+        AUG_FREE_ARRAY(symtable->buffer);
+        AUG_FREE(symtable);
+        return NULL;
+    }
+    return symtable;
+}
+
+void  aug_debug_symbols_resize(aug_debug_symbols* symtable, size_t size)
+{
+	symtable->capacity = size; 
+	symtable->buffer = AUG_REALLOC_ARRAY(symtable->buffer, aug_debug_symbol, symtable->capacity);
+}
+
+bool aug_debug_symbols_set(aug_debug_symbols* symtable, aug_debug_symbol debug_symbol)
+{
+    if(symtable->length + 1 >= symtable->capacity) 
+        aug_debug_symbols_resize(symtable, 2 * symtable->capacity);
+       
+    aug_debug_symbol new_symbol = debug_symbol;
+    aug_string_incref(new_symbol.symbol.name);
+
+    symtable->buffer[symtable->length++] = new_symbol;
+    return true;
+}
+
+aug_debug_symbol aug_debug_symbols_get(aug_debug_symbols* symtable, int bytecode_addr)
+{
+    size_t i;
+    for(i = 0; i < symtable->length; ++i)
+    {
+        aug_debug_symbol debug_symbol = symtable->buffer[i];
+        if(debug_symbol.bytecode_addr == bytecode_addr)
+            return debug_symbol;
+    }
+    aug_debug_symbol debug_symbol;
+    debug_symbol.symbol.name = NULL;
+    debug_symbol.symbol.type = AUG_SYM_NONE;
+    return debug_symbol;
 }
 
 #ifdef __cplusplus

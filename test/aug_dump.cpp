@@ -171,6 +171,7 @@ void dump_ir(aug_ir* ir)
     {
 		aug_ir_operation* operation = aug_ir_operation_array_at(&ir->operations, i);
 
+
 		printf("%d\t\t%s", (int)operation->bytecode_offset, aug_opcode_labels[(int)operation->opcode]);
 		aug_ir_operand operand = operation->operand;
 		switch (operand.type)
@@ -193,6 +194,9 @@ void dump_ir(aug_ir* ir)
 		case AUG_IR_OPERAND_NONE:
 			break;
 		}
+
+		aug_debug_symbol debug_symbol = aug_debug_symbols_get(ir->debug_symbols, (int)operation->bytecode_offset);
+		if (debug_symbol.symbol.name) printf("(%s)", debug_symbol.symbol.name->buffer);
 		printf("\n");
 	}
 }
