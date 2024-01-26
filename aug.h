@@ -30,17 +30,14 @@ SOFTWARE. */
         #include "aug.h"
 
     Todo: 
-    - Runtime argument checks for function types. Should pass arg count when calling user defined func. 
-        Also create an ASSERT x opcode. generated func def bytecode should assert x on first line 
-        VM should pop and assert that argcount matches function argcount 
     - Create Programs for loading/unloading compiled code. The compiled scripts will also dump symtables to allow aug_call*s
     - Implement for loops
     - Serialize Bytecode to external file. Execute compiled bytecode from file
-    - Serialize debug map to file. Link from bytecode to source file. 
     - Opcodes for iterators, values references etc...
-    - Create bespoke operations array. 
     - Create bespoke hashmap symtable.
     - Implement objects 
+    - Serialize debug symbols to file. Link from bytecode to source file.
+        - Better runtime error handling, add source file and line to debug symbols
 */
 #ifdef __cplusplus
 extern "C" {
@@ -588,8 +585,7 @@ static inline void aug_log_input_error_hint(aug_input* input, const aug_pos* pos
     while (isspace(c) && ++ws_skipped)
         c = fgetc(input->file);
 
-    aug_log_error(input->error_callback, "Error %s:(%d,%d) ",
-        input->filename->buffer, pos->line + 1, pos->col + 1);
+    aug_log_error(input->error_callback, "Syntax Error %s:(%d,%d) ", input->filename->buffer, pos->line + 1, pos->col + 1);
 
     // Draw line
     const int buff_size = 4096;
@@ -606,16 +602,15 @@ static inline void aug_log_input_error_hint(aug_input* input, const aug_pos* pos
 
     // Draw arrow to the error if within buffer
     size_t tok_col = pos->col - ws_skipped;
-    if (tok_col > 0 && tok_col < n - 1)
+    if (tok_col >= 0 && tok_col < n - 1)
     {
         size_t i;
         for (i = 0; i < tok_col; ++i)
             buffer[i] = ' ';
         buffer[tok_col] = '^';
         buffer[tok_col + 1] = '\0';
+        aug_log_error(input->error_callback, "%s", buffer);
     }
-
-    aug_log_error(input->error_callback, "%s", buffer);
 
     // restore state
     fseek(input->file, curr_pos, SEEK_SET);
@@ -3760,15 +3755,21 @@ void aug_vm_execute(aug_vm* vm)
                 if(func_index_value == NULL || func_index_value->type != AUG_INT)
                 {
                     aug_decref(func_index_value);
-
-                    aug_log_vm_error(vm, "External Function Call expected function index to be pushed on stack");
+                    aug_log_vm_error(vm, "External Function call expected function index to be pushed on stack");
                     break;                    
                 }
 
-                const int arg_count = aug_vm_read_int(vm);                
                 const int func_index = func_index_value->i;
+                // Check function call
+                if (func_index < 0 || func_index >= AUG_EXTENSION_SIZE || vm->extensions[func_index] == NULL)
+                {
+                    aug_decref(func_index_value);
+                    aug_log_vm_error(vm, "External Function at index %d not registered", func_index);
+                    break;
+                }
 
                 // Gather arguments
+                const int arg_count = aug_vm_read_int(vm);
                 aug_value* args = AUG_ALLOC_ARRAY(aug_value, arg_count);
                 int i;
                 for(i = arg_count - 1; i >= 0; --i)
@@ -3781,20 +3782,12 @@ void aug_vm_execute(aug_vm* vm)
                         args[arg_count - i - 1] = value;
                     }
                 }
-          
-                // Check function call
-                if(func_index >= 0 && func_index < AUG_EXTENSION_SIZE && vm->extensions[func_index] != NULL)
-                {
-                    // Call the external function. Move return value on to top of stack
-                    aug_value ret_value = vm->extensions[func_index](arg_count, args);
-                    aug_value* top = aug_vm_push(vm);
-                    if(top)
-                        aug_move(top, &ret_value);
-                }
-                else
-                {
-                    aug_log_vm_error(vm, "External Function Called at index %d not registered", func_index);
-                }
+
+                // Call the external function. Move return value on to top of stack
+                aug_value ret_value = vm->extensions[func_index](arg_count, args);
+                aug_value* top = aug_vm_push(vm);
+                if(top)
+                    aug_move(top, &ret_value);
 
                 // Cleanup arguments
                 aug_decref(func_index_value);

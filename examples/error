@@ -6,8 +6,8 @@ func count(a) {
 }
 
 func call_func(callback, x) {
-    return callback(x, 1);
+    return callback(x);
 }
 
 a = call_func(count, 10);
-expect(a == 10, "call_func(count, 1000) = ", a);
+           expect(a == 10, "call_func(count, 1000) = ", a);
