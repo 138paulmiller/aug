@@ -63,7 +63,6 @@ public:
 
 	void run(aug_vm* vm, aug_tester_func* func = nullptr)
 	{
-
 		if (dump)
 			aug_dump_file(vm, filename.c_str());
 
@@ -131,6 +130,9 @@ std::string to_string(const aug_value& value)
         break;
     case AUG_OBJECT:
         return "object";
+	case AUG_FUNCTION:
+        len = snprintf(out, sizeof(out), "function %d", value.i);
+		break;
     case AUG_ARRAY:
     {
         std::string str = "[ ";
@@ -175,6 +177,9 @@ void print(const aug_value& value)
 	case AUG_OBJECT:
 		printf("object");
 		break;
+	case AUG_FUNCTION:
+		printf("function %d", value.i);
+		break;
 	case AUG_ARRAY:
 	{
 		printf("[ ");
@@ -198,6 +203,7 @@ float sum(const aug_value& value, aug_value_type& type)
 	case AUG_BOOL:
 	case AUG_STRING:
 	case AUG_OBJECT:
+	case AUG_FUNCTION:
 		return 0.0f;
 	case AUG_INT:
 		return (float)value.i;

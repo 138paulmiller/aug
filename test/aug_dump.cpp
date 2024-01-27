@@ -178,11 +178,10 @@ void dump_ir(aug_ir* ir)
     size_t i;
    	for(i = 0; i < ir->operations.length; ++i)
     {
-		aug_ir_operation* operation = aug_ir_operation_array_at(&ir->operations, i);
+		aug_ir_operation operation = aug_container_at_type(&ir->operations, aug_ir_operation, i);
 
-
-		printf("%d\t\t%s", (int)operation->bytecode_offset, aug_opcode_labels[(int)operation->opcode]);
-		aug_ir_operand operand = operation->operand;
+		printf("%d\t\t%s", (int)operation.bytecode_offset, aug_opcode_labels[(int)operation.opcode]);
+		aug_ir_operand operand = operation.operand;
 		switch (operand.type)
 		{
 		case AUG_IR_OPERAND_BOOL:
@@ -204,10 +203,8 @@ void dump_ir(aug_ir* ir)
 			break;
 		}
 
-#ifdef AUG_DEBUG_SYMBOLS
-		aug_debug_symbol debug_symbol = aug_debug_symbols_get(ir->debug_symbols, (int)operation->bytecode_offset);
+		aug_debug_symbol debug_symbol = aug_debug_symbols_get(ir->debug_symbols, (int)operation.bytecode_offset);
 		if (debug_symbol.symbol.name) printf("(%s)", debug_symbol.symbol.name->buffer);
-#endif //AUG_DEBUG_SYMBOLS
 		printf("\n");
 	}
 }

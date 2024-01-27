@@ -36,6 +36,8 @@ SOFTWARE. */
     - Opcodes for iterators, values references etc...
     - Create bespoke hashmap symtable.
     - Implement objects 
+        - Custom type registration. create accessors from field offset. allow users to define struct. 
+            Also create an alloc/dealloc interface. Custom Object struct { refcount, void* data; }
     - Serialize debug symbols to file. Link from bytecode to source file.
         - Better runtime error handling, add source file and line to debug symbols
     - Vector Matrix primitive types ?
@@ -322,67 +324,86 @@ extern "C" {
 #endif
 
 #ifndef AUG_ALLOC
-#define AUG_ALLOC(type) (type*)(malloc(sizeof(type)))
+#define AUG_ALLOC(size) malloc(size)
 #endif//AUG_ALLOC
-
-#ifndef AUG_ALLOC_ARRAY
-#define AUG_ALLOC_ARRAY(type, count) (type*)(malloc(sizeof(type)*count))
-#endif//AUG_ALLOC_ARRAY
-
-#ifndef AUG_REALLOC_ARRAY
-#define AUG_REALLOC_ARRAY(ptr, type, count) (type*)(realloc(ptr, sizeof(type)*count))
-#endif//AUG_REALLOC_ARRAY
 
 #ifndef AUG_FREE
 #define AUG_FREE(ptr) free(ptr)
 #endif//AUG_FREE
 
-#ifndef AUG_FREE_ARRAY
-#define AUG_FREE_ARRAY(ptr) free(ptr)
-#endif//AUG_FREE_ARRAY
+#ifndef AUG_REALLOC
+#define AUG_REALLOC(ptr, size) realloc(ptr, size)
+#endif//AUG_REALLOC
 
-#define AUG_DEFINE_ARRAY(name, type)                                                      \
-typedef struct name                                                                       \
-{                                                                                         \
-	type* buffer;                                                                         \
-	size_t capacity;                                                                      \
-	size_t length;                                                                        \
-} name;                                                                                   \
-name name##_new(size_t size)                                                              \
-{                                                                                         \
-    name array;                                                                           \
-    array.length = 0;                                                                     \
-    array.capacity = size;                                                                \
-    array.buffer = AUG_ALLOC_ARRAY(type, array.capacity);                                 \
-    return array;                                                                         \
-}                                                                                         \
-void name##_delete(name* array)                                                           \
-{                                                                                         \
-    AUG_FREE_ARRAY(array->buffer);                                                        \
-    array->buffer = NULL;                                                                 \
-}                                                                                         \
-void name##_resize(name* array, size_t size)                                              \
-{                                                                                         \
-    array->capacity = size;                                                               \
-    array->buffer = AUG_REALLOC_ARRAY(array->buffer, type, array->capacity);              \
-}                                                                                         \
-void name##_push(name* array, type data)                                                  \
-{                                                                                         \
-    if (array->length+1 >= array->capacity) name##_resize(array, 2 * array->capacity);    \
-    array->buffer[array->length++] = data;                                                \
-}                                                                                         \
-type* name##_pop(name* array)                                                             \
-{                                                                                         \
-    return array->length > 0 ? &array->buffer[--array->length] : NULL;                    \
-}                                                                                         \
-type* name##_at(const name* array, size_t index)                                          \
-{                                                                                         \
-    return index >= 0 && index < array->length ? &array->buffer[index] : NULL;            \
-}                                                                                         \
-type* name##_back(const name* array)                                                      \
-{                                                                                         \
-    return array->length > 0 ? &array->buffer[array->length - 1] : NULL;                  \
+typedef struct aug_container
+{
+    char* buffer;  
+	size_t capacity;
+	size_t length;  
+    size_t element_size;
+} aug_container;
+
+aug_container aug_container_new(size_t size, size_t element_size)    
+{
+    aug_container array;   
+    array.length = 0;       
+    array.capacity = size;   
+    array.element_size = element_size; 
+    array.buffer = (char*)AUG_ALLOC(element_size * array.capacity);
+    return array;   
+}        
+
+void aug_container_delete(aug_container* array)   
+{
+    AUG_FREE(array->buffer);       
+    array->buffer = NULL;    
 }
+
+void aug_container_resize(aug_container* array, size_t size)    
+{
+    array->capacity = size;    
+    array->buffer = (char*)AUG_REALLOC(array->buffer, array->element_size * array->capacity); 
+}
+
+char* aug_container_push(aug_container* array)    
+{
+    if (array->length+1 >= array->capacity) 
+        aug_container_resize(array, 2 * array->capacity);
+    return &array->buffer[array->length++ * array->element_size];    
+}
+
+char* aug_container_pop(aug_container* array)   
+{        
+    return array->length > 0 ? &array->buffer[(--array->length) * array->element_size] : NULL;    
+}        
+
+char* aug_container_at(const aug_container* array, size_t index)   
+{        
+    return index >= 0 && index < array->length ? &array->buffer[index * array->element_size] : NULL;    
+}        
+
+char* aug_container_back(const aug_container* array)   
+{        
+    return array->length > 0 ? &array->buffer[(array->length - 1) * array->element_size] : NULL;    
+}
+
+#define aug_container_new_type(container, type) \
+	aug_container_new(container, sizeof(type))
+
+#define aug_container_push_type(container, type, data) \
+	*((type*)aug_container_push(container)) = data
+
+#define aug_container_pop_type(container, type) \
+	*((type*)aug_container_pop(container))
+
+#define aug_container_at_type(container, type, index) \
+	*((type*)aug_container_at(container, index))
+
+#define aug_container_ptr_type(container, type, index) \
+	((type*)aug_container_at(container, index))
+
+#define aug_container_back_type(container, type) \
+	*((type*)aug_container_back(container))
 
 // --------------------------------------- Logging ---------------------------------------//
 
@@ -512,7 +533,7 @@ aug_input* aug_input_open(const char* filename, aug_error_function* error_callba
         return NULL;
     }
 
-    aug_input* input = AUG_ALLOC(aug_input);
+    aug_input* input = (aug_input*)AUG_ALLOC(sizeof(aug_input));
     input->error_callback = error_callback;
     input->file = file;
     input->valid = true;
@@ -772,7 +793,7 @@ aug_token aug_token_copy(aug_token token)
 
 aug_lexer* aug_lexer_new(aug_input* input)
 {
-    aug_lexer* lexer = AUG_ALLOC(aug_lexer);
+    aug_lexer* lexer = (aug_lexer*)AUG_ALLOC(sizeof(aug_lexer));
     lexer->input = input;
     lexer->comment_symbol = '#';
 
@@ -1269,7 +1290,7 @@ aug_ast* aug_parse_block(aug_lexer* lexer);
 
 aug_ast* aug_ast_new(aug_ast_id id, aug_token token)
 {
-    aug_ast* node = AUG_ALLOC(aug_ast);
+    aug_ast* node = (aug_ast*)AUG_ALLOC(sizeof(aug_ast));
     node->id = id;
     node->token = token;
     node->children = NULL;
@@ -1287,7 +1308,7 @@ static inline void aug_ast_delete(aug_ast* node)
         int i;
         for(i = 0; i < node->children_size; ++i)
             aug_ast_delete(node->children[i]);
-        AUG_FREE_ARRAY(node->children);
+        AUG_FREE(node->children);
     }
     aug_token_reset(&node->token);
     AUG_FREE(node);
@@ -1296,7 +1317,7 @@ static inline void aug_ast_delete(aug_ast* node)
 static inline void aug_ast_resize(aug_ast* node, int size)
 {    
     node->children_capacity = size == 0 ? 1 : size;
-    node->children = AUG_REALLOC_ARRAY(node->children, aug_ast*, node->children_capacity);
+    node->children = (aug_ast**)AUG_REALLOC(node->children, sizeof(aug_ast*) * node->children_capacity);
     node->children_size = size;
 }
 
@@ -1305,68 +1326,64 @@ static inline void aug_ast_add(aug_ast* node, aug_ast* child)
     if(node->children_size + 1 >= node->children_capacity)
     {
         node->children_capacity = node->children_capacity == 0 ? 1 : node->children_capacity * 2;
-        node->children = AUG_REALLOC_ARRAY(node->children, aug_ast*, node->children_capacity);
+        node->children = (aug_ast**)AUG_REALLOC(node->children, sizeof(aug_ast*) * node->children_capacity);
     }
     node->children[node->children_size++] = child;
 }
 
 // PARSER =============================================   PARSER   ================================================= PARSER // 
 
-AUG_DEFINE_ARRAY(aug_token_stack, aug_token);
-AUG_DEFINE_ARRAY(aug_expr_stack, aug_ast*);
-
-static inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_token_stack* op_stack, aug_expr_stack* expr_stack)
+static inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_container* op_stack, aug_container* expr_stack)
 {
-    aug_token* next_op = aug_token_stack_pop(op_stack);
+    aug_token next_op = aug_container_pop_type(op_stack, aug_token);
 
-    const int op_argc = next_op->detail->argc;
+    const int op_argc = next_op.detail->argc;
     assert(op_argc == 1 || op_argc == 2); // Only supported operator types
 
     if(expr_stack->length < (size_t)op_argc)
     {
         while(expr_stack->length > 0)
         {
-            aug_ast** expr = aug_expr_stack_pop(expr_stack);
-            aug_ast_delete(*expr);
+            aug_ast* expr = aug_container_pop_type(expr_stack, aug_ast*);
+            aug_ast_delete(expr);
         }
-        aug_log_input_error(lexer->input, "Invalid number of arguments to operator %s", next_op->detail->label);
+        aug_log_input_error(lexer->input, "Invalid number of arguments to operator %s", next_op.detail->label);
         return false;
     }
 
     // Push binary op onto stack
     aug_ast_id id = (op_argc == 2) ? AUG_AST_BINARY_OP : AUG_AST_UNARY_OP;
-    aug_ast* binaryop = aug_ast_new(id, *next_op);
+    aug_ast* binaryop = aug_ast_new(id, next_op);
     aug_ast_resize(binaryop, op_argc);
     
     int i;
     for(i = 0; i < op_argc; ++i)
     {
         // Not, length is checked above, guaranteed to be valid pointer
-        aug_ast** expr = aug_expr_stack_pop(expr_stack);
-        binaryop->children[(op_argc-1) - i] = *expr; // add in reverse
+        aug_ast* expr = aug_container_pop_type(expr_stack, aug_ast*);
+        binaryop->children[(op_argc-1) - i] = expr; // add in reverse
     }
 
-    aug_expr_stack_push(expr_stack, binaryop);
+    aug_container_push_type(expr_stack, aug_ast*, binaryop);
     return true;
 }
 
-static inline void aug_parse_expr_stack_cleanup(aug_token_stack* op_stack, aug_expr_stack* expr_stack)
+static inline void aug_parse_expr_stack_cleanup(aug_container* op_stack, aug_container* expr_stack)
 {
-    aug_token_stack_delete(op_stack);
-
     while(expr_stack->length > 0)
     {
-        aug_ast** expr = aug_expr_stack_pop(expr_stack);
-        aug_ast_delete(*expr);
+        aug_ast* expr = aug_container_pop_type(expr_stack, aug_ast*);
+        aug_ast_delete(expr);
     }
-    aug_expr_stack_delete(expr_stack);
+    aug_container_delete(expr_stack);
+    aug_container_delete(op_stack);
 }
 
 aug_ast* aug_parse_expr(aug_lexer* lexer)
 {
     // Shunting yard algorithm
-    aug_token_stack op_stack = aug_token_stack_new(1);
-    aug_expr_stack expr_stack = aug_expr_stack_new(1);
+    aug_container op_stack = aug_container_new_type(1, aug_token); 
+    aug_container expr_stack = aug_container_new_type(1, aug_ast*); 
     while(lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_token op = lexer->curr;
@@ -1376,14 +1393,13 @@ aug_ast* aug_parse_expr(aug_lexer* lexer)
             // left associate by default (for right, <= becomes <)
             while(op_stack.length)
             {
-                aug_token* next_op = aug_token_stack_back(&op_stack);
-
-                if(next_op->detail->prec < op.detail->prec)
+                aug_token next_op = aug_container_back_type(&op_stack, aug_token);
+                if(next_op.detail->prec < op.detail->prec)
                     break;
                 if(!aug_parse_expr_pop(lexer, &op_stack, &expr_stack))
                     return NULL;
             }
-            aug_token_stack_push(&op_stack, op);
+            aug_container_push_type(&op_stack, aug_token, op);
             aug_lexer_move(lexer);
         }
         else
@@ -1392,15 +1408,15 @@ aug_ast* aug_parse_expr(aug_lexer* lexer)
             if(value == NULL)
                 break;
 
-            aug_expr_stack_push(&expr_stack, value);
+            aug_container_push_type(&expr_stack, aug_ast*, value);
         }
     }
 
     // Not an expression
     if(op_stack.length == 0 && expr_stack.length == 0)
     {
-        aug_token_stack_delete(&op_stack);
-        aug_expr_stack_delete(&expr_stack);
+        aug_container_delete(&op_stack);
+        aug_container_delete(&expr_stack);
         return NULL;
     }
 
@@ -1421,9 +1437,9 @@ aug_ast* aug_parse_expr(aug_lexer* lexer)
         return NULL;
     }
 
-    aug_ast* expr = *aug_expr_stack_back(&expr_stack);
-    aug_token_stack_delete(&op_stack);
-    aug_expr_stack_delete(&expr_stack);
+    aug_ast* expr = aug_container_back_type(&expr_stack, aug_ast*);
+    aug_container_delete(&op_stack);
+    aug_container_delete(&expr_stack);
     return expr;
 }
 
@@ -2180,8 +2196,6 @@ typedef struct aug_ir_operation
     size_t bytecode_offset;
 } aug_ir_operation;
 
-AUG_DEFINE_ARRAY(aug_ir_operation_array, aug_ir_operation);
-
 typedef struct aug_ir_scope
 {
     int base_index;
@@ -2189,16 +2203,12 @@ typedef struct aug_ir_scope
     aug_symtable* symtable;
 } aug_ir_scope;
 
-AUG_DEFINE_ARRAY(aug_ir_scope_stack, aug_ir_scope);
-
 typedef struct aug_ir_frame
 {
     int base_index;
     int arg_count;
-    aug_ir_scope_stack scope_stack;
+    aug_container scope_stack; //type aug_ir_scope
 } aug_ir_frame;
-
-AUG_DEFINE_ARRAY(aug_ir_frame_stack, aug_ir_frame);
 
 // All the blocks within a compilation/translation unit (i.e. file, code literal)
 typedef struct aug_ir
@@ -2206,11 +2216,11 @@ typedef struct aug_ir
     aug_input* input; // weak ref to source file/code
 
     // Transient IR data
-    aug_ir_frame_stack frame_stack;
+    aug_container frame_stack; // type aug_ir_frame
     int label_count;
 
     // Generated data
-    aug_ir_operation_array operations;
+    aug_container operations; // type aug_ir_operation
     size_t bytecode_offset;
     
     // Assigned to the outer-most frame's symbol table. 
@@ -2225,21 +2235,21 @@ typedef struct aug_ir
 
 static inline aug_ir* aug_ir_new(aug_input* input)
 {
-    aug_ir* ir = AUG_ALLOC(aug_ir);
+    aug_ir* ir = (aug_ir*)AUG_ALLOC(sizeof(aug_ir));
     ir->valid = true;
     ir->input = input;
     ir->label_count = 0;
     ir->bytecode_offset = 0;
-    ir->frame_stack =  aug_ir_frame_stack_new(1);
-    ir->operations = aug_ir_operation_array_new(1);
+    ir->frame_stack =  aug_container_new_type(1, aug_ir_frame);
+    ir->operations = aug_container_new_type(1, aug_ir_operation);
     ir->debug_symbols = aug_debug_symbols_new(1);
     return ir;
 }
 
 static inline void aug_ir_delete(aug_ir* ir)
 {
-    aug_ir_operation_array_delete(&ir->operations);
-    aug_ir_frame_stack_delete(&ir->frame_stack);
+    aug_container_delete(&ir->operations);
+    aug_container_delete(&ir->frame_stack);
  
     aug_symtable_decref(ir->globals);
     aug_debug_symbols_decref(ir->debug_symbols);
@@ -2282,7 +2292,7 @@ static inline size_t aug_ir_add_operation_arg(aug_ir*ir, aug_opcode opcode, aug_
     operation.bytecode_offset = ir->bytecode_offset;
 
     ir->bytecode_offset += aug_ir_operation_size(operation);
-    aug_ir_operation_array_push(&ir->operations, operation);
+    aug_container_push_type(&ir->operations, aug_ir_operation, operation);
     return ir->operations.length-1;
 }
 
@@ -2296,13 +2306,13 @@ static inline size_t aug_ir_add_operation(aug_ir*ir, aug_opcode opcode)
 static inline aug_ir_operation* aug_ir_last_operation(aug_ir*ir)
 {
     assert(ir->operations.length > 0);
-    return aug_ir_operation_array_at(&ir->operations, ir->operations.length - 1);
+    return aug_container_ptr_type(&ir->operations, aug_ir_operation, ir->operations.length - 1);
 }
 
 static inline aug_ir_operation* aug_ir_get_operation(aug_ir*ir, size_t operation_index)
 {
     assert(operation_index < ir->operations.length);
-    return aug_ir_operation_array_at(&ir->operations, operation_index);
+    return aug_container_ptr_type(&ir->operations, aug_ir_operation, operation_index);
 }
 
 static inline aug_ir_operand aug_ir_operand_from_bool(bool data)
@@ -2348,14 +2358,14 @@ static inline aug_ir_operand aug_ir_operand_from_str(const char* data)
 static inline aug_ir_frame* aug_ir_current_frame(aug_ir*ir)
 {
     assert(ir->frame_stack.length > 0);
-    return aug_ir_frame_stack_back(&ir->frame_stack);
+    return aug_container_ptr_type(&ir->frame_stack, aug_ir_frame, ir->frame_stack.length - 1);
 }
 
 static inline aug_ir_scope* aug_ir_current_scope(aug_ir*ir)
 {
     aug_ir_frame* frame = aug_ir_current_frame(ir);
     assert(frame->scope_stack.length > 0);
-    return aug_ir_scope_stack_back(&frame->scope_stack);
+    return aug_container_ptr_type(&frame->scope_stack, aug_ir_scope, frame->scope_stack.length - 1);
 }
 
 static inline bool aug_ir_current_scope_is_global(aug_ir*ir)
@@ -2399,10 +2409,10 @@ static inline void aug_ir_push_frame(aug_ir*ir, int arg_count)
     scope.stack_offset = frame.base_index;
     scope.symtable = aug_symtable_new(1);
     
-    frame.scope_stack = aug_ir_scope_stack_new(1);
-    aug_ir_scope_stack_push(&frame.scope_stack, scope);
+    frame.scope_stack = aug_container_new_type(1, aug_ir_scope);
+    aug_container_push_type(&frame.scope_stack, aug_ir_scope, scope);
 
-    aug_ir_frame_stack_push(&ir->frame_stack, frame);
+    aug_container_push_type(&ir->frame_stack, aug_ir_frame, frame);
 }
 
 static inline void aug_ir_pop_frame(aug_ir*ir)
@@ -2414,15 +2424,15 @@ static inline void aug_ir_pop_frame(aug_ir*ir)
         scope->symtable = NULL; // Move to globals
     }
     
-    aug_ir_frame* frame = aug_ir_frame_stack_pop(&ir->frame_stack);
+    aug_ir_frame frame = aug_container_pop_type(&ir->frame_stack, aug_ir_frame);
 
     size_t i;
-    for(i = 0; i < frame->scope_stack.length; ++i)
+    for(i = 0; i < frame.scope_stack.length; ++i)
     {
-        aug_ir_scope* scope = aug_ir_scope_stack_at(&frame->scope_stack, i);
-        aug_symtable_decref(scope->symtable);
+        aug_ir_scope scope = aug_container_at_type(&frame.scope_stack, aug_ir_scope, i);
+        aug_symtable_decref(scope.symtable);
     }
-    aug_ir_scope_stack_delete(&frame->scope_stack);
+    aug_container_delete(&frame.scope_stack);
 }
 
 static inline void aug_ir_push_scope(aug_ir*ir)
@@ -2434,7 +2444,7 @@ static inline void aug_ir_push_scope(aug_ir*ir)
     scope.base_index = current_scope->stack_offset;
     scope.stack_offset = current_scope->stack_offset;
     scope.symtable = aug_symtable_new(1);
-    aug_ir_scope_stack_push(&frame->scope_stack, scope);
+    aug_container_push_type(&frame->scope_stack, aug_ir_scope, scope);
 }
 
 static inline void aug_ir_pop_scope(aug_ir*ir)
@@ -2443,8 +2453,8 @@ static inline void aug_ir_pop_scope(aug_ir*ir)
     aug_ir_add_operation_arg(ir, AUG_OPCODE_DEC_STACK, delta);
 
     aug_ir_frame* frame = aug_ir_current_frame(ir);
-    aug_ir_scope* scope = aug_ir_scope_stack_pop(&frame->scope_stack);
-    aug_symtable_decref(scope->symtable);
+    aug_ir_scope scope = aug_container_pop_type(&frame->scope_stack, aug_ir_scope);
+    aug_symtable_decref(scope.symtable);
 }
 
 static inline void aug_ir_add_debug_symbol(aug_ir* ir, aug_symbol symbol)
@@ -2517,11 +2527,11 @@ static inline aug_symbol aug_ir_get_symbol(aug_ir*ir, aug_string* name)
     int i,j;
     for(i = ir->frame_stack.length - 1; i >= 0; --i)
     {
-        aug_ir_frame* frame = aug_ir_frame_stack_at(&ir->frame_stack, i);
-        for(j = frame->scope_stack.length - 1; j >= 0; --j)
+        aug_ir_frame frame = aug_container_at_type(&ir->frame_stack, aug_ir_frame, i);
+        for(j = frame.scope_stack.length - 1; j >= 0; --j)
         {
-            aug_ir_scope* scope = aug_ir_scope_stack_at(&frame->scope_stack, j);
-            aug_symbol symbol = aug_symtable_get(scope->symtable, name);
+            aug_ir_scope scope = aug_container_at_type(&frame.scope_stack, aug_ir_scope, j);
+            aug_symbol symbol = aug_symtable_get(scope.symtable, name);
             if (symbol.type != AUG_SYM_NONE)
             {
                 return symbol;
@@ -2541,11 +2551,11 @@ static inline aug_symbol aug_ir_symbol_relative(aug_ir*ir, aug_string* name)
     int i,j;
     for(i = ir->frame_stack.length - 1; i >= 0; --i)
     {
-        aug_ir_frame* frame = aug_ir_frame_stack_at(&ir->frame_stack, i);
-        for(j = frame->scope_stack.length - 1; j >= 0; --j)
+        aug_ir_frame frame = aug_container_at_type(&ir->frame_stack, aug_ir_frame, i);
+        for(j = frame.scope_stack.length - 1; j >= 0; --j)
         {
-            aug_ir_scope* scope = aug_ir_scope_stack_at(&frame->scope_stack, j);
-            aug_symbol symbol = aug_symtable_get(scope->symtable, name);
+            aug_ir_scope scope = aug_container_at_type(&frame.scope_stack, aug_ir_scope, j);
+            aug_symbol symbol = aug_symtable_get(scope.symtable, name);
             if(symbol.type != AUG_SYM_NONE)
             {
                 switch (symbol.scope)
@@ -2554,16 +2564,16 @@ static inline aug_symbol aug_ir_symbol_relative(aug_ir*ir, aug_string* name)
                     break;
                 case AUG_SYM_SCOPE_PARAM:
                 {
-                    const aug_ir_frame* frame = aug_ir_current_frame(ir);
-                    symbol.offset = symbol.offset - frame->base_index;
+                    const aug_ir_frame* local_frame = aug_ir_current_frame(ir);
+                    symbol.offset = symbol.offset - local_frame->base_index;
                     break;
                 }
                 case AUG_SYM_SCOPE_LOCAL:
                 {
-                    const aug_ir_frame* frame = aug_ir_current_frame(ir);
+                    const aug_ir_frame* local_frame = aug_ir_current_frame(ir);
                     //If this variable is a local variable in an outer frame. Offset by 2 (ret addr and base index) for each frame delta
                     int frame_delta = (ir->frame_stack.length-1) - i;
-                    symbol.offset = symbol.offset - frame->base_index - frame_delta * AUG_CALL_FRAME_STACK_SIZE;
+                    symbol.offset = symbol.offset - local_frame->base_index - frame_delta * AUG_CALL_FRAME_STACK_SIZE;
                     break;
                 }
                 }
@@ -3746,7 +3756,7 @@ void aug_vm_execute(aug_vm* vm)
 
                 // Gather arguments
                 const int arg_count = aug_vm_read_int(vm);
-                aug_value* args = AUG_ALLOC_ARRAY(aug_value, arg_count);
+                aug_value* args = (aug_value*)AUG_ALLOC(sizeof(aug_value) * arg_count);
                 int i;
                 for(i = arg_count - 1; i >= 0; --i)
                 {
@@ -3769,7 +3779,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_decref(func_index_value);
                 for(i = 0; i < arg_count; ++i)
                     aug_decref(&args[i]);
-                AUG_FREE_ARRAY(args);
+                AUG_FREE(args);
                 break;
             }
             case AUG_OPCODE_ARG_COUNT:
@@ -4400,17 +4410,17 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
 
 char* aug_ir_to_bytecode(aug_ir* ir)
 {  
-    char* bytecode = AUG_ALLOC_ARRAY(char, ir->bytecode_offset);
+    char* bytecode = (char*)AUG_ALLOC(sizeof(char)*ir->bytecode_offset);
     char* instruction = bytecode;
 
     size_t i;
     for(i = 0; i < ir->operations.length; ++i)
     {
-        aug_ir_operation* operation = aug_ir_operation_array_at(&ir->operations, i);
-        aug_ir_operand operand = operation->operand;
+        aug_ir_operation operation = aug_container_at_type(&ir->operations, aug_ir_operation, i);
+        aug_ir_operand operand = operation.operand;
 
         // push operation opcode
-        (*instruction++) = (aug_opcode)operation->opcode;
+        (*instruction++) = (aug_opcode)operation.opcode;
 
         // push operation arguments
         switch (operand.type)
@@ -4440,21 +4450,21 @@ char* aug_ir_to_bytecode(aug_ir* ir)
 
 aug_string* aug_string_new(size_t size) 
 {
-	aug_string* string = AUG_ALLOC(aug_string);
+	aug_string* string = (aug_string*)AUG_ALLOC(sizeof(aug_string));
 	string->ref_count = 1;
 	string->length = 0;
 	string->capacity = size;
-	string->buffer = AUG_ALLOC_ARRAY(char, string->capacity);
+	string->buffer = (char*)AUG_ALLOC(sizeof(char)*string->capacity);
 	return string;
 }
 
 aug_string* aug_string_create(const char* bytes) 
 {
-	aug_string* string = AUG_ALLOC(aug_string);
+	aug_string* string = (aug_string*)AUG_ALLOC(sizeof(aug_string));
 	string->ref_count = 1;
 	string->length = strlen(bytes);
 	string->capacity = string->length + 1;
-	string->buffer = AUG_ALLOC_ARRAY(char, string->capacity);
+	string->buffer = (char*)AUG_ALLOC(sizeof(char)*string->capacity);
 
 #ifdef AUG_SECURE
     strcpy_s(string->buffer, string->capacity, bytes);
@@ -4467,7 +4477,7 @@ aug_string* aug_string_create(const char* bytes)
 void aug_string_resize(aug_string* string, size_t size) 
 {
 	string->capacity = size;
-    string->buffer = AUG_REALLOC_ARRAY(string->buffer, char, string->capacity);
+    string->buffer = (char*)AUG_REALLOC(string->buffer, sizeof(char)*string->capacity);
 }
 
 void aug_string_push(aug_string* string, char c) 
@@ -4529,7 +4539,7 @@ aug_string* aug_string_decref(aug_string* string)
 {
 	if(string != NULL && --string->ref_count == 0)
     {
-        AUG_FREE_ARRAY(string->buffer);
+        AUG_FREE(string->buffer);
         AUG_FREE(string);
         return NULL;
     }
@@ -4540,11 +4550,11 @@ aug_string* aug_string_decref(aug_string* string)
 
 aug_array* aug_array_new(size_t size)
 {                
-	aug_array* array = AUG_ALLOC(aug_array);
+	aug_array* array = (aug_array*)AUG_ALLOC(sizeof(aug_array));
 	array->ref_count = 1;   
 	array->length = 0;      
 	array->capacity = size; 
-	array->buffer = AUG_ALLOC_ARRAY(aug_value, array->capacity );
+	array->buffer = (aug_value*)AUG_ALLOC(sizeof(aug_value)*array->capacity);
 	return array;
 }
 
@@ -4558,7 +4568,7 @@ aug_array* aug_array_decref(aug_array* array)
 {
 	if(array != NULL && --array->ref_count == 0)
     {            
-        AUG_FREE_ARRAY(array->buffer);
+        AUG_FREE(array->buffer);
         AUG_FREE(array);
         return NULL;
     }            
@@ -4568,7 +4578,7 @@ aug_array* aug_array_decref(aug_array* array)
 void aug_array_resize(aug_array* array, size_t size)    
 {
 	array->capacity = size; 
-	array->buffer = AUG_REALLOC_ARRAY(array->buffer, aug_value, array->capacity);
+	array->buffer = (aug_value*)AUG_REALLOC(array->buffer, sizeof(aug_value)*array->capacity);
 }
  
 aug_value* aug_array_push(aug_array* array)  
@@ -4597,11 +4607,11 @@ aug_value* aug_array_back(const aug_array* array)
 
 aug_symtable* aug_symtable_new(size_t size)
 {
-    aug_symtable* symtable = AUG_ALLOC(aug_symtable);
+    aug_symtable* symtable = (aug_symtable*)AUG_ALLOC(sizeof(aug_symtable));
 	symtable->length = 0;
 	symtable->capacity = size; 
     symtable->ref_count = 1;
-	symtable->buffer = AUG_ALLOC_ARRAY(aug_symbol, symtable->capacity);
+	symtable->buffer = (aug_symbol*)AUG_ALLOC(sizeof(aug_symbol)*symtable->capacity);
 	return symtable;
 }
 
@@ -4621,7 +4631,7 @@ aug_symtable* aug_symtable_decref(aug_symtable* symtable)
             aug_symbol symbol = symtable->buffer[i];
             aug_string_decref(symbol.name);
         }
-        AUG_FREE_ARRAY(symtable->buffer);
+        AUG_FREE(symtable->buffer);
         AUG_FREE(symtable);
         return NULL;
     }
@@ -4631,7 +4641,7 @@ aug_symtable* aug_symtable_decref(aug_symtable* symtable)
 void  aug_symtable_resize(aug_symtable* symtable, size_t size)
 {
 	symtable->capacity = size; 
-	symtable->buffer = AUG_REALLOC_ARRAY(symtable->buffer, aug_symbol, symtable->capacity);
+	symtable->buffer = (aug_symbol*)AUG_REALLOC(symtable->buffer, sizeof(aug_symbol)*symtable->capacity);
 }
 
 bool aug_symtable_set(aug_symtable* symtable, aug_symbol symbol)
@@ -4687,11 +4697,11 @@ aug_symbol aug_symtable_get_bytes(aug_symtable* symtable, const char* name)
 
 aug_debug_symbols* aug_debug_symbols_new(size_t size)
 {
-    aug_debug_symbols* symtable = AUG_ALLOC(aug_debug_symbols);
+    aug_debug_symbols* symtable = (aug_debug_symbols*)AUG_ALLOC(sizeof(aug_debug_symbols));
 	symtable->length = 0;
 	symtable->capacity = size; 
     symtable->ref_count = 1;
-	symtable->buffer = AUG_ALLOC_ARRAY(aug_debug_symbol, symtable->capacity);
+	symtable->buffer = (aug_debug_symbol*)AUG_ALLOC(sizeof(aug_debug_symbol)*symtable->capacity);
 	return symtable;
 }
 
@@ -4711,7 +4721,7 @@ aug_debug_symbols* aug_debug_symbols_decref(aug_debug_symbols* symtable)
             aug_debug_symbol debug_symbol = symtable->buffer[i];
             aug_string_decref(debug_symbol.symbol.name);
         }
-        AUG_FREE_ARRAY(symtable->buffer);
+        AUG_FREE(symtable->buffer);
         AUG_FREE(symtable);
         return NULL;
     }
@@ -4721,7 +4731,7 @@ aug_debug_symbols* aug_debug_symbols_decref(aug_debug_symbols* symtable)
 void  aug_debug_symbols_resize(aug_debug_symbols* symtable, size_t size)
 {
 	symtable->capacity = size; 
-	symtable->buffer = AUG_REALLOC_ARRAY(symtable->buffer, aug_debug_symbol, symtable->capacity);
+	symtable->buffer = (aug_debug_symbol*)AUG_REALLOC(symtable->buffer, sizeof(aug_debug_symbol)*symtable->capacity);
 }
 
 bool aug_debug_symbols_set(aug_debug_symbols* symtable, aug_debug_symbol debug_symbol)
@@ -4753,10 +4763,9 @@ aug_debug_symbol aug_debug_symbols_get(aug_debug_symbols* symtable, int bytecode
 
 // SCRIPT ================================================= SCRIPT ================================================= SCRIPT // 
 
-aug_script* aug_script_new(aug_symtable* globals, char* bytecode, aug_debug_symbols* debug_symbols
-)
+aug_script* aug_script_new(aug_symtable* globals, char* bytecode, aug_debug_symbols* debug_symbols)
 {
-    aug_script* script = AUG_ALLOC(aug_script);
+    aug_script* script = (aug_script*)AUG_ALLOC(sizeof(aug_script));
     script->stack_state = NULL;
     script->bytecode = bytecode;
 
@@ -4786,7 +4795,7 @@ void aug_script_delete(aug_script* script)
     script->debug_symbols = aug_debug_symbols_decref(script->debug_symbols);
 
     if (script->bytecode != NULL)
-        AUG_FREE_ARRAY(script->bytecode);
+        AUG_FREE(script->bytecode);
     AUG_FREE(script);
 }
 
@@ -4794,7 +4803,7 @@ void aug_script_delete(aug_script* script)
 
 aug_vm* aug_startup(aug_error_function* error_callback)
 {
-    aug_vm* vm = AUG_ALLOC(aug_vm);
+    aug_vm* vm = (aug_vm*)AUG_ALLOC(sizeof(aug_vm));
     int i;
     for (i = 0; i < AUG_EXTENSION_SIZE; ++i)
     {
