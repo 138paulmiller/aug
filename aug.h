@@ -335,6 +335,11 @@ extern "C" {
 #define AUG_REALLOC(ptr, size) realloc(ptr, size)
 #endif//AUG_REALLOC
 
+// CONTAINER ====================================   CONTAINER   =========================================== CONTAINER // 
+
+// Generic resizeable array data structure that allocates bytes. 
+// Supports for type specific casting to modify and access.
+
 typedef struct aug_container
 {
     char* buffer;  
@@ -405,7 +410,7 @@ char* aug_container_back(const aug_container* array)
 #define aug_container_back_type(container, type) \
 	*((type*)aug_container_back(container))
 
-// --------------------------------------- Logging ---------------------------------------//
+// LOGGING =====================================   LOGGING   ================================================= LOGGING // 
 
 void aug_log_error_internal(aug_error_function* error_callback, const char* format, va_list args)
 {
