@@ -12,50 +12,6 @@ int tests_total = 0;
 #define STDOUT_BLUE   "\x1b[34m"
 #define STDOUT_CLEAR  "\x1b[0m"
 
-#define AUG_DEFINE_ARRAY(name, type)                                                      \
-typedef struct name                                                                       \
-{                                                                                         \
-	type* buffer;                                                                         \
-	size_t capacity;                                                                      \
-	size_t length;                                                                        \
-} name;                                                                                   \
-name name##_new(size_t size)                                                              \
-{                                                                                         \
-    name array;                                                                           \
-    array.length = 0;                                                                     \
-    array.capacity = size;                                                                \
-    array.buffer = (type*)AUG_ALLOC(sizeof(type) * array.capacity);                       \
-    return array;                                                                         \
-}                                                                                         \
-void name##_delete(name* array)                                                           \
-{                                                                                         \
-    AUG_FREE(array->buffer);                                                              \
-    array->buffer = NULL;                                                                 \
-}                                                                                         \
-void name##_resize(name* array, size_t size)                                              \
-{                                                                                         \
-    array->capacity = size;                                                               \
-    array->buffer = (type*)AUG_REALLOC(array->buffer, sizeof(type)* array->capacity);     \
-}                                                                                         \
-void name##_push(name* array, type data)                                                  \
-{                                                                                         \
-    if (array->length+1 >= array->capacity)                                               \
-        name##_resize(array, 2 * array->capacity);                                        \
-    array->buffer[array->length++] = data;                                                \
-}                                                                                         \
-type* name##_pop(name* array)                                                             \
-{                                                                                         \
-    return array->length > 0 ? &array->buffer[--array->length] : NULL;                    \
-}                                                                                         \
-type* name##_at(const name* array, size_t index)                                          \
-{                                                                                         \
-    return index >= 0 && index < array->length ? &array->buffer[index] : NULL;            \
-}                                                                                         \
-type* name##_back(const name* array)                                                      \
-{                                                                                         \
-    return array->length > 0 ? &array->buffer[array->length - 1] : NULL;                  \
-}
-
 void print_value(aug_value value)
 {
 	switch (value.type)

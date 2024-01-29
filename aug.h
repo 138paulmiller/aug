@@ -41,6 +41,7 @@ SOFTWARE. */
     - Serialize debug symbols to file. Link from bytecode to source file.
         - Better runtime error handling, add source file and line to debug symbols
     - Vector Matrix primitive types ?
+    - Map from debug symbol addr to symbol
 */
 
 #ifdef __cplusplus
@@ -74,6 +75,8 @@ extern "C" {
 
 // Data structures
 typedef struct aug_value aug_value;
+typedef struct aug_hashtable aug_hashtable;
+typedef struct aug_container aug_container;
 
 typedef struct aug_string
 {
@@ -194,51 +197,20 @@ typedef struct aug_symbol
     int argc;
 } aug_symbol;
 
-typedef struct aug_symtable
-{
-	aug_symbol* buffer;
-	int ref_count;
-	size_t capacity;
-	size_t length;
-} aug_symtable;
-
-aug_symtable* aug_symtable_new(size_t size);
-void aug_symtable_incref(aug_symtable* symtable);
-aug_symtable* aug_symtable_decref(aug_symtable* symtable);
-void  aug_symtable_resize(aug_symtable* symtable, size_t size);
-bool aug_symtable_set(aug_symtable* symtable, aug_symbol symbol);
-aug_symbol aug_symtable_get(aug_symtable* symtable, aug_string* name);
-aug_symbol aug_symtable_get_bytes(aug_symtable* symtable, const char* name);
-
 typedef struct aug_debug_symbol
 {
     int bytecode_addr;
     aug_symbol symbol;
 } aug_debug_symbol;
 
-typedef struct aug_debug_symbols
-{
-    aug_debug_symbol* buffer;
-    int ref_count;
-    size_t capacity;
-    size_t length;
-} aug_debug_symbols;
-
-aug_debug_symbols* aug_debug_symbols_new(size_t size);
-void aug_debug_symbols_incref(aug_debug_symbols* symtable);
-aug_debug_symbols* aug_debug_symbols_decref(aug_debug_symbols* symtable);
-void  aug_debug_symbols_resize(aug_debug_symbols* symtable, size_t size);
-bool aug_debug_symbols_set(aug_debug_symbols* symtable, aug_debug_symbol debug_symbol);
-aug_debug_symbol aug_debug_symbols_get(aug_debug_symbols* symtable, int bytecode_addr);
-
 // Represents a "compiled" script
 typedef struct aug_script
 {
-    aug_symtable* globals;
+    aug_hashtable* globals;
     char* bytecode;
     aug_array* stack_state;
 
-    aug_debug_symbols* debug_symbols;
+    aug_container* debug_symbols;
 } aug_script;
 
 // Calling frames are used to presize and access parameters and local variables from the stack within a calling context
@@ -274,7 +246,7 @@ typedef struct aug_vm
     aug_string* extension_names[AUG_EXTENSION_SIZE]; 
     int extension_count;
 
-    aug_debug_symbols* debug_symbols; //weak pointer to script debug symbols
+    aug_container* debug_symbols; //weak pointer to script debug symbols
 } aug_vm;
 
 // VM Must call both startup before using the VM. When done, must call shutdown.
@@ -345,70 +317,271 @@ typedef struct aug_container
     char* buffer;  
 	size_t capacity;
 	size_t length;  
+	size_t ref_count;  
     size_t element_size;
 } aug_container;
 
-aug_container aug_container_new(size_t size, size_t element_size)    
+aug_container* aug_container_new(size_t size, size_t element_size)    
 {
-    aug_container array;   
-    array.length = 0;       
-    array.capacity = size;   
-    array.element_size = element_size; 
-    array.buffer = (char*)AUG_ALLOC(element_size * array.capacity);
-    return array;   
+    aug_container* container = (aug_container*)AUG_ALLOC(sizeof(aug_container));   
+    container->length = 0;    
+    container->ref_count = 1;   
+    container->capacity = size;   
+    container->element_size = element_size; 
+    container->buffer = (char*)AUG_ALLOC(element_size * container->capacity);
+    return container;   
 }        
 
-void aug_container_delete(aug_container* array)   
+aug_container* aug_container_incref(aug_container* container)   
 {
-    AUG_FREE(array->buffer);       
-    array->buffer = NULL;    
+    if(container != NULL)
+        ++container->ref_count;
 }
 
-void aug_container_resize(aug_container* array, size_t size)    
+aug_container* aug_container_decref(aug_container* container)   
 {
-    array->capacity = size;    
-    array->buffer = (char*)AUG_REALLOC(array->buffer, array->element_size * array->capacity); 
+    if(container != NULL && --container->ref_count == 0)
+    {
+        AUG_FREE(container->buffer); 
+        AUG_FREE(container);
+        return NULL;    
+    }
+    return container;
 }
 
-char* aug_container_push(aug_container* array)    
+void aug_container_resize(aug_container* container, size_t size)    
 {
-    if (array->length+1 >= array->capacity) 
-        aug_container_resize(array, 2 * array->capacity);
-    return &array->buffer[array->length++ * array->element_size];    
+    container->capacity = size;    
+    container->buffer = (char*)AUG_REALLOC(container->buffer, container->element_size * container->capacity); 
 }
 
-char* aug_container_pop(aug_container* array)   
+char* aug_container_push(aug_container* container)    
+{
+    if (container->length+1 >= container->capacity) 
+        aug_container_resize(container, 2 * container->capacity);
+    return &container->buffer[container->length++ * container->element_size];    
+}
+
+char* aug_container_pop(aug_container* container)   
 {        
-    return array->length > 0 ? &array->buffer[(--array->length) * array->element_size] : NULL;    
+    return container->length > 0 ? &container->buffer[(--container->length) * container->element_size] : NULL;    
 }        
 
-char* aug_container_at(const aug_container* array, size_t index)   
+char* aug_container_at(const aug_container* container, size_t index)   
 {        
-    return index >= 0 && index < array->length ? &array->buffer[index * array->element_size] : NULL;    
+    return index >= 0 && index < container->length ? &container->buffer[index * container->element_size] : NULL;    
 }        
 
-char* aug_container_back(const aug_container* array)   
+char* aug_container_back(const aug_container* container)   
 {        
-    return array->length > 0 ? &array->buffer[(array->length - 1) * array->element_size] : NULL;    
+    return container->length > 0 ? &container->buffer[(container->length - 1) * container->element_size] : NULL;    
 }
 
-#define aug_container_new_type(container, type) \
-	aug_container_new(container, sizeof(type))
+#define aug_container_new_type(type, size) \
+	aug_container_new(size, sizeof(type))
 
-#define aug_container_push_type(container, type, data) \
+#define aug_container_push_type(type, container, data) \
 	*((type*)aug_container_push(container)) = data
 
-#define aug_container_pop_type(container, type) \
+#define aug_container_pop_type(type, container) \
 	*((type*)aug_container_pop(container))
 
-#define aug_container_at_type(container, type, index) \
+#define aug_container_at_type(type, container, index) \
 	*((type*)aug_container_at(container, index))
 
-#define aug_container_ptr_type(container, type, index) \
+#define aug_container_ptr_type(type, container, index) \
 	((type*)aug_container_at(container, index))
 
-#define aug_container_back_type(container, type) \
+#define aug_container_back_type(type, container) \
 	*((type*)aug_container_back(container))
+
+// HASHTABLE ====================================== HASHTABLE =============================================== HASHTABLE//
+#define AUG_HASH_INVALID -1
+
+typedef int(aug_hashtable_hash)(const char* /*str*/);
+typedef void(aug_hashtable_free)(uint8_t* /*data*/);
+typedef void(aug_hashtable_iterator)(uint8_t* /*data*/);
+
+typedef struct aug_hashtable_bucket
+{                             
+    size_t* hash_buffer;
+    uint8_t* data_buffer;
+    size_t capacity;
+} aug_hashtable_bucket;
+
+typedef struct aug_hashtable
+{
+	aug_hashtable_bucket* buckets;
+	size_t capacity;
+	size_t count;
+    size_t ref_count;
+	size_t element_size;
+
+    aug_hashtable_hash * hash_func;
+    aug_hashtable_free * free_func;
+} aug_hashtable;
+
+aug_hashtable* aug_hashtable_new(size_t size, size_t element_size, aug_hashtable_hash* hash, aug_hashtable_free* free)
+{
+    assert(hash != NULL);
+
+    aug_hashtable* map = (aug_hashtable*)AUG_ALLOC(sizeof(aug_hashtable)); 
+    map->capacity = size;
+    map->element_size = element_size;
+    map->hash_func = hash;
+    map->free_func = free;
+    map->ref_count = 1;
+    map->count = 0;
+    map->buckets = (aug_hashtable_bucket*)AUG_ALLOC(sizeof(aug_hashtable_bucket) * size);
+    
+    int i;
+    for(i = 0; i < map->capacity; ++i)
+    {
+        aug_hashtable_bucket* bucket = &map->buckets[i];
+        bucket->capacity = 1;
+        bucket->hash_buffer = (size_t*)AUG_ALLOC(sizeof(size_t) * bucket->capacity);
+        bucket->data_buffer = (char*)AUG_ALLOC(sizeof(uint8_t) * element_size * bucket->capacity);
+        memset(bucket->hash_buffer, AUG_HASH_INVALID, sizeof(size_t) * bucket->capacity);
+    }
+    return map;
+}
+
+aug_hashtable* aug_hashtable_incref(aug_hashtable* map)
+{
+    if(map)
+        ++map->ref_count;
+}
+
+aug_hashtable* aug_hashtable_decref(aug_hashtable* map)
+{
+    if(map && --map->ref_count == 0)
+    {
+        int i;
+        for(i = 0; i < map->capacity; ++i)
+        {
+            aug_hashtable_bucket* bucket = &map->buckets[i];
+            if(map->free_func)
+            {
+                int j;    
+                for(j = 0; j < bucket->capacity; ++j)
+                {
+                    if(bucket->hash_buffer[j] != AUG_HASH_INVALID)
+                        map->free_func(&bucket->data_buffer[j * map->element_size]);
+                }    
+            }
+            
+            AUG_FREE(bucket->data_buffer);
+            AUG_FREE(bucket->hash_buffer);
+        }
+        AUG_FREE(map->buckets);
+        AUG_FREE(map);
+        return NULL;
+    }
+    return map;
+}
+
+uint8_t* aug_hashtable_create(aug_hashtable* map, const char* key)
+{
+    int hash = map->hash_func(key);
+    aug_hashtable_bucket* bucket = &map->buckets[hash % map->capacity];
+    // TODO: Create a map resize, if bucket capacity exceeds threshold. Reindex all entries
+
+    int i;
+    for(i = 0; i  < bucket->capacity; ++i)
+    {
+        if(bucket->hash_buffer[i] == AUG_HASH_INVALID)
+            break;
+        
+        if(bucket->hash_buffer[i] == hash)
+            return NULL;
+    }
+
+    if (i >= bucket->capacity)
+    {
+        int new_size = 2 * bucket->capacity;
+        bucket->hash_buffer = (size_t*)AUG_REALLOC(bucket->hash_buffer, sizeof(size_t) * new_size);
+        bucket->data_buffer = (char*)AUG_REALLOC(bucket->data_buffer, map->element_size * new_size);
+
+        int i; // init new entries to null 
+        for(i = new_size - bucket->capacity; i < bucket->capacity; ++i)
+            bucket->hash_buffer[i] = AUG_HASH_INVALID;
+        bucket->capacity = new_size;
+    }
+
+    ++map->count;
+
+    bucket->hash_buffer[i] = hash;
+    return &bucket->data_buffer[i*map->element_size];
+}
+
+bool aug_hashtable_remove(aug_hashtable* map, const char* key)
+{
+    const int find_hash = map->hash_func(key);
+    aug_hashtable_bucket* bucket = &map->buckets[find_hash % map->capacity];
+    int i;
+    for(i = 0; i  < bucket->capacity; ++i)
+    {
+        int hash = bucket->hash_buffer[i];
+        if(hash != AUG_HASH_INVALID && hash == find_hash)
+        {
+            bucket->hash_buffer[i] = AUG_HASH_INVALID;
+            if(map->free_func)
+                map->free_func(&bucket->data_buffer[i * map->element_size]);
+        }
+    }
+    return false;
+}
+
+uint8_t* aug_hashtable_get(aug_hashtable* map, const char* key)
+{
+    const int find_hash = map->hash_func(key);
+    aug_hashtable_bucket* bucket = &map->buckets[find_hash % map->capacity];
+    int i;
+    for(i = 0; i  < bucket->capacity; ++i)
+    {
+        int hash = bucket->hash_buffer[i];
+        if(hash != AUG_HASH_INVALID && hash == find_hash)
+            return &bucket->data_buffer[i * map->element_size];
+    }
+    return NULL;
+}
+
+void aug_hashtable_foreach(aug_hashtable* map, aug_hashtable_iterator* iterator)
+{
+    int i, j;
+    for(int i = 0; i < map->capacity; ++i)
+    {
+        aug_hashtable_bucket* bucket = &map->buckets[i];
+        for(int j = 0; j < bucket->capacity; ++j)
+        {        
+            if(bucket->hash_buffer[j] != AUG_HASH_INVALID)
+                iterator(&bucket->data_buffer[j * map->element_size]);
+        }
+    }
+}
+
+int aug_hashtable_hash_default(const char* str)
+{
+    int hash = 5381; // DJB2 hash
+    while(*str)
+        hash = ((hash << 5) + hash) + *str++;
+    while(hash == AUG_HASH_INVALID) 
+        ++hash;
+    return hash;
+}
+
+#ifndef AUG_HASHTABLE_DEFAULT_BUCKET_SIZE
+#define AUG_HASHTABLE_DEFAULT_BUCKET_SIZE 128
+#endif//AUG_HASHTABLE_DEFAULT_BUCKET_SIZE
+
+#define aug_hashtable_new_type(type)\
+    aug_hashtable_new(AUG_HASHTABLE_DEFAULT_BUCKET_SIZE, sizeof(type), aug_hashtable_hash_default, NULL)
+
+#define aug_hashtable_create_type(type, map, key)\
+    ((type*)aug_hashtable_create(map, key))
+
+#define aug_hashtable_ptr_type(type, map, key)\
+    ((type*)aug_hashtable_get(map, key))
 
 // LOGGING =====================================   LOGGING   ================================================= LOGGING // 
 
@@ -1340,7 +1513,7 @@ static inline void aug_ast_add(aug_ast* node, aug_ast* child)
 
 static inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_container* op_stack, aug_container* expr_stack)
 {
-    aug_token next_op = aug_container_pop_type(op_stack, aug_token);
+    aug_token next_op = aug_container_pop_type(aug_token, op_stack);
 
     const int op_argc = next_op.detail->argc;
     assert(op_argc == 1 || op_argc == 2); // Only supported operator types
@@ -1349,7 +1522,7 @@ static inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_container* op_stack,
     {
         while(expr_stack->length > 0)
         {
-            aug_ast* expr = aug_container_pop_type(expr_stack, aug_ast*);
+            aug_ast* expr = aug_container_pop_type(aug_ast*, expr_stack);
             aug_ast_delete(expr);
         }
         aug_log_input_error(lexer->input, "Invalid number of arguments to operator %s", next_op.detail->label);
@@ -1365,11 +1538,11 @@ static inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_container* op_stack,
     for(i = 0; i < op_argc; ++i)
     {
         // Not, length is checked above, guaranteed to be valid pointer
-        aug_ast* expr = aug_container_pop_type(expr_stack, aug_ast*);
+        aug_ast* expr = aug_container_pop_type(aug_ast*, expr_stack);
         binaryop->children[(op_argc-1) - i] = expr; // add in reverse
     }
 
-    aug_container_push_type(expr_stack, aug_ast*, binaryop);
+    aug_container_push_type(aug_ast*, expr_stack, binaryop);
     return true;
 }
 
@@ -1377,34 +1550,33 @@ static inline void aug_parse_expr_stack_cleanup(aug_container* op_stack, aug_con
 {
     while(expr_stack->length > 0)
     {
-        aug_ast* expr = aug_container_pop_type(expr_stack, aug_ast*);
+        aug_ast* expr = aug_container_pop_type(aug_ast*, expr_stack);
         aug_ast_delete(expr);
     }
-    aug_container_delete(expr_stack);
-    aug_container_delete(op_stack);
+    aug_container_decref(expr_stack);
+    aug_container_decref(op_stack);
 }
 
 aug_ast* aug_parse_expr(aug_lexer* lexer)
 {
     // Shunting yard algorithm
-    aug_container op_stack = aug_container_new_type(1, aug_token); 
-    aug_container expr_stack = aug_container_new_type(1, aug_ast*); 
+    aug_container* op_stack = aug_container_new_type(aug_token, 1); 
+    aug_container* expr_stack = aug_container_new_type(aug_ast*, 1); 
     while(lexer->curr.id != AUG_TOKEN_SEMICOLON)
     {
         aug_token op = lexer->curr;
-
         if(op.detail->prec > 0)
         {
             // left associate by default (for right, <= becomes <)
-            while(op_stack.length)
+            while(op_stack->length)
             {
-                aug_token next_op = aug_container_back_type(&op_stack, aug_token);
+                aug_token next_op = aug_container_back_type(aug_token, op_stack);
                 if(next_op.detail->prec < op.detail->prec)
                     break;
-                if(!aug_parse_expr_pop(lexer, &op_stack, &expr_stack))
+                if(!aug_parse_expr_pop(lexer, op_stack, expr_stack))
                     return NULL;
             }
-            aug_container_push_type(&op_stack, aug_token, op);
+            aug_container_push_type(aug_token, op_stack, op);
             aug_lexer_move(lexer);
         }
         else
@@ -1413,38 +1585,38 @@ aug_ast* aug_parse_expr(aug_lexer* lexer)
             if(value == NULL)
                 break;
 
-            aug_container_push_type(&expr_stack, aug_ast*, value);
+            aug_container_push_type(aug_ast*, expr_stack, value);
         }
     }
 
     // Not an expression
-    if(op_stack.length == 0 && expr_stack.length == 0)
+    if(op_stack->length == 0 && expr_stack->length == 0)
     {
-        aug_container_delete(&op_stack);
-        aug_container_delete(&expr_stack);
+        aug_container_decref(op_stack);
+        aug_container_decref(expr_stack);
         return NULL;
     }
 
-    while(op_stack.length)
+    while(op_stack->length)
     {
-        if(!aug_parse_expr_pop(lexer, &op_stack, &expr_stack))
+        if(!aug_parse_expr_pop(lexer, op_stack, expr_stack))
         {
-            aug_parse_expr_stack_cleanup(&op_stack, &expr_stack);
+            aug_parse_expr_stack_cleanup(op_stack, expr_stack);
             return NULL;
         }
     }
 
     // Not a valid expression. Either malformed or missing semicolon 
-    if(expr_stack.length == 0 || expr_stack.length > 1)
+    if(expr_stack->length == 0 || expr_stack->length > 1)
     {
-        aug_parse_expr_stack_cleanup(&op_stack, &expr_stack);
+        aug_parse_expr_stack_cleanup(op_stack, expr_stack);
         aug_log_input_error(lexer->input, "Invalid expression syntax");
         return NULL;
     }
 
-    aug_ast* expr = aug_container_back_type(&expr_stack, aug_ast*);
-    aug_container_delete(&op_stack);
-    aug_container_delete(&expr_stack);
+    aug_ast* expr = aug_container_back_type(aug_ast*, expr_stack);
+    aug_container_decref(op_stack);
+    aug_container_decref(expr_stack);
     return expr;
 }
 
@@ -2146,7 +2318,7 @@ enum aug_opcodes
 };
 typedef uint8_t aug_opcode;
 
-static_assert(AUG_OPCODE_COUNT < 255, "AUG Opcode count too large. This will affect bytecode instruction set");
+static_assert(AUG_OPCODE_COUNT < 255, "Opcode count too large! This will affect bytecode instruction set");
 
 static const char* aug_opcode_labels[] =
 {
@@ -2167,7 +2339,6 @@ static const char* aug_opcode_labels[] =
 
 typedef enum aug_ir_operand_type
 {
-    // type if operand is constant or literal
     AUG_IR_OPERAND_NONE = 0,
     AUG_IR_OPERAND_BOOL,
     AUG_IR_OPERAND_CHAR,
@@ -2205,14 +2376,14 @@ typedef struct aug_ir_scope
 {
     int base_index;
     int stack_offset;
-    aug_symtable* symtable;
+    aug_hashtable* symtable;
 } aug_ir_scope;
 
 typedef struct aug_ir_frame
 {
     int base_index;
     int arg_count;
-    aug_container scope_stack; //type aug_ir_scope
+    aug_container* scope_stack; //type aug_ir_scope
 } aug_ir_frame;
 
 // All the blocks within a compilation/translation unit (i.e. file, code literal)
@@ -2221,20 +2392,20 @@ typedef struct aug_ir
     aug_input* input; // weak ref to source file/code
 
     // Transient IR data
-    aug_container frame_stack; // type aug_ir_frame
+    aug_container* frame_stack; // type aug_ir_frame
     int label_count;
 
     // Generated data
-    aug_container operations; // type aug_ir_operation
+    aug_container* operations; // type aug_ir_operation
     size_t bytecode_offset;
     
     // Assigned to the outer-most frame's symbol table. 
     // This field is initialized after generation, so not available during the generation pass. 
-    aug_symtable* globals;
+    aug_hashtable* globals;
     bool valid;
 
     // Debug table, index from bytecode addr
-    aug_debug_symbols* debug_symbols;
+    aug_container* debug_symbols;
 
 } aug_ir;
 
@@ -2245,20 +2416,20 @@ static inline aug_ir* aug_ir_new(aug_input* input)
     ir->input = input;
     ir->label_count = 0;
     ir->bytecode_offset = 0;
-    ir->frame_stack =  aug_container_new_type(1, aug_ir_frame);
-    ir->operations = aug_container_new_type(1, aug_ir_operation);
-    ir->debug_symbols = aug_debug_symbols_new(1);
+    ir->frame_stack =  aug_container_new_type(aug_ir_frame, 1);
+    ir->operations = aug_container_new_type(aug_ir_operation, 1);
+    ir->debug_symbols = aug_container_new_type(aug_debug_symbol, 1);
+    ir->globals = NULL; // initialized in ast to ir pass
     return ir;
 }
 
 static inline void aug_ir_delete(aug_ir* ir)
 {
-    aug_container_delete(&ir->operations);
-    aug_container_delete(&ir->frame_stack);
+    aug_hashtable_decref(ir->globals);
+    aug_container_decref(ir->operations);
+    aug_container_decref(ir->frame_stack);
+    aug_container_decref(ir->debug_symbols);
  
-    aug_symtable_decref(ir->globals);
-    aug_debug_symbols_decref(ir->debug_symbols);
-
     AUG_FREE(ir);
 }
 
@@ -2291,14 +2462,15 @@ static inline size_t aug_ir_operation_size(aug_ir_operation operation)
 
 static inline size_t aug_ir_add_operation_arg(aug_ir*ir, aug_opcode opcode, aug_ir_operand operand)
 {
+    assert(ir->operations != NULL);
     aug_ir_operation operation;
     operation.opcode = opcode;
     operation.operand = operand;
     operation.bytecode_offset = ir->bytecode_offset;
 
     ir->bytecode_offset += aug_ir_operation_size(operation);
-    aug_container_push_type(&ir->operations, aug_ir_operation, operation);
-    return ir->operations.length-1;
+    aug_container_push_type(aug_ir_operation, ir->operations, operation);
+    return ir->operations->length-1;
 }
 
 static inline size_t aug_ir_add_operation(aug_ir*ir, aug_opcode opcode)
@@ -2310,14 +2482,15 @@ static inline size_t aug_ir_add_operation(aug_ir*ir, aug_opcode opcode)
 
 static inline aug_ir_operation* aug_ir_last_operation(aug_ir*ir)
 {
-    assert(ir->operations.length > 0);
-    return aug_container_ptr_type(&ir->operations, aug_ir_operation, ir->operations.length - 1);
+    assert(ir->operations != NULL && ir->operations->length > 0);
+    return aug_container_ptr_type(aug_ir_operation, ir->operations, ir->operations->length - 1);
 }
 
 static inline aug_ir_operation* aug_ir_get_operation(aug_ir*ir, size_t operation_index)
-{
-    assert(operation_index < ir->operations.length);
-    return aug_container_ptr_type(&ir->operations, aug_ir_operation, operation_index);
+{   
+    assert(ir->operations != NULL);
+    assert(operation_index < ir->operations->length);
+    return aug_container_ptr_type(aug_ir_operation, ir->operations, operation_index);
 }
 
 static inline aug_ir_operand aug_ir_operand_from_bool(bool data)
@@ -2362,21 +2535,23 @@ static inline aug_ir_operand aug_ir_operand_from_str(const char* data)
 
 static inline aug_ir_frame* aug_ir_current_frame(aug_ir*ir)
 {
-    assert(ir->frame_stack.length > 0);
-    return aug_container_ptr_type(&ir->frame_stack, aug_ir_frame, ir->frame_stack.length - 1);
+    assert(ir != NULL && ir->frame_stack != NULL);
+    assert(ir->frame_stack->length > 0);
+    return aug_container_ptr_type(aug_ir_frame, ir->frame_stack, ir->frame_stack->length - 1);
 }
 
 static inline aug_ir_scope* aug_ir_current_scope(aug_ir*ir)
 {
     aug_ir_frame* frame = aug_ir_current_frame(ir);
-    assert(frame->scope_stack.length > 0);
-    return aug_container_ptr_type(&frame->scope_stack, aug_ir_scope, frame->scope_stack.length - 1);
+    assert(frame != NULL && frame->scope_stack != NULL);
+    assert(frame->scope_stack->length > 0);
+    return aug_container_ptr_type(aug_ir_scope, frame->scope_stack, frame->scope_stack->length - 1);
 }
 
 static inline bool aug_ir_current_scope_is_global(aug_ir*ir)
 {
     aug_ir_frame* frame = aug_ir_current_frame(ir);
-    if(ir->frame_stack.length == 1 && frame->scope_stack.length == 1)
+    if(ir->frame_stack->length == 1 && frame->scope_stack->length == 1)
         return true;
     return false;
 }
@@ -2399,7 +2574,7 @@ static inline void aug_ir_push_frame(aug_ir*ir, int arg_count)
     aug_ir_frame frame;
     frame.arg_count = arg_count;
 
-    if(ir->frame_stack.length > 0)
+    if(ir->frame_stack->length > 0)
     {
         const aug_ir_scope* scope = aug_ir_current_scope(ir);
         frame.base_index = scope->stack_offset;
@@ -2412,32 +2587,31 @@ static inline void aug_ir_push_frame(aug_ir*ir, int arg_count)
     aug_ir_scope scope;
     scope.base_index = frame.base_index;
     scope.stack_offset = frame.base_index;
-    scope.symtable = aug_symtable_new(1);
+    scope.symtable = aug_hashtable_new_type(aug_symbol);
     
-    frame.scope_stack = aug_container_new_type(1, aug_ir_scope);
-    aug_container_push_type(&frame.scope_stack, aug_ir_scope, scope);
-
-    aug_container_push_type(&ir->frame_stack, aug_ir_frame, frame);
+    frame.scope_stack = aug_container_new_type(aug_ir_scope, 1);
+    aug_container_push_type(aug_ir_scope, frame.scope_stack, scope);
+    aug_container_push_type(aug_ir_frame, ir->frame_stack, frame);
 }
 
 static inline void aug_ir_pop_frame(aug_ir*ir)
 {
-    if(ir->frame_stack.length == 1)
+    if(ir->frame_stack->length == 1)
     {
         aug_ir_scope* scope = aug_ir_current_scope(ir);
         ir->globals = scope->symtable;
         scope->symtable = NULL; // Move to globals
     }
     
-    aug_ir_frame frame = aug_container_pop_type(&ir->frame_stack, aug_ir_frame);
+    aug_ir_frame frame = aug_container_pop_type(aug_ir_frame, ir->frame_stack);
 
     size_t i;
-    for(i = 0; i < frame.scope_stack.length; ++i)
+    for(i = 0; i < frame.scope_stack->length; ++i)
     {
-        aug_ir_scope scope = aug_container_at_type(&frame.scope_stack, aug_ir_scope, i);
-        aug_symtable_decref(scope.symtable);
+        aug_ir_scope scope = aug_container_at_type(aug_ir_scope, frame.scope_stack, i);
+        aug_hashtable_decref(scope.symtable);
     }
-    aug_container_delete(&frame.scope_stack);
+    aug_container_decref(frame.scope_stack);
 }
 
 static inline void aug_ir_push_scope(aug_ir*ir)
@@ -2448,8 +2622,8 @@ static inline void aug_ir_push_scope(aug_ir*ir)
     aug_ir_scope scope;
     scope.base_index = current_scope->stack_offset;
     scope.stack_offset = current_scope->stack_offset;
-    scope.symtable = aug_symtable_new(1);
-    aug_container_push_type(&frame->scope_stack, aug_ir_scope, scope);
+    scope.symtable = aug_hashtable_new_type(aug_symbol);
+    aug_container_push_type(aug_ir_scope, frame->scope_stack, scope);
 }
 
 static inline void aug_ir_pop_scope(aug_ir*ir)
@@ -2458,8 +2632,8 @@ static inline void aug_ir_pop_scope(aug_ir*ir)
     aug_ir_add_operation_arg(ir, AUG_OPCODE_DEC_STACK, delta);
 
     aug_ir_frame* frame = aug_ir_current_frame(ir);
-    aug_ir_scope scope = aug_container_pop_type(&frame->scope_stack, aug_ir_scope);
-    aug_symtable_decref(scope.symtable);
+    aug_ir_scope scope = aug_container_pop_type(aug_ir_scope, frame->scope_stack);
+    aug_hashtable_decref(scope.symtable);
 }
 
 static inline void aug_ir_add_debug_symbol(aug_ir* ir, aug_symbol symbol)
@@ -2467,7 +2641,7 @@ static inline void aug_ir_add_debug_symbol(aug_ir* ir, aug_symbol symbol)
     aug_debug_symbol debug_symbol;
     debug_symbol.symbol = symbol;
     debug_symbol.bytecode_addr = ir->bytecode_offset;
-    aug_debug_symbols_set(ir->debug_symbols, debug_symbol);
+    aug_container_push_type(aug_debug_symbol, ir->debug_symbols, debug_symbol);
 }
 
 static inline bool aug_ir_set_var(aug_ir*ir, aug_string* var_name)
@@ -2486,7 +2660,12 @@ static inline bool aug_ir_set_var(aug_ir*ir, aug_string* var_name)
     else
         symbol.scope = AUG_SYM_SCOPE_LOCAL;
 
-    return aug_symtable_set(scope->symtable, symbol);
+    aug_symbol* symbol_ptr = aug_hashtable_create_type(aug_symbol, scope->symtable, var_name->buffer);
+    if(symbol_ptr == NULL)
+        return false;
+
+    *symbol_ptr = symbol;
+    return true;
 }
 
 static inline bool aug_ir_set_param(aug_ir*ir, aug_string* param_name)
@@ -2505,7 +2684,12 @@ static inline bool aug_ir_set_param(aug_ir*ir, aug_string* param_name)
     else
         symbol.scope = AUG_SYM_SCOPE_PARAM;
 
-    return aug_symtable_set(scope->symtable, symbol);
+    aug_symbol* symbol_ptr = aug_hashtable_create_type(aug_symbol, scope->symtable, param_name->buffer);
+    if(symbol_ptr == NULL)
+        return false;
+
+    *symbol_ptr = symbol;
+    return true;
 }
 
 static inline bool aug_ir_set_func(aug_ir*ir, aug_string* func_name, int param_count)
@@ -2524,23 +2708,26 @@ static inline bool aug_ir_set_func(aug_ir*ir, aug_string* func_name, int param_c
     else
         symbol.scope = AUG_SYM_SCOPE_LOCAL;
 
-    return aug_symtable_set(scope->symtable, symbol);
+    aug_symbol* symbol_ptr = aug_hashtable_create_type(aug_symbol, scope->symtable, func_name->buffer);
+    if(symbol_ptr == NULL)
+        return false;
+
+    *symbol_ptr = symbol;
+    return true;
 }
 
 static inline aug_symbol aug_ir_get_symbol(aug_ir*ir, aug_string* name)
 {
     int i,j;
-    for(i = ir->frame_stack.length - 1; i >= 0; --i)
+    for(i = ir->frame_stack->length - 1; i >= 0; --i)
     {
-        aug_ir_frame frame = aug_container_at_type(&ir->frame_stack, aug_ir_frame, i);
-        for(j = frame.scope_stack.length - 1; j >= 0; --j)
+        aug_ir_frame frame = aug_container_at_type(aug_ir_frame, ir->frame_stack, i);
+        for(j = frame.scope_stack->length - 1; j >= 0; --j)
         {
-            aug_ir_scope scope = aug_container_at_type(&frame.scope_stack, aug_ir_scope, j);
-            aug_symbol symbol = aug_symtable_get(scope.symtable, name);
-            if (symbol.type != AUG_SYM_NONE)
-            {
-                return symbol;
-            }
+            aug_ir_scope scope = aug_container_at_type(aug_ir_scope, frame.scope_stack, j);
+            aug_symbol* symbol_ptr = aug_hashtable_ptr_type(aug_symbol, scope.symtable, name->buffer);
+            if (symbol_ptr != NULL && symbol_ptr->type != AUG_SYM_NONE)
+                return *symbol_ptr;
         }
     }
 
@@ -2554,15 +2741,16 @@ static inline aug_symbol aug_ir_get_symbol(aug_ir*ir, aug_string* name)
 static inline aug_symbol aug_ir_symbol_relative(aug_ir*ir, aug_string* name)
 {
     int i,j;
-    for(i = ir->frame_stack.length - 1; i >= 0; --i)
+    for(i = ir->frame_stack->length - 1; i >= 0; --i)
     {
-        aug_ir_frame frame = aug_container_at_type(&ir->frame_stack, aug_ir_frame, i);
-        for(j = frame.scope_stack.length - 1; j >= 0; --j)
+        aug_ir_frame frame = aug_container_at_type(aug_ir_frame, ir->frame_stack, i);
+        for(j = frame.scope_stack->length - 1; j >= 0; --j)
         {
-            aug_ir_scope scope = aug_container_at_type(&frame.scope_stack, aug_ir_scope, j);
-            aug_symbol symbol = aug_symtable_get(scope.symtable, name);
-            if(symbol.type != AUG_SYM_NONE)
+            aug_ir_scope scope = aug_container_at_type(aug_ir_scope, frame.scope_stack, j);
+            aug_symbol* symbol_ptr = aug_hashtable_ptr_type(aug_symbol, scope.symtable, name->buffer);
+            if (symbol_ptr != NULL && symbol_ptr->type != AUG_SYM_NONE)
             {
+                aug_symbol symbol = *symbol_ptr;
                 switch (symbol.scope)
                 {
                 case AUG_SYM_SCOPE_GLOBAL:
@@ -2577,7 +2765,7 @@ static inline aug_symbol aug_ir_symbol_relative(aug_ir*ir, aug_string* name)
                 {
                     const aug_ir_frame* local_frame = aug_ir_current_frame(ir);
                     //If this variable is a local variable in an outer frame. Offset by 2 (ret addr and base index) for each frame delta
-                    int frame_delta = (ir->frame_stack.length-1) - i;
+                    int frame_delta = (ir->frame_stack->length-1) - i;
                     symbol.offset = symbol.offset - local_frame->base_index - frame_delta * AUG_CALL_FRAME_STACK_SIZE;
                     break;
                 }
@@ -3269,11 +3457,19 @@ static inline const char* aug_vm_read_bytes(aug_vm* vm)
     return vm->instruction - len;
 }
 
-aug_debug_symbol aug_vm_get_debug_symbol(aug_vm* vm, size_t operand_size)
+aug_string* aug_vm_get_debug_symbol_name(aug_vm* vm, size_t operand_size)
 {
     // not the -1 is to account for the immediate instruction advance befreo switch statement
     const int addr = (vm->instruction-1) - operand_size - vm->bytecode;
-    return aug_debug_symbols_get(vm->debug_symbols, addr);
+    int i;
+    // TODO: index by address for faster lookup. Not priority as this will only occur on VM error 
+    for(i = 0; i < vm->debug_symbols->length; ++i)
+    {
+        aug_debug_symbol debug_symbol = aug_container_at_type(aug_debug_symbol, vm->debug_symbols, i);
+        if(debug_symbol.bytecode_addr == addr)
+    return debug_symbol.symbol.name;
+    }
+    return NULL;
 }
 
 void aug_vm_startup(aug_vm* vm)
@@ -3309,7 +3505,7 @@ void aug_vm_load_script(aug_vm* vm, const aug_script* script)
     
     vm->instruction = vm->bytecode;
     vm->valid = (vm->bytecode != NULL);
-    vm->debug_symbols = script->debug_symbols;
+    vm->debug_symbols = script->debug_symbols; //NOTE weak ref
 
     if(script->stack_state != NULL)
     {
@@ -3715,7 +3911,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* local = aug_vm_get_local(vm, stack_offset);
                 if(local == NULL || local->type != AUG_FUNCTION)
                 {
-                    aug_string* sym_name = aug_vm_get_debug_symbol(vm, sizeof(int)).symbol.name;
+                    aug_string* sym_name = aug_vm_get_debug_symbol_name(vm, sizeof(int));
                     aug_log_vm_error(vm, "Local variable %s can not be called as a function", sym_name ? sym_name->buffer : "(anonymous)");
                     break;
                 }
@@ -3731,7 +3927,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* global = aug_vm_get_global(vm, stack_offset);
                 if(global == NULL || global->type != AUG_FUNCTION)
                 {                    
-                    aug_string* sym_name = aug_vm_get_debug_symbol(vm, sizeof(int)).symbol.name;
+                    aug_string* sym_name = aug_vm_get_debug_symbol_name(vm, sizeof(int));
                     aug_log_vm_error(vm, "Global variable %s can not be called as a function", sym_name ? sym_name->buffer : "(anonymous)");
                     break;
                 }
@@ -3797,7 +3993,7 @@ void aug_vm_execute(aug_vm* vm)
                 const int param_count = aug_vm_read_int(vm);
                 if (vm->arg_count != param_count)
                 {
-                    aug_string* sym_name = aug_vm_get_debug_symbol(vm, sizeof(int)).symbol.name;
+                    aug_string* sym_name = aug_vm_get_debug_symbol_name(vm, sizeof(int));
                     aug_log_vm_error(vm, "Incorrect number of arguments passed to %s function. Received %d expected %d ", sym_name ? sym_name->buffer : "anonymous", vm->arg_count, param_count);
                     break;
                 }
@@ -4147,8 +4343,8 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
 
             // Get variable in the current block. If it exists, error out. If it does not exist, set in table
             aug_ir_scope* scope = aug_ir_current_scope(ir);
-            aug_symbol symbol =  aug_symtable_get(scope->symtable, token_data);
-            if(symbol.offset != AUG_OPCODE_INVALID)
+            aug_symbol* symbol_ptr =  aug_hashtable_ptr_type(aug_symbol, scope->symtable, token_data->buffer);
+            if(symbol_ptr != NULL && symbol_ptr->type != AUG_SYM_NONE)
             {
                 ir->valid = false;
                 aug_log_input_error_at(ir->input, &token.pos, "Variable %s already defined in block", token_data->buffer);
@@ -4415,13 +4611,15 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
 
 char* aug_ir_to_bytecode(aug_ir* ir)
 {  
+    assert(ir != NULL && ir->operations != NULL);
+
     char* bytecode = (char*)AUG_ALLOC(sizeof(char)*ir->bytecode_offset);
     char* instruction = bytecode;
 
     size_t i;
-    for(i = 0; i < ir->operations.length; ++i)
+    for(i = 0; i < ir->operations->length; ++i)
     {
-        aug_ir_operation operation = aug_container_at_type(&ir->operations, aug_ir_operation, i);
+        aug_ir_operation operation = aug_container_at_type(aug_ir_operation, ir->operations, i);
         aug_ir_operand operand = operation.operand;
 
         // push operation opcode
@@ -4608,177 +4806,19 @@ aug_value* aug_array_back(const aug_array* array)
 	return array->length > 0 ? &array->buffer[array->length-1] : NULL; 
 }
 
-// SYMTABLE ============================================== SYMTABLE =============================================== SYMTABLE // 
-
-aug_symtable* aug_symtable_new(size_t size)
-{
-    aug_symtable* symtable = (aug_symtable*)AUG_ALLOC(sizeof(aug_symtable));
-	symtable->length = 0;
-	symtable->capacity = size; 
-    symtable->ref_count = 1;
-	symtable->buffer = (aug_symbol*)AUG_ALLOC(sizeof(aug_symbol)*symtable->capacity);
-	return symtable;
-}
-
-void aug_symtable_incref(aug_symtable* symtable)
-{
-    if(symtable)
-        ++symtable->ref_count;
-}
-
-aug_symtable* aug_symtable_decref(aug_symtable* symtable)
-{    
-    if(symtable != NULL && --symtable->ref_count == 0)
-    {
-        size_t i;
-        for(i = 0; i < symtable->length; ++i)
-        {
-            aug_symbol symbol = symtable->buffer[i];
-            aug_string_decref(symbol.name);
-        }
-        AUG_FREE(symtable->buffer);
-        AUG_FREE(symtable);
-        return NULL;
-    }
-    return symtable;
-}
-
-void  aug_symtable_resize(aug_symtable* symtable, size_t size)
-{
-	symtable->capacity = size; 
-	symtable->buffer = (aug_symbol*)AUG_REALLOC(symtable->buffer, sizeof(aug_symbol)*symtable->capacity);
-}
-
-bool aug_symtable_set(aug_symtable* symtable, aug_symbol symbol)
-{
-    aug_symbol existing_symbol = aug_symtable_get(symtable, symbol.name);
-    if(existing_symbol.type != AUG_SYM_NONE)
-        return false;
-
-    if(symtable->length + 1 >= symtable->capacity) 
-        aug_symtable_resize(symtable, 2 * symtable->capacity);
-    
-    
-    aug_symbol new_symbol = symbol;
-    aug_string_incref(new_symbol.name);
-
-    symtable->buffer[symtable->length++] = new_symbol;
-    return true;
-}
-
-aug_symbol aug_symtable_get(aug_symtable* symtable, aug_string* name)
-{
-    size_t i;
-    for(i = 0; i < symtable->length; ++i)
-    {
-        aug_symbol symbol = symtable->buffer[i];
-        if(aug_string_compare(symbol.name, name))
-            return symbol;
-    }
-    aug_symbol symbol;
-    symbol.offset = AUG_OPCODE_INVALID;
-    symbol.type = AUG_SYM_NONE;
-    symbol.argc = 0;
-    return symbol;
-}
-
-aug_symbol aug_symtable_get_bytes(aug_symtable* symtable, const char* name)
-{
-    size_t i;
-    for(i = 0; i < symtable->length; ++i)
-    {
-        aug_symbol symbol = symtable->buffer[i];
-        if(aug_string_compare_bytes(symbol.name, name))
-            return symbol;
-    }
-    aug_symbol symbol;
-    symbol.offset = AUG_OPCODE_INVALID;
-    symbol.type = AUG_SYM_NONE;
-    symbol.argc = 0;
-    return symbol;
-}
-
-// DEBUG SYMBOLS ======================================= DEBUG SYMBOLS ====================================== DEBUG SYMBOLS // 
-
-aug_debug_symbols* aug_debug_symbols_new(size_t size)
-{
-    aug_debug_symbols* symtable = (aug_debug_symbols*)AUG_ALLOC(sizeof(aug_debug_symbols));
-	symtable->length = 0;
-	symtable->capacity = size; 
-    symtable->ref_count = 1;
-	symtable->buffer = (aug_debug_symbol*)AUG_ALLOC(sizeof(aug_debug_symbol)*symtable->capacity);
-	return symtable;
-}
-
-void aug_debug_symbols_incref(aug_debug_symbols* symtable)
-{
-    if(symtable)
-        ++symtable->ref_count;
-}
-
-aug_debug_symbols* aug_debug_symbols_decref(aug_debug_symbols* symtable)
-{    
-    if(symtable != NULL && --symtable->ref_count == 0)
-    {
-        size_t i;
-        for(i = 0; i < symtable->length; ++i)
-        {
-            aug_debug_symbol debug_symbol = symtable->buffer[i];
-            aug_string_decref(debug_symbol.symbol.name);
-        }
-        AUG_FREE(symtable->buffer);
-        AUG_FREE(symtable);
-        return NULL;
-    }
-    return symtable;
-}
-
-void  aug_debug_symbols_resize(aug_debug_symbols* symtable, size_t size)
-{
-	symtable->capacity = size; 
-	symtable->buffer = (aug_debug_symbol*)AUG_REALLOC(symtable->buffer, sizeof(aug_debug_symbol)*symtable->capacity);
-}
-
-bool aug_debug_symbols_set(aug_debug_symbols* symtable, aug_debug_symbol debug_symbol)
-{
-    if(symtable->length + 1 >= symtable->capacity) 
-        aug_debug_symbols_resize(symtable, 2 * symtable->capacity);
-       
-    aug_debug_symbol new_symbol = debug_symbol;
-    aug_string_incref(new_symbol.symbol.name);
-
-    symtable->buffer[symtable->length++] = new_symbol;
-    return true;
-}
-
-aug_debug_symbol aug_debug_symbols_get(aug_debug_symbols* symtable, int bytecode_addr)
-{
-    size_t i;
-    for(i = 0; i < symtable->length; ++i)
-    {
-        aug_debug_symbol debug_symbol = symtable->buffer[i];
-        if(debug_symbol.bytecode_addr == bytecode_addr)
-            return debug_symbol;
-    }
-    aug_debug_symbol debug_symbol;
-    debug_symbol.symbol.name = NULL;
-    debug_symbol.symbol.type = AUG_SYM_NONE;
-    return debug_symbol;
-}
-
 // SCRIPT ================================================= SCRIPT ================================================= SCRIPT // 
 
-aug_script* aug_script_new(aug_symtable* globals, char* bytecode, aug_debug_symbols* debug_symbols)
+aug_script* aug_script_new(aug_hashtable* globals, char* bytecode, aug_container* debug_symbols)
 {
     aug_script* script = (aug_script*)AUG_ALLOC(sizeof(aug_script));
     script->stack_state = NULL;
     script->bytecode = bytecode;
 
     script->globals = globals;
-    aug_symtable_incref(script->globals);
+    aug_hashtable_incref(script->globals);
 
     script->debug_symbols = debug_symbols;
-    aug_debug_symbols_incref(script->debug_symbols);
+    aug_container_incref(script->debug_symbols);
     return script;
 }
 
@@ -4795,9 +4835,9 @@ void aug_script_delete(aug_script* script)
             aug_decref(value);
         }
     }
-    script->globals = aug_symtable_decref(script->globals);
+    script->globals = aug_hashtable_decref(script->globals);
     script->stack_state = aug_array_decref(script->stack_state);
-    script->debug_symbols = aug_debug_symbols_decref(script->debug_symbols);
+    script->debug_symbols = aug_container_decref(script->debug_symbols);
 
     if (script->bytecode != NULL)
         AUG_FREE(script->bytecode);
@@ -4933,13 +4973,14 @@ aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, i
     if (script->bytecode == NULL)
         return ret_value;
 
-    aug_symbol symbol = aug_symtable_get_bytes(script->globals, func_name);
-    if (symbol.type == AUG_SYM_NONE)
+    aug_symbol* symbol_ptr = aug_hashtable_ptr_type(aug_symbol, script->globals, func_name);
+    if (symbol_ptr == NULL || symbol_ptr->type == AUG_SYM_NONE)
     {
         aug_log_error(vm->error_callback, "Function %s not defined", func_name);
         return ret_value;
     }
 
+    aug_symbol symbol = *symbol_ptr; 
     switch (symbol.type)
     {
     case AUG_SYM_FUNC:
