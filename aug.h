@@ -30,7 +30,8 @@ SOFTWARE. */
         #include "aug.h"
 
     Todo: 
-    - Create Programs for loading/unloading compiled code. The compiled scripts will also dump symtables to allow aug_call*s
+    - Create Programs for loading/unloading compiled code. 
+        - The compiled scripts will also dump symtables to allow aug_call*s
     - Implement for loops
     - Serialize Bytecode to external file. Execute compiled bytecode from file
     - Opcodes for iterators, values references etc...
@@ -86,18 +87,6 @@ typedef struct aug_string
 	size_t length;
 } aug_string;
 
-aug_string* aug_string_new(size_t size);
-aug_string* aug_string_create(const char* bytes);
-void aug_string_incref(aug_string* string);
-aug_string* aug_string_decref(aug_string* string);
-void aug_string_resize(aug_string* string, size_t size);
-void aug_string_push(aug_string* string, char c);
-char aug_string_pop(aug_string* string);
-char aug_string_at(const aug_string* string, size_t index);
-char aug_string_back(const aug_string* string);
-bool aug_string_compare(const aug_string* a, const aug_string* b);
-bool aug_string_compare_bytes(const aug_string* a, const char* bytes);
-
 typedef struct aug_array
 {
 	aug_value* buffer;
@@ -106,16 +95,6 @@ typedef struct aug_array
 	size_t length;
 } aug_array;
 
-aug_array* aug_array_new(size_t size);
-void  aug_array_incref(aug_array* array);
-aug_array* aug_array_decref(aug_array* array);
-void  aug_array_resize(aug_array* array, size_t size);
-aug_value* aug_array_push(aug_array* array);
-aug_value* aug_array_pop(aug_array* array);
-aug_value* aug_array_at(const aug_array* array, size_t index);
-aug_value* aug_array_back(const aug_array* array);
-
-// Object instance
 typedef struct aug_object
 {
     int ref_count;
@@ -152,23 +131,6 @@ typedef struct aug_value
         aug_array* array;
     };
 } aug_value;
-
-typedef void(aug_error_function)(const char* /*msg*/);
-typedef aug_value /*return*/(aug_extension)(int argc, aug_value* /*args*/);
-
-aug_value aug_none();
-
-bool aug_get_bool(const aug_value* value);
-int aug_get_int(const aug_value* value);
-float aug_get_float(const aug_value* value);
-const char* aug_get_type_label(const aug_value* value);
-
-aug_value aug_create_array();
-aug_value aug_create_bool(bool data);
-aug_value aug_create_int(int data);
-aug_value aug_create_char(char data);
-aug_value aug_create_float(float data);
-aug_value aug_create_string(const char* data);
 
 // Symbol types
 typedef enum aug_symbol_type
@@ -213,7 +175,7 @@ typedef struct aug_script
     aug_container* debug_symbols;
 } aug_script;
 
-// Calling frames are used to presize and access parameters and local variables from the stack within a calling context
+// Calling frames are used to access parameters and local variables from the stack within a calling context
 typedef struct aug_frame
 {
     int base_index;
@@ -224,6 +186,9 @@ typedef struct aug_frame
     int arg_count;
     const char* instruction; 
 } aug_frame;
+
+typedef void(aug_error_function)(const char* /*msg*/);
+typedef aug_value /*return*/(aug_extension)(int argc, aug_value* /*args*/);
 
 // Running instance of the virtual machine
 typedef struct aug_vm
@@ -249,12 +214,14 @@ typedef struct aug_vm
     aug_container* debug_symbols; //weak pointer to script debug symbols
 } aug_vm;
 
+// VM API ----------------------------------------- VM API ---------------------------------------------------- VM API//
 // VM Must call both startup before using the VM. When done, must call shutdown.
 aug_vm* aug_startup(aug_error_function* on_error);
 void aug_shutdown(aug_vm* vm);
 
 // Extend the script functions via external functions. 
-// NOTE: changing the registered functions will require a script recompilation. Can not guarantee the external function call will work. 
+// NOTE: Changing the registered functions will require a script recompilation. 
+//       Can not guarantee the external function call will work, as bytecode uses function index. 
 void aug_register(aug_vm* vm, const char* func_name, aug_extension* extension);
 void aug_unregister(aug_vm* vm, const char* func_name);
 
@@ -271,13 +238,52 @@ void aug_unload(aug_vm* vm, aug_script* script);
 aug_value aug_call(aug_vm* vm, aug_script* script, const char* func_name);
 aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, int argc, aug_value* args);
 
+
+// Value API ------------------------------------- Value API ------------------------------------------------ Value API//
+aug_value aug_none();
+
+bool aug_get_bool(const aug_value* value);
+int aug_get_int(const aug_value* value);
+float aug_get_float(const aug_value* value);
+const char* aug_get_type_label(const aug_value* value);
+
+aug_value aug_create_array();
+aug_value aug_create_bool(bool data);
+aug_value aug_create_int(int data);
+aug_value aug_create_char(char data);
+aug_value aug_create_float(float data);
+aug_value aug_create_string(const char* data);
+
+// String API------------------------------------ String API ----------------------------------------------- String API//
+aug_string* aug_string_new(size_t size);
+aug_string* aug_string_create(const char* bytes);
+void aug_string_incref(aug_string* string);
+aug_string* aug_string_decref(aug_string* string);
+void aug_string_resize(aug_string* string, size_t size);
+void aug_string_push(aug_string* string, char c);
+char aug_string_pop(aug_string* string);
+char aug_string_at(const aug_string* string, size_t index);
+char aug_string_back(const aug_string* string);
+bool aug_string_compare(const aug_string* a, const aug_string* b);
+bool aug_string_compare_bytes(const aug_string* a, const char* bytes);
+
+// Array API --------------------------------------- Array API --------------------------------------------- Array API//
+aug_array* aug_array_new(size_t size);
+void  aug_array_incref(aug_array* array);
+aug_array* aug_array_decref(aug_array* array);
+void  aug_array_resize(aug_array* array, size_t size);
+aug_value* aug_array_push(aug_array* array);
+aug_value* aug_array_pop(aug_array* array);
+aug_value* aug_array_at(const aug_array* array, size_t index);
+aug_value* aug_array_back(const aug_array* array);
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif //__AUG_HEADER__
 
-// -------------------------------------- Implementation Details ---------------------------------------// 
+// IMPLEMENTATION ============================= IMPLEMENTATION  ======================================= IMPLEMENTATION //
 
 #if defined(AUG_IMPLEMENTATION)
 
@@ -307,7 +313,7 @@ extern "C" {
 #define AUG_REALLOC(ptr, size) realloc(ptr, size)
 #endif//AUG_REALLOC
 
-// CONTAINER ====================================   CONTAINER   =========================================== CONTAINER // 
+// CONTAINER ====================================   CONTAINER   ============================================ CONTAINER // 
 
 // Generic resizeable array data structure that allocates bytes. 
 // Supports for type specific casting to modify and access.
@@ -332,7 +338,7 @@ aug_container* aug_container_new(size_t size, size_t element_size)
     return container;   
 }        
 
-aug_container* aug_container_incref(aug_container* container)   
+void aug_container_incref(aug_container* container)   
 {
     if(container != NULL)
         ++container->ref_count;
@@ -396,15 +402,22 @@ char* aug_container_back(const aug_container* container)
 	*((type*)aug_container_back(container))
 
 // HASHTABLE ====================================== HASHTABLE =============================================== HASHTABLE//
-#define AUG_HASH_INVALID -1
 
-typedef int(aug_hashtable_hash)(const char* /*str*/);
+#ifndef AUG_HASHTABLE_SIZE_DEFAULT
+#define AUG_HASHTABLE_SIZE_DEFAULT 1
+#endif//AUG_HASHTABLE_SIZE_DEFAULT
+
+#ifndef AUG_HASHTABLE_BUCKET_SIZE_DEFAULT
+#define AUG_HASHTABLE_BUCKET_SIZE_DEFAULT 1
+#endif//AUG_HASHTABLE_BUCKET_SIZE_DEFAULT
+
+typedef size_t(aug_hashtable_hash)(const char* /*str*/);
 typedef void(aug_hashtable_free)(uint8_t* /*data*/);
 typedef void(aug_hashtable_iterator)(uint8_t* /*data*/);
 
 typedef struct aug_hashtable_bucket
-{                             
-    size_t* hash_buffer;
+{
+    char** key_buffer;
     uint8_t* data_buffer;
     size_t capacity;
 } aug_hashtable_bucket;
@@ -421,6 +434,50 @@ typedef struct aug_hashtable
     aug_hashtable_free * free_func;
 } aug_hashtable;
 
+void aug_hashtable_bucket_init(aug_hashtable* map, aug_hashtable_bucket* bucket, int size)
+{
+    bucket->capacity = size;
+    bucket->key_buffer = (char**)AUG_ALLOC(sizeof(char*) * size);
+    bucket->data_buffer = (uint8_t*)AUG_ALLOC(sizeof(uint8_t) * map->element_size * size);
+    memset(bucket->key_buffer, 0, sizeof(char*) * size);
+}
+
+uint8_t* aug_hashtable_bucket_create(aug_hashtable* map, aug_hashtable_bucket* bucket, const char* key)
+{
+    size_t i;
+    for (i = 0; i < bucket->capacity; ++i)
+    {
+        if (bucket->key_buffer[i] == NULL)
+            break;
+
+        if (strcmp(bucket->key_buffer[i], key) == 0)
+            return NULL;
+    }
+
+    if (i >= bucket->capacity)
+    {
+        size_t new_size = 2 * bucket->capacity;
+        bucket->key_buffer = (char**)AUG_REALLOC(bucket->key_buffer, sizeof(char*) * new_size);
+        bucket->data_buffer = (uint8_t*)AUG_REALLOC(bucket->data_buffer, map->element_size * new_size);
+
+        size_t j; // init new entries to null 
+        for (j = bucket->capacity; j < new_size; ++j)
+            bucket->key_buffer[j] = NULL;
+        bucket->capacity = new_size;
+    }
+
+    ++map->count;
+    const int len = strlen(key);
+    const int buff_size = sizeof(char) * len + 1;
+    bucket->key_buffer[i] = (char*)AUG_ALLOC(buff_size);
+#ifdef AUG_SECURE
+    strcpy_s(bucket->key_buffer[i], buff_size, key);
+#else
+    strcpy(bucket->key_buffer[i], key);
+#endif
+    return &bucket->data_buffer[i * map->element_size];
+}
+
 aug_hashtable* aug_hashtable_new(size_t size, size_t element_size, aug_hashtable_hash* hash, aug_hashtable_free* free)
 {
     assert(hash != NULL);
@@ -434,19 +491,62 @@ aug_hashtable* aug_hashtable_new(size_t size, size_t element_size, aug_hashtable
     map->count = 0;
     map->buckets = (aug_hashtable_bucket*)AUG_ALLOC(sizeof(aug_hashtable_bucket) * size);
     
-    int i;
+    size_t i;
     for(i = 0; i < map->capacity; ++i)
     {
         aug_hashtable_bucket* bucket = &map->buckets[i];
-        bucket->capacity = 1;
-        bucket->hash_buffer = (size_t*)AUG_ALLOC(sizeof(size_t) * bucket->capacity);
-        bucket->data_buffer = (char*)AUG_ALLOC(sizeof(uint8_t) * element_size * bucket->capacity);
-        memset(bucket->hash_buffer, AUG_HASH_INVALID, sizeof(size_t) * bucket->capacity);
+        aug_hashtable_bucket_init(map, bucket, AUG_HASHTABLE_BUCKET_SIZE_DEFAULT);
     }
     return map;
 }
 
-aug_hashtable* aug_hashtable_incref(aug_hashtable* map)
+
+void aug_hashtable_resize(aug_hashtable* map, size_t size)
+{
+    size_t old_size = map->capacity;
+    aug_hashtable_bucket* old_buckets = map->buckets;
+
+    map->capacity = size;
+    map->buckets = (aug_hashtable_bucket*)AUG_ALLOC(sizeof(aug_hashtable_bucket) * map->capacity);
+
+    size_t i, j;
+    for (i = 0; i < map->capacity; ++i)
+    {
+        aug_hashtable_bucket* bucket = &map->buckets[i];
+        aug_hashtable_bucket_init(map, bucket, AUG_HASHTABLE_BUCKET_SIZE_DEFAULT);
+    }
+
+    // reindex all values, copy over raw data 
+    for (i = 0; i < old_size; ++i)
+    {
+        aug_hashtable_bucket* old_bucket = &old_buckets[i];
+        for (j = 0; j < old_bucket->capacity; ++j)
+        {
+            if (old_bucket->key_buffer[j] != NULL)
+            {
+                char* key = old_bucket->key_buffer[j];
+                uint8_t* data = &old_bucket->data_buffer[j];
+                int hash = map->hash_func(key);
+
+                aug_hashtable_bucket* new_bucket = &map->buckets[hash % map->capacity];
+                uint8_t* new_data = aug_hashtable_bucket_create(map, new_bucket, key);
+                assert(new_data != NULL);
+                size_t e;
+                for (e = 0; e < map->element_size; ++e)
+                    new_data[e] = data[e];
+
+                AUG_FREE(old_bucket->key_buffer[j]);
+            }
+        }
+
+        AUG_FREE(old_bucket->data_buffer);
+        AUG_FREE(old_bucket->key_buffer);
+    }
+
+    AUG_FREE(old_buckets);
+}
+
+void aug_hashtable_incref(aug_hashtable* map)
 {
     if(map)
         ++map->ref_count;
@@ -456,22 +556,25 @@ aug_hashtable* aug_hashtable_decref(aug_hashtable* map)
 {
     if(map && --map->ref_count == 0)
     {
-        int i;
+        size_t i;
         for(i = 0; i < map->capacity; ++i)
         {
             aug_hashtable_bucket* bucket = &map->buckets[i];
             if(map->free_func)
             {
-                int j;    
-                for(j = 0; j < bucket->capacity; ++j)
+                size_t j;
+                for (j = 0; j < bucket->capacity; ++j)
                 {
-                    if(bucket->hash_buffer[j] != AUG_HASH_INVALID)
+                    if (bucket->key_buffer[j] != NULL)
+                    {
                         map->free_func(&bucket->data_buffer[j * map->element_size]);
-                }    
+                        AUG_FREE(bucket->key_buffer[j]);
+                    }
+                }
             }
             
             AUG_FREE(bucket->data_buffer);
-            AUG_FREE(bucket->hash_buffer);
+            AUG_FREE(bucket->key_buffer);
         }
         AUG_FREE(map->buckets);
         AUG_FREE(map);
@@ -484,47 +587,31 @@ uint8_t* aug_hashtable_create(aug_hashtable* map, const char* key)
 {
     int hash = map->hash_func(key);
     aug_hashtable_bucket* bucket = &map->buckets[hash % map->capacity];
-    // TODO: Create a map resize, if bucket capacity exceeds threshold. Reindex all entries
+    // If a bucket is larger than the map capacity, reindex all entries
+    //if (bucket->capacity > map->capacity)
+    //{
+    //    aug_hashtable_resize(map, map->capacity * 2);
+    //    bucket = &map->buckets[hash % map->capacity];
+    //}
 
-    int i;
-    for(i = 0; i  < bucket->capacity; ++i)
-    {
-        if(bucket->hash_buffer[i] == AUG_HASH_INVALID)
-            break;
-        
-        if(bucket->hash_buffer[i] == hash)
-            return NULL;
-    }
-
-    if (i >= bucket->capacity)
-    {
-        int new_size = 2 * bucket->capacity;
-        bucket->hash_buffer = (size_t*)AUG_REALLOC(bucket->hash_buffer, sizeof(size_t) * new_size);
-        bucket->data_buffer = (char*)AUG_REALLOC(bucket->data_buffer, map->element_size * new_size);
-
-        int i; // init new entries to null 
-        for(i = new_size - bucket->capacity; i < bucket->capacity; ++i)
-            bucket->hash_buffer[i] = AUG_HASH_INVALID;
-        bucket->capacity = new_size;
-    }
-
-    ++map->count;
-
-    bucket->hash_buffer[i] = hash;
-    return &bucket->data_buffer[i*map->element_size];
+    uint8_t* data = aug_hashtable_bucket_create(map, bucket, key);
+    if(data != NULL)
+        ++map->count;
+    return data;
 }
 
 bool aug_hashtable_remove(aug_hashtable* map, const char* key)
 {
     const int find_hash = map->hash_func(key);
     aug_hashtable_bucket* bucket = &map->buckets[find_hash % map->capacity];
-    int i;
+    size_t i;
     for(i = 0; i  < bucket->capacity; ++i)
     {
-        int hash = bucket->hash_buffer[i];
-        if(hash != AUG_HASH_INVALID && hash == find_hash)
+        const char* check_key = bucket->key_buffer[i];
+        if(check_key != NULL && strcmp(key, check_key) == 0)
         {
-            bucket->hash_buffer[i] = AUG_HASH_INVALID;
+            AUG_FREE(bucket->key_buffer[i]);
+            bucket->key_buffer[i] = NULL;
             if(map->free_func)
                 map->free_func(&bucket->data_buffer[i * map->element_size]);
         }
@@ -534,13 +621,13 @@ bool aug_hashtable_remove(aug_hashtable* map, const char* key)
 
 uint8_t* aug_hashtable_get(aug_hashtable* map, const char* key)
 {
-    const int find_hash = map->hash_func(key);
+    const size_t find_hash = map->hash_func(key);
     aug_hashtable_bucket* bucket = &map->buckets[find_hash % map->capacity];
-    int i;
+    size_t i;
     for(i = 0; i  < bucket->capacity; ++i)
     {
-        int hash = bucket->hash_buffer[i];
-        if(hash != AUG_HASH_INVALID && hash == find_hash)
+        const char* check_key = bucket->key_buffer[i];
+        if (check_key != NULL && strcmp(key, check_key) == 0)
             return &bucket->data_buffer[i * map->element_size];
     }
     return NULL;
@@ -548,34 +635,28 @@ uint8_t* aug_hashtable_get(aug_hashtable* map, const char* key)
 
 void aug_hashtable_foreach(aug_hashtable* map, aug_hashtable_iterator* iterator)
 {
-    int i, j;
-    for(int i = 0; i < map->capacity; ++i)
+    size_t i, j;
+    for(i = 0; i < map->capacity; ++i)
     {
         aug_hashtable_bucket* bucket = &map->buckets[i];
-        for(int j = 0; j < bucket->capacity; ++j)
+        for(j = 0; j < bucket->capacity; ++j)
         {        
-            if(bucket->hash_buffer[j] != AUG_HASH_INVALID)
+            if(bucket->key_buffer[j] != NULL)
                 iterator(&bucket->data_buffer[j * map->element_size]);
         }
     }
 }
 
-int aug_hashtable_hash_default(const char* str)
+size_t aug_hashtable_hash_default(const char* str)
 {
     int hash = 5381; // DJB2 hash
     while(*str)
         hash = ((hash << 5) + hash) + *str++;
-    while(hash == AUG_HASH_INVALID) 
-        ++hash;
     return hash;
 }
 
-#ifndef AUG_HASHTABLE_DEFAULT_BUCKET_SIZE
-#define AUG_HASHTABLE_DEFAULT_BUCKET_SIZE 128
-#endif//AUG_HASHTABLE_DEFAULT_BUCKET_SIZE
-
 #define aug_hashtable_new_type(type)\
-    aug_hashtable_new(AUG_HASHTABLE_DEFAULT_BUCKET_SIZE, sizeof(type), aug_hashtable_hash_default, NULL)
+    aug_hashtable_new(AUG_HASHTABLE_SIZE_DEFAULT, sizeof(type), aug_hashtable_hash_default, NULL)
 
 #define aug_hashtable_create_type(type, map, key)\
     ((type*)aug_hashtable_create(map, key))
@@ -610,7 +691,7 @@ void aug_log_error(aug_error_function* error_callback, const char* format, ...)
     va_end(args);
 }
 
-// INPUT ========================================   INPUT   ======================================================== INPUT // 
+// INPUT ========================================   INPUT   ===================================================== INPUT // 
 
 typedef struct aug_pos
 {
@@ -781,7 +862,8 @@ static inline void aug_log_input_error_hint(aug_input* input, const aug_pos* pos
     while (isspace(c) && ++ws_skipped)
         c = fgetc(input->file);
 
-    aug_log_error(input->error_callback, "Syntax Error %s:(%d,%d) ", input->filename->buffer, pos->line + 1, pos->col + 1);
+    aug_log_error(input->error_callback, "Syntax Error %s:(%d,%d) ", 
+        input->filename->buffer, pos->line + 1, pos->col + 1);
 
     // Draw line
     const int buff_size = 4096;
@@ -832,15 +914,15 @@ void aug_log_input_error_at(aug_input* input, const aug_pos* pos, const char* fo
     va_end(args);
 }
 
-// TOKENS ========================================   TOKENS   ====================================================== TOKENS // 
+// TOKENS ========================================   TOKENS   ================================================== TOKENS // 
 
 // Static token details
 typedef struct aug_token_detail
 {
     const char* label;    // the string representation, used for visualization and debugging
-    char prec;            // if the token is an operator, this is the precedence (note: higher values take precendece)
+    char prec;            // if the token is an operator, this is the precedence (higher values take precendece)
     int  argc;            // if the token is an operator, this is the number of arguments
-    bool capture;         // if non-zero, the token will contain the source string value (i.e. integer and string literals)
+    bool capture;         // if non-zero, the token will contain the source string value (integer and string literals)
     const char* keyword;  // if non-null, the token must match the provided keyword
 } aug_token_detail;
 
@@ -934,7 +1016,7 @@ typedef struct  aug_token
 
 } aug_token;
 
-// LEXER ==========================================   LEXER   ======================================================= LEXER // 
+// LEXER ==========================================   LEXER   =================================================== LEXER // 
 
 // Lexer state
 typedef struct aug_lexer
@@ -1429,7 +1511,7 @@ bool aug_lexer_move(aug_lexer* lexer)
     return lexer->curr.id != AUG_TOKEN_NONE;
 }
 
-// AST ================================================   AST   ======================================================= AST // 
+// AST ================================================   AST   =================================================== AST // 
 
 typedef enum aug_ast_id
 {
@@ -1509,7 +1591,7 @@ static inline void aug_ast_add(aug_ast* node, aug_ast* child)
     node->children[node->children_size++] = child;
 }
 
-// PARSER =============================================   PARSER   ================================================= PARSER // 
+// PARSER =============================================   PARSER   ============================================= PARSER // 
 
 static inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_container* op_stack, aug_container* expr_stack)
 {
@@ -2249,7 +2331,7 @@ aug_ast* aug_parse(aug_input* input)
     return root;
 }
 
-// OPCODE =============================================   OPCODE   ================================================= OPCODE // 
+// OPCODE =============================================   OPCODE   ============================================= OPCODE // 
 
 #define AUG_OPCODE_LIST           \
 	AUG_OPCODE(EXIT)              \
@@ -2363,7 +2445,7 @@ typedef struct aug_ir_operand
     aug_ir_operand_type type;
 } aug_ir_operand;
 
-static_assert(sizeof(float) >= sizeof(int), "Ensure bytes array has enough space to contain both int and float data types");
+static_assert(sizeof(float) >= sizeof(int), "Ensure enough bytes to contain both int and float data types");
 
 typedef struct aug_ir_operation
 {
@@ -2764,7 +2846,8 @@ static inline aug_symbol aug_ir_symbol_relative(aug_ir*ir, aug_string* name)
                 case AUG_SYM_SCOPE_LOCAL:
                 {
                     const aug_ir_frame* local_frame = aug_ir_current_frame(ir);
-                    //If this variable is a local variable in an outer frame. Offset by 2 (ret addr and base index) for each frame delta
+                    //If this variable is a local variable in an outer frame, calculating the delta
+                    // must account for frame size to account for frame stack values (ret addr and base index) 
                     int frame_delta = (ir->frame_stack->length-1) - i;
                     symbol.offset = symbol.offset - local_frame->base_index - frame_delta * AUG_CALL_FRAME_STACK_SIZE;
                     break;
@@ -2782,7 +2865,7 @@ static inline aug_symbol aug_ir_symbol_relative(aug_ir*ir, aug_string* name)
     return sym;
 }
 
-// VALUE ===============================================   VALUE   ================================================== VALUE // 
+// VALUE ===============================================   VALUE   ============================================= VALUE // 
 
 static inline bool aug_set_bool(aug_value* value, bool data)
 {
@@ -3317,7 +3400,7 @@ static inline bool aug_or(aug_value* result, aug_value* lhs, aug_value* rhs)
 
 #undef AUG_DEFINE_BINOP
 
-// VM  =====================================================  VM  ====================================================== VM // 
+// VM  =====================================================  VM  ================================================== VM // 
 
 // Used to convert values to/from bytes for constant values
 typedef union aug_vm_bytecode_value
@@ -3329,7 +3412,7 @@ typedef union aug_vm_bytecode_value
     unsigned char bytes[sizeof(float)]; //Used to access raw byte data to bool, float and int types
 } aug_vm_bytecode_value;
 
-static_assert(sizeof(float) >= sizeof(int), "Ensure bytes array has enough space to contain both int and float data types");
+static_assert(sizeof(float) >= sizeof(int), "Ensure enough bytes to contain both int and float data types");
 
 void aug_log_vm_error(aug_vm* vm, const char* format, ...)
 {
@@ -3461,13 +3544,13 @@ aug_string* aug_vm_get_debug_symbol_name(aug_vm* vm, size_t operand_size)
 {
     // not the -1 is to account for the immediate instruction advance befreo switch statement
     const int addr = (vm->instruction-1) - operand_size - vm->bytecode;
-    int i;
+    size_t i;
     // TODO: index by address for faster lookup. Not priority as this will only occur on VM error 
     for(i = 0; i < vm->debug_symbols->length; ++i)
     {
         aug_debug_symbol debug_symbol = aug_container_at_type(aug_debug_symbol, vm->debug_symbols, i);
         if(debug_symbol.bytecode_addr == addr)
-    return debug_symbol.symbol.name;
+            return debug_symbol.symbol.name;
     }
     return NULL;
 }
@@ -3911,8 +3994,9 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* local = aug_vm_get_local(vm, stack_offset);
                 if(local == NULL || local->type != AUG_FUNCTION)
                 {
-                    aug_string* sym_name = aug_vm_get_debug_symbol_name(vm, sizeof(int));
-                    aug_log_vm_error(vm, "Local variable %s can not be called as a function", sym_name ? sym_name->buffer : "(anonymous)");
+                    aug_string* name = aug_vm_get_debug_symbol_name(vm, sizeof(int));
+                    aug_log_vm_error(vm, "Local variable %s can not a function", 
+                        name ? name->buffer : "(anonymous)");
                     break;
                 }
 
@@ -3927,8 +4011,9 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* global = aug_vm_get_global(vm, stack_offset);
                 if(global == NULL || global->type != AUG_FUNCTION)
                 {                    
-                    aug_string* sym_name = aug_vm_get_debug_symbol_name(vm, sizeof(int));
-                    aug_log_vm_error(vm, "Global variable %s can not be called as a function", sym_name ? sym_name->buffer : "(anonymous)");
+                    aug_string* name = aug_vm_get_debug_symbol_name(vm, sizeof(int));
+                    aug_log_vm_error(vm, "Global variable %s can not a function", 
+                        name ? name->buffer : "(anonymous)");
                     break;
                 }
 
@@ -3993,8 +4078,9 @@ void aug_vm_execute(aug_vm* vm)
                 const int param_count = aug_vm_read_int(vm);
                 if (vm->arg_count != param_count)
                 {
-                    aug_string* sym_name = aug_vm_get_debug_symbol_name(vm, sizeof(int));
-                    aug_log_vm_error(vm, "Incorrect number of arguments passed to %s function. Received %d expected %d ", sym_name ? sym_name->buffer : "anonymous", vm->arg_count, param_count);
+                    aug_string* name = aug_vm_get_debug_symbol_name(vm, sizeof(int));
+                    aug_log_vm_error(vm, "Incorrect number of arguments passed to %s. Received %d expected %d ", 
+                        name ? name->buffer : "anonymous", vm->arg_count, param_count);
                     break;
                 }
                 break;
@@ -4101,7 +4187,7 @@ aug_value aug_vm_execute_from_frame(aug_vm* vm, int func_addr, int argc, aug_val
     return ret_value;
 }
 
-// COMPILER ============================================== COMPILER =============================================== COMPILER // 
+// COMPILER ============================================== COMPILER ========================================== COMPILER // 
 
 void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
 {
@@ -4212,7 +4298,8 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             if(symbol.type == AUG_SYM_NONE)
             {
                 ir->valid = false;
-                aug_log_input_error_at(ir->input, &token.pos, "Variable %s not defined in current block", token_data->buffer);
+                aug_log_input_error_at(ir->input, &token.pos, "Variable %s not defined in current block", 
+                    token_data->buffer);
                 return;
             }
 
@@ -4319,7 +4406,8 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             else if(symbol.type == AUG_SYM_FUNC)
             {
                 ir->valid = false;
-                aug_log_input_error_at(ir->input, &token.pos, "Can not assign function %s to a value", token_data->buffer);
+                aug_log_input_error_at(ir->input, &token.pos, "Can not assign function %s to a value", 
+                    token_data->buffer);
                 break;
             }
 
@@ -4347,7 +4435,8 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             if(symbol_ptr != NULL && symbol_ptr->type != AUG_SYM_NONE)
             {
                 ir->valid = false;
-                aug_log_input_error_at(ir->input, &token.pos, "Variable %s already defined in block", token_data->buffer);
+                aug_log_input_error_at(ir->input, &token.pos, "Variable %s already defined in block", 
+                    token_data->buffer);
                 break;
             }
 
@@ -4454,7 +4543,8 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 if(symbol.type == AUG_SYM_FUNC && symbol.argc != arg_count)
                 {
                     ir->valid = false;
-                    aug_log_input_error_at(ir->input, &token.pos, "Function Call %s passed %d arguments, expected %d", token_data->buffer, arg_count, symbol.argc);
+                    aug_log_input_error_at(ir->input, &token.pos, "Function Call %s passed %d arguments, expected %d", 
+                        token_data->buffer, arg_count, symbol.argc);
                 }
                 else
                 {
@@ -4613,6 +4703,9 @@ char* aug_ir_to_bytecode(aug_ir* ir)
 {  
     assert(ir != NULL && ir->operations != NULL);
 
+    if (!ir->valid)
+        return NULL;
+
     char* bytecode = (char*)AUG_ALLOC(sizeof(char)*ir->bytecode_offset);
     char* instruction = bytecode;
 
@@ -4649,7 +4742,7 @@ char* aug_ir_to_bytecode(aug_ir* ir)
     return bytecode;
 }
 
-// STRING ================================================= STRING ================================================== STRING // 
+// STRING ================================================= STRING ============================================ STRING // 
 
 aug_string* aug_string_new(size_t size) 
 {
@@ -4749,7 +4842,7 @@ aug_string* aug_string_decref(aug_string* string)
     return string;
 }
 
-// ARRAY ================================================== ARRAY ==================================================== ARRAY // 
+// ARRAY ================================================== ARRAY ============================================== ARRAY // 
 
 aug_array* aug_array_new(size_t size)
 {                
@@ -4806,7 +4899,7 @@ aug_value* aug_array_back(const aug_array* array)
 	return array->length > 0 ? &array->buffer[array->length-1] : NULL; 
 }
 
-// SCRIPT ================================================= SCRIPT ================================================= SCRIPT // 
+// SCRIPT ================================================= SCRIPT ============================================= SCRIPT // 
 
 aug_script* aug_script_new(aug_hashtable* globals, char* bytecode, aug_container* debug_symbols)
 {
@@ -4844,7 +4937,7 @@ void aug_script_delete(aug_script* script)
     AUG_FREE(script);
 }
 
-// API ====================================================== API ====================================================== API // 
+// API ================================================= API ====================================================== API // 
 
 aug_vm* aug_startup(aug_error_function* error_callback)
 {

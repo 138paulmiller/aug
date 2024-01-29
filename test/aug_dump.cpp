@@ -173,12 +173,13 @@ void dump_ast(aug_ast* root)
 
 void dump_ir(aug_ir* ir)
 {
+	assert(ir && ir->operations);
 	printf("Bytecode\n");
 
     size_t i;
-   	for(i = 0; i < ir->operations.length; ++i)
+   	for(i = 0; i < ir->operations->length; ++i)
     {
-		aug_ir_operation operation = aug_container_at_type(&ir->operations, aug_ir_operation, i);
+		aug_ir_operation operation = aug_container_at_type(aug_ir_operation, ir->operations, i);
 
 		printf("%d\t\t%s", (int)operation.bytecode_offset, aug_opcode_labels[(int)operation.opcode]);
 		aug_ir_operand operand = operation.operand;
@@ -203,8 +204,18 @@ void dump_ir(aug_ir* ir)
 			break;
 		}
 
-		aug_debug_symbol debug_symbol = aug_debug_symbols_get(ir->debug_symbols, (int)operation.bytecode_offset);
-		if (debug_symbol.symbol.name) printf("(%s)", debug_symbol.symbol.name->buffer);
+		int addr = (int)operation.bytecode_offset;
+		size_t i;
+		// TODO: index by address for faster lookup. Not priority as this will only occur on VM error 
+		for (i = 0; i < ir->debug_symbols->length; ++i)
+		{
+			aug_debug_symbol debug_symbol = aug_container_at_type(aug_debug_symbol, ir->debug_symbols, i);
+			if (debug_symbol.bytecode_addr == addr)
+			{
+				if (debug_symbol.symbol.name) printf("(%s)", debug_symbol.symbol.name->buffer);
+				break;
+			};
+		}
 		printf("\n");
 	}
 }
