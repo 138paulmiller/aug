@@ -466,6 +466,9 @@ uint8_t* aug_hashtable_bucket_create(aug_hashtable* map, aug_hashtable_bucket* b
         bucket->capacity = new_size;
     }
 
+    if (bucket->key_buffer[i] != NULL)
+        AUG_FREE(bucket->key_buffer[i]);
+
     ++map->count;
     const int len = strlen(key);
     const int buff_size = sizeof(char) * len + 1;
@@ -560,19 +563,16 @@ aug_hashtable* aug_hashtable_decref(aug_hashtable* map)
         for(i = 0; i < map->capacity; ++i)
         {
             aug_hashtable_bucket* bucket = &map->buckets[i];
-            if(map->free_func)
+            size_t j;
+            for (j = 0; j < bucket->capacity; ++j)
             {
-                size_t j;
-                for (j = 0; j < bucket->capacity; ++j)
+                if (bucket->key_buffer[j] != NULL)
                 {
-                    if (bucket->key_buffer[j] != NULL)
-                    {
+                    if (map->free_func)
                         map->free_func(&bucket->data_buffer[j * map->element_size]);
-                        AUG_FREE(bucket->key_buffer[j]);
-                    }
+                    AUG_FREE(bucket->key_buffer[j]);
                 }
             }
-            
             AUG_FREE(bucket->data_buffer);
             AUG_FREE(bucket->key_buffer);
         }
