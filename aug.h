@@ -434,12 +434,17 @@ typedef struct aug_hashtable
     aug_hashtable_free * free_func;
 } aug_hashtable;
 
-void aug_hashtable_bucket_init(aug_hashtable* map, aug_hashtable_bucket* bucket, int size)
+void aug_hashtable_bucket_init(aug_hashtable* map, int size)
 {
-    bucket->capacity = size;
-    bucket->key_buffer = (char**)AUG_ALLOC(sizeof(char*) * size);
-    bucket->data_buffer = (uint8_t*)AUG_ALLOC(sizeof(uint8_t) * map->element_size * size);
-    memset(bucket->key_buffer, 0, sizeof(char*) * size);
+    size_t i;
+    for (i = 0; i < map->capacity; ++i)
+    {
+        aug_hashtable_bucket* bucket = &map->buckets[i];
+        bucket->capacity = size;
+        bucket->key_buffer = (char**)AUG_ALLOC(sizeof(char*) * size);
+        bucket->data_buffer = (uint8_t*)AUG_ALLOC(sizeof(uint8_t) * map->element_size * size);
+        memset(bucket->key_buffer, 0, sizeof(char*) * size);
+    }
 }
 
 uint8_t* aug_hashtable_bucket_create(aug_hashtable* map, aug_hashtable_bucket* bucket, const char* key)
@@ -493,13 +498,7 @@ aug_hashtable* aug_hashtable_new(size_t size, size_t element_size, aug_hashtable
     map->ref_count = 1;
     map->count = 0;
     map->buckets = (aug_hashtable_bucket*)AUG_ALLOC(sizeof(aug_hashtable_bucket) * size);
-    
-    size_t i;
-    for(i = 0; i < map->capacity; ++i)
-    {
-        aug_hashtable_bucket* bucket = &map->buckets[i];
-        aug_hashtable_bucket_init(map, bucket, AUG_HASHTABLE_BUCKET_SIZE_DEFAULT);
-    }
+    aug_hashtable_bucket_init(map, AUG_HASHTABLE_BUCKET_SIZE_DEFAULT);
     return map;
 }
 
@@ -511,15 +510,11 @@ void aug_hashtable_resize(aug_hashtable* map, size_t size)
 
     map->capacity = size;
     map->buckets = (aug_hashtable_bucket*)AUG_ALLOC(sizeof(aug_hashtable_bucket) * map->capacity);
+    aug_hashtable_bucket_init(map, AUG_HASHTABLE_BUCKET_SIZE_DEFAULT);
 
-    size_t i, j;
-    for (i = 0; i < map->capacity; ++i)
-    {
-        aug_hashtable_bucket* bucket = &map->buckets[i];
-        aug_hashtable_bucket_init(map, bucket, AUG_HASHTABLE_BUCKET_SIZE_DEFAULT);
-    }
 
     // reindex all values, copy over raw data 
+    size_t i, j;
     for (i = 0; i < old_size; ++i)
     {
         aug_hashtable_bucket* old_bucket = &old_buckets[i];
@@ -528,7 +523,7 @@ void aug_hashtable_resize(aug_hashtable* map, size_t size)
             if (old_bucket->key_buffer[j] != NULL)
             {
                 char* key = old_bucket->key_buffer[j];
-                uint8_t* data = &old_bucket->data_buffer[j];
+                uint8_t* data = &old_bucket->data_buffer[j * map->element_size];
                 int hash = map->hash_func(key);
 
                 aug_hashtable_bucket* new_bucket = &map->buckets[hash % map->capacity];
@@ -588,11 +583,11 @@ uint8_t* aug_hashtable_create(aug_hashtable* map, const char* key)
     int hash = map->hash_func(key);
     aug_hashtable_bucket* bucket = &map->buckets[hash % map->capacity];
     // If a bucket is larger than the map capacity, reindex all entries
-    //if (bucket->capacity > map->capacity)
-    //{
-    //    aug_hashtable_resize(map, map->capacity * 2);
-    //    bucket = &map->buckets[hash % map->capacity];
-    //}
+    if (bucket->capacity > map->capacity)
+    {
+        aug_hashtable_resize(map, map->capacity * 2);
+        bucket = &map->buckets[hash % map->capacity];
+    }
 
     uint8_t* data = aug_hashtable_bucket_create(map, bucket, key);
     if(data != NULL)
@@ -3034,7 +3029,7 @@ const char* aug_get_type_label(const aug_value* value)
     case AUG_BOOL:      return "bool";
     case AUG_INT:       return "int";
     case AUG_CHAR:      return "char";
-    case AUG_FLOAT:     return "flaot";
+    case AUG_FLOAT:     return "float";
     case AUG_STRING:    return "string";
     case AUG_OBJECT:    return "object";
     case AUG_ARRAY:     return "array";
