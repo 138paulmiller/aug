@@ -95,6 +95,16 @@ typedef struct aug_array
 	size_t length;
 } aug_array;
 
+typedef struct aug_map_bucket aug_map_bucket;
+
+typedef struct aug_map
+{
+    aug_map_bucket* buckets;
+    size_t capacity;
+    size_t count;
+    size_t ref_count;
+} aug_map;
+
 typedef struct aug_object
 {
     int ref_count;
@@ -276,6 +286,18 @@ aug_value* aug_array_push(aug_array* array);
 aug_value* aug_array_pop(aug_array* array);
 aug_value* aug_array_at(const aug_array* array, size_t index);
 aug_value* aug_array_back(const aug_array* array);
+
+// Map API ------------------------------------------ Map API ------------------------------------------------- Map API//
+
+aug_map* aug_map_new(size_t size);
+void aug_map_incref(aug_map* map);
+aug_map* aug_map_decref(aug_map* map);
+aug_value* aug_map_create(aug_map* map, aug_string* key);
+bool aug_map_remove(aug_map* map, aug_string* key);
+aug_value* aug_map_get(aug_map* map, aug_string* key);
+
+typedef void(aug_map_iterator)(const aug_string* /*key*/, aug_value* /*value*/);
+void aug_map_foreach(aug_map* map, aug_map_iterator* iterator);
 
 #ifdef __cplusplus
 }
@@ -524,7 +546,7 @@ void aug_hashtable_resize(aug_hashtable* map, size_t size)
             {
                 char* key = old_bucket->key_buffer[j];
                 uint8_t* data = &old_bucket->data_buffer[j * map->element_size];
-                int hash = map->hash_func(key);
+                size_t hash = map->hash_func(key);
 
                 aug_hashtable_bucket* new_bucket = &map->buckets[hash % map->capacity];
                 uint8_t* new_data = aug_hashtable_bucket_create(map, new_bucket, key);
@@ -580,7 +602,7 @@ aug_hashtable* aug_hashtable_decref(aug_hashtable* map)
 
 uint8_t* aug_hashtable_create(aug_hashtable* map, const char* key)
 {
-    int hash = map->hash_func(key);
+    size_t hash = map->hash_func(key);
     aug_hashtable_bucket* bucket = &map->buckets[hash % map->capacity];
     // If a bucket is larger than the map capacity, reindex all entries
     if (bucket->capacity > map->capacity)
@@ -597,7 +619,7 @@ uint8_t* aug_hashtable_create(aug_hashtable* map, const char* key)
 
 bool aug_hashtable_remove(aug_hashtable* map, const char* key)
 {
-    const int find_hash = map->hash_func(key);
+    const size_t find_hash = map->hash_func(key);
     aug_hashtable_bucket* bucket = &map->buckets[find_hash % map->capacity];
     size_t i;
     for(i = 0; i  < bucket->capacity; ++i)
@@ -609,6 +631,7 @@ bool aug_hashtable_remove(aug_hashtable* map, const char* key)
             bucket->key_buffer[i] = NULL;
             if(map->free_func)
                 map->free_func(&bucket->data_buffer[i * map->element_size]);
+            return true;
         }
     }
     return false;
@@ -644,7 +667,7 @@ void aug_hashtable_foreach(aug_hashtable* map, aug_hashtable_iterator* iterator)
 
 size_t aug_hashtable_hash_default(const char* str)
 {
-    int hash = 5381; // DJB2 hash
+    size_t hash = 5381; // DJB2 hash
     while(*str)
         hash = ((hash << 5) + hash) + *str++;
     return hash;
@@ -4892,6 +4915,230 @@ aug_value* aug_array_at(const aug_array* array, size_t index)
 aug_value* aug_array_back(const aug_array* array)             
 {
 	return array->length > 0 ? &array->buffer[array->length-1] : NULL; 
+}
+
+// MAP ==================================================== MAP =================================================== MAP //
+
+#ifndef AUG_MAP_SIZE_DEFAULT
+#define AUG_MAP_SIZE_DEFAULT 1
+#endif//AUG_MAP_SIZE_DEFAULT
+
+#ifndef AUG_MAP_BUCKET_SIZE_DEFAULT
+#define AUG_MAP_BUCKET_SIZE_DEFAULT 1
+#endif//AUG_MAP_BUCKET_SIZE_DEFAULT
+
+typedef struct aug_map_bucket
+{
+    aug_string** keys;
+    aug_value* values;
+    size_t capacity;
+} aug_map_bucket;
+
+size_t aug_map_hash(const aug_string* str)
+{
+    const char* bytes = str->buffer;
+    size_t hash = 5381; // DJB2 hash
+    while (*bytes)
+        hash = ((hash << 5) + hash) + *bytes++;
+    return hash;
+}
+
+void aug_map_bucket_init(aug_map* map, int size)
+{
+    size_t i;
+    for (i = 0; i < map->capacity; ++i)
+    {
+        aug_map_bucket* bucket = &map->buckets[i];
+        bucket->capacity = size;
+        bucket->keys = (aug_string**)AUG_ALLOC(sizeof(const aug_string*) * size);
+        bucket->values = (aug_value*)AUG_ALLOC(sizeof(aug_value) * size);
+        memset(bucket->keys, 0, sizeof(char*) * size);
+    }
+}
+
+aug_value* aug_map_bucket_create(aug_map* map, aug_map_bucket* bucket, aug_string* key)
+{
+    size_t i;
+    for (i = 0; i < bucket->capacity; ++i)
+    {
+        if (bucket->keys[i] == NULL)
+            break;
+
+        if (aug_string_compare(bucket->keys[i], key))
+            return NULL;
+    }
+
+    if (i >= bucket->capacity)
+    {
+        size_t new_size = 2 * bucket->capacity;
+        bucket->keys = (aug_string**)AUG_REALLOC(bucket->keys, sizeof(aug_string*) * new_size);
+        bucket->values = (aug_value*)AUG_REALLOC(bucket->values, sizeof(aug_value) * new_size);
+
+        size_t j; // init new entries to null 
+        for (j = bucket->capacity; j < new_size; ++j)
+            bucket->keys[j] = NULL;
+        bucket->capacity = new_size;
+    }
+
+    if (bucket->keys[i] != NULL)
+        aug_string_decref(bucket->keys[i]);
+
+    ++map->count;
+
+    bucket->keys[i] = key;
+    aug_string_incref(bucket->keys[i]);
+
+    return &bucket->values[i];
+}
+
+aug_map* aug_map_new(size_t size)
+{
+    aug_map* map = (aug_map*)AUG_ALLOC(sizeof(aug_map));
+    map->capacity = size;
+    map->ref_count = 1;
+    map->count = 0;
+    map->buckets = (aug_map_bucket*)AUG_ALLOC(sizeof(aug_map_bucket) * size);
+    aug_map_bucket_init(map, AUG_MAP_BUCKET_SIZE_DEFAULT);
+    return map;
+}
+
+
+void aug_map_resize(aug_map* map, size_t size)
+{
+    size_t old_size = map->capacity;
+    aug_map_bucket* old_buckets = map->buckets;
+
+    map->capacity = size;
+    map->buckets = (aug_map_bucket*)AUG_ALLOC(sizeof(aug_map_bucket) * map->capacity);
+    aug_map_bucket_init(map, AUG_MAP_BUCKET_SIZE_DEFAULT);
+
+    // reindex all values, copy over raw data 
+    size_t i, j;
+    for (i = 0; i < old_size; ++i)
+    {
+        aug_map_bucket* old_bucket = &old_buckets[i];
+        for (j = 0; j < old_bucket->capacity; ++j)
+        {
+            aug_string* key = old_bucket->keys[j];
+            if (old_bucket->keys[j] != NULL)
+            {
+                aug_value* value = &old_bucket->values[j];
+                size_t hash = aug_map_hash(key);
+
+                aug_map_bucket* new_bucket = &map->buckets[hash % map->capacity];
+                aug_value* new_value = aug_map_bucket_create(map, new_bucket, key);
+                assert(value != NULL);
+                *new_value = *value;
+
+                aug_string_decref(key);
+            }
+        }
+
+        AUG_FREE(old_bucket->values);
+        AUG_FREE(old_bucket->keys);
+    }
+
+    AUG_FREE(old_buckets);
+}
+
+void aug_map_incref(aug_map* map)
+{
+    if (map)
+        ++map->ref_count;
+}
+
+aug_map* aug_map_decref(aug_map* map)
+{
+    if (map && --map->ref_count == 0)
+    {
+        size_t i;
+        for (i = 0; i < map->capacity; ++i)
+        {
+            aug_map_bucket* bucket = &map->buckets[i];
+            size_t j;
+            for (j = 0; j < bucket->capacity; ++j)
+            {
+                if (bucket->keys[j] != NULL)
+                {
+                    aug_decref(&bucket->values[j]);
+                    aug_string_decref(bucket->keys[j]);
+                    bucket->keys[j] = NULL;
+                }
+            }
+            AUG_FREE(bucket->values);
+            AUG_FREE(bucket->keys);
+        }
+        AUG_FREE(map->buckets);
+        AUG_FREE(map);
+        return NULL;
+    }
+    return map;
+}
+
+aug_value* aug_map_create(aug_map* map, aug_string* key)
+{
+    size_t hash = aug_map_hash(key);
+    aug_map_bucket* bucket = &map->buckets[hash % map->capacity];
+    // If a bucket is larger than the map capacity, reindex all entries
+    if (bucket->capacity > map->capacity)
+    {
+        aug_map_resize(map, map->capacity * 2);
+        bucket = &map->buckets[hash % map->capacity];
+    }
+
+    aug_value* data = aug_map_bucket_create(map, bucket, key);
+    if (data != NULL)
+        ++map->count;
+    return data;
+}
+
+bool aug_map_remove(aug_map* map, aug_string* key)
+{
+    size_t hash = aug_map_hash(key);
+    aug_map_bucket* bucket = &map->buckets[hash % map->capacity];
+    size_t i;
+    for (i = 0; i < bucket->capacity; ++i)
+    {
+        aug_string* check_key = bucket->keys[i];
+        if (aug_string_compare(check_key, key))
+        {
+            aug_string_decref(check_key);
+            bucket->keys[i] = NULL;
+            aug_decref(&bucket->values[i]);
+            return true;
+        }
+    }
+    return false;
+}
+
+aug_value* aug_map_get(aug_map* map, aug_string* key)
+{
+    size_t hash = aug_map_hash(key);
+    aug_map_bucket* bucket = &map->buckets[hash % map->capacity];
+    size_t i;
+    for (i = 0; i < bucket->capacity; ++i)
+    {
+        aug_string* check_key = bucket->keys[i];
+        if (aug_string_compare(check_key, key))
+        {
+            return &bucket->values[i];
+        }
+    }
+    return NULL;
+}
+
+void aug_map_foreach(aug_map* map, aug_map_iterator* iterator)
+{
+    size_t i, j;
+    for (i = 0; i < map->capacity; ++i)
+    {
+        aug_map_bucket* bucket = &map->buckets[i];
+        for (j = 0; j < bucket->capacity; ++j)
+        {
+            if (bucket->keys[j] != NULL)
+                iterator(bucket->keys[j], &bucket->values[j]);
+        }
+    }
 }
 
 // SCRIPT ================================================= SCRIPT ============================================= SCRIPT // 
