@@ -121,6 +121,7 @@ typedef enum aug_value_type
     AUG_FLOAT, 
     AUG_STRING, 
     AUG_ARRAY,
+    AUG_MAP,
     AUG_OBJECT,
     AUG_FUNCTION,
     AUG_NONE,
@@ -137,8 +138,9 @@ typedef struct aug_value
         char c;
         float f;
         aug_string* str;
-        aug_object* obj;
         aug_array* array;
+        aug_map* map;
+        aug_object* obj;
     };
 } aug_value;
 
@@ -286,17 +288,18 @@ aug_value* aug_array_push(aug_array* array);
 aug_value* aug_array_pop(aug_array* array);
 aug_value* aug_array_at(const aug_array* array, size_t index);
 aug_value* aug_array_back(const aug_array* array);
+bool aug_array_compare(const aug_array* a, const aug_array* b);
 
 // Map API ------------------------------------------ Map API ------------------------------------------------- Map API//
 
 aug_map* aug_map_new(size_t size);
 void aug_map_incref(aug_map* map);
 aug_map* aug_map_decref(aug_map* map);
-aug_value* aug_map_create(aug_map* map, aug_string* key);
-bool aug_map_remove(aug_map* map, aug_string* key);
-aug_value* aug_map_get(aug_map* map, aug_string* key);
+aug_value* aug_map_create(aug_map* map, aug_value* key);
+bool aug_map_remove(aug_map* map, aug_value* key);
+aug_value* aug_map_get(aug_map* map, aug_value* key);
 
-typedef void(aug_map_iterator)(const aug_string* /*key*/, aug_value* /*value*/);
+typedef void(aug_map_iterator)(const aug_value* /*key*/, aug_value* /*value*/);
 void aug_map_foreach(aug_map* map, aug_map_iterator* iterator);
 
 #ifdef __cplusplus
@@ -2941,6 +2944,16 @@ static inline bool aug_set_array(aug_value* value)
     return true;
 }
 
+static inline bool aug_set_map(aug_value* value)
+{
+    if(value == NULL)
+        return false;
+
+    value->type = AUG_MAP;
+    value->map = aug_map_new(1);
+    return true;
+}
+
 static inline bool aug_set_func(aug_value* value, int data)
 {
     if(value == NULL)
@@ -2983,10 +2996,12 @@ bool aug_get_bool(const aug_value* value)
         return value->f != 0.0f;
     case AUG_STRING:
         return value->str != NULL;
-    case AUG_OBJECT:
-        return value->obj != NULL;
     case AUG_ARRAY:
         return value->array != NULL;
+    case AUG_MAP:
+        return value->map != NULL;
+    case AUG_OBJECT:
+        return value->obj != NULL;
     case AUG_FUNCTION:
         return value->i != 0;
     }
@@ -3002,8 +3017,9 @@ int aug_get_int(const aug_value* value)
     {
     case AUG_NONE:
     case AUG_STRING:
-    case AUG_OBJECT:
     case AUG_ARRAY:
+    case AUG_MAP:
+    case AUG_OBJECT:
     case AUG_FUNCTION:
         return 0;
     case AUG_BOOL:
@@ -3027,8 +3043,9 @@ float aug_get_float(const aug_value* value)
     {
     case AUG_NONE:
     case AUG_STRING:
-    case AUG_OBJECT:
     case AUG_ARRAY:
+    case AUG_MAP:
+    case AUG_OBJECT:
     case AUG_FUNCTION:
         break;    
     case AUG_BOOL:
@@ -3043,6 +3060,39 @@ float aug_get_float(const aug_value* value)
     return 0.0f;
 }
 
+static inline bool aug_compare(aug_value* a, aug_value* b)
+{
+    if(a->type != b->type)
+        return false;
+    
+    switch (a->type)
+    {
+    case AUG_NONE:
+        return true;
+    case AUG_STRING:
+        return aug_string_compare(a->str, b->str);
+    case AUG_ARRAY:
+        return aug_array_compare(a->array, b->array);
+    case AUG_MAP:
+        assert(0); //TODO:
+        return false;
+    case AUG_OBJECT:
+        assert(0); //TODO:
+        return false;
+    case AUG_FUNCTION:
+        return a->i == b->i;
+    case AUG_BOOL:
+        return a->b == b->b;
+    case AUG_INT:
+        return a->i == b->i;
+    case AUG_CHAR:
+        return a->c == b->c;
+    case AUG_FLOAT:
+        return (float)fabs(a->f - b->f) < AUG_APPROX_THRESHOLD;
+    }
+    return false;
+}
+
 const char* aug_get_type_label(const aug_value* value)
 {
     if (value == NULL) return "null";
@@ -3054,8 +3104,9 @@ const char* aug_get_type_label(const aug_value* value)
     case AUG_CHAR:      return "char";
     case AUG_FLOAT:     return "float";
     case AUG_STRING:    return "string";
-    case AUG_OBJECT:    return "object";
     case AUG_ARRAY:     return "array";
+    case AUG_OBJECT:    return "object";
+    case AUG_MAP:       return "map";
     case AUG_FUNCTION:  return "function";
     }
     return NULL;
@@ -3079,15 +3130,10 @@ static inline void aug_decref(aug_value* value)
         value->str = aug_string_decref(value->str);
         break;
     case AUG_ARRAY:
-        // If will be dereferenced, ensure children are as well
-        if (value->array && value->array->ref_count == 1)
-        {
-            for (size_t i = 0; i < value->array->length; ++i)
-            {
-                aug_decref(aug_array_at(value->array, i));
-            }
-        }
         value->array = aug_array_decref(value->array);
+        break;
+    case AUG_MAP:
+        value->map = aug_map_decref(value->map);
         break;
     case AUG_OBJECT:
         if(value->obj && --value->obj->ref_count <= 0)
@@ -3119,6 +3165,9 @@ static inline void aug_incref(aug_value* value)
     case AUG_ARRAY:
         aug_array_incref(value->array);
         break;
+    case AUG_MAP:
+        aug_map_incref(value->map);
+        break;
     case AUG_OBJECT:
         assert(value->obj);
         ++value->obj->ref_count;
@@ -3146,33 +3195,41 @@ static inline void aug_move(aug_value* to, aug_value* from)
     *from = aug_none();
 }
 
-static inline bool aug_get_element(aug_value* container, aug_value* index, aug_value* element)
+static inline bool aug_get_element(aug_value* value, aug_value* index, aug_value* element_out)
 {
-    if(container == NULL || index == NULL || element == NULL)
+    assert(element_out != NULL);
+    *element_out = aug_none();
+
+    if(value == NULL || index == NULL)
         return false;
 
-    size_t i = (size_t)aug_get_int(index);
-    if(i < 0)
-    {
-        *element = aug_none();
-        return false;
-    }
-
-    switch (container->type)
+    switch (value->type)
     {
     case AUG_STRING:
     {
-        if( i >= container->str->length)
+        size_t i = (size_t)aug_get_int(index);
+        char c = aug_string_at(value->str, i);
+        if(c == -1)
             return false;
-        *element = aug_create_char(aug_string_at(container->str, i));
+        *element_out = aug_create_char(c);
         return true;
     }
     case AUG_ARRAY:
     {
-        if( i >= container->array->length)
+        size_t i = (size_t)aug_get_int(index);
+        aug_value* element = aug_array_at(value->array, i);
+        if(element == NULL)
             return false;
-        aug_value* value = aug_array_at(container->array, i);
-        *element = *value;
+        *element_out = *element;
+        return true;
+    }
+    case AUG_MAP:
+    {
+        aug_value* element = aug_map_get(value->map, index);
+        if(element == NULL)
+            return false;
+
+        *element_out = *element;
         return true;
     }
     case AUG_NONE:
@@ -3184,7 +3241,6 @@ static inline bool aug_get_element(aug_value* container, aug_value* index, aug_v
     case AUG_FUNCTION:
         break;
     }
-    *element = aug_none();
     return false;
 }
 
@@ -4882,6 +4938,9 @@ aug_array* aug_array_decref(aug_array* array)
 {
 	if(array != NULL && --array->ref_count == 0)
     {            
+        // If will be dereferenced, ensure children are as well
+        for (size_t i = 0; i < array->length; ++i)
+            aug_decref(aug_array_at(array, i));
         AUG_FREE(array->buffer);
         AUG_FREE(array);
         return NULL;
@@ -4917,6 +4976,19 @@ aug_value* aug_array_back(const aug_array* array)
 	return array->length > 0 ? &array->buffer[array->length-1] : NULL; 
 }
 
+bool aug_array_compare(const aug_array* a, const aug_array* b)             
+{
+    if(a->length != b->length)
+        return false;
+    size_t i;
+    for(i = 0; i < a->length; ++i)
+    {
+        if(!aug_compare(&a->buffer[i], &b->buffer[i]))
+            return false;
+    }
+    return true;
+}
+
 // MAP ==================================================== MAP =================================================== MAP //
 
 #ifndef AUG_MAP_SIZE_DEFAULT
@@ -4929,64 +5001,90 @@ aug_value* aug_array_back(const aug_array* array)
 
 typedef struct aug_map_bucket
 {
-    aug_string** keys;
+    aug_value* keys;
     aug_value* values;
     size_t capacity;
 } aug_map_bucket;
 
-size_t aug_map_hash(const aug_string* str)
+bool aug_map_can_hash(const aug_value* value)
 {
-    const char* bytes = str->buffer;
-    size_t hash = 5381; // DJB2 hash
-    while (*bytes)
-        hash = ((hash << 5) + hash) + *bytes++;
-    return hash;
+    switch(value->type)
+    {
+        case AUG_STRING:
+        case AUG_INT:
+            return true;
+        default:
+            return false;
+    }
+    return false;
+}
+
+size_t aug_map_hash(const aug_value* value)
+{
+    switch(value->type)
+    {
+        case AUG_STRING:
+        {
+            const char* bytes = value->str->buffer;
+            size_t hash = 5381; // DJB2 hash
+            while (*bytes)
+                hash = ((hash << 5) + hash) + *bytes++;
+            return hash;
+        }
+        case AUG_INT:
+            return value->i;
+        default:
+            return 0;
+    }
+    return 0;
 }
 
 void aug_map_bucket_init(aug_map* map, int size)
 {
-    size_t i;
+    size_t i, j;
     for (i = 0; i < map->capacity; ++i)
     {
         aug_map_bucket* bucket = &map->buckets[i];
         bucket->capacity = size;
-        bucket->keys = (aug_string**)AUG_ALLOC(sizeof(const aug_string*) * size);
+        bucket->keys = (aug_value*)AUG_ALLOC(sizeof(const aug_value*) * size);
         bucket->values = (aug_value*)AUG_ALLOC(sizeof(aug_value) * size);
-        memset(bucket->keys, 0, sizeof(char*) * size);
+        for(j = 0; j < bucket->capacity; ++j)
+            bucket->keys[j] = aug_none();
     }
 }
 
-aug_value* aug_map_bucket_create(aug_map* map, aug_map_bucket* bucket, aug_string* key)
+aug_value* aug_map_bucket_create(aug_map* map, aug_map_bucket* bucket, aug_value* key)
 {
     size_t i;
     for (i = 0; i < bucket->capacity; ++i)
     {
-        if (bucket->keys[i] == NULL)
+        if (bucket->keys[i].type == AUG_NONE)
             break;
 
-        if (aug_string_compare(bucket->keys[i], key))
+        if (aug_compare(&bucket->keys[i], key))
             return NULL;
     }
 
     if (i >= bucket->capacity)
     {
         size_t new_size = 2 * bucket->capacity;
-        bucket->keys = (aug_string**)AUG_REALLOC(bucket->keys, sizeof(aug_string*) * new_size);
+        bucket->keys = (aug_value*)AUG_REALLOC(bucket->keys, sizeof(aug_value*) * new_size);
         bucket->values = (aug_value*)AUG_REALLOC(bucket->values, sizeof(aug_value) * new_size);
 
         size_t j; // init new entries to null 
         for (j = bucket->capacity; j < new_size; ++j)
-            bucket->keys[j] = NULL;
+            bucket->keys[j] = aug_none();
         bucket->capacity = new_size;
     }
 
-    if (bucket->keys[i] != NULL)
-        aug_string_decref(bucket->keys[i]);
+    //ensure key is not valid ? should never be the case
+    //if (bucket->keys[i].type != AUG_NONE)
+    //    aug_decref(&bucket->keys[i]);
 
     ++map->count;
 
-    bucket->keys[i] = key;
-    aug_string_incref(bucket->keys[i]);
+    bucket->keys[i] = *key;
+    aug_incref(&bucket->keys[i]);
 
     return &bucket->values[i];
 }
@@ -5001,7 +5099,6 @@ aug_map* aug_map_new(size_t size)
     aug_map_bucket_init(map, AUG_MAP_BUCKET_SIZE_DEFAULT);
     return map;
 }
-
 
 void aug_map_resize(aug_map* map, size_t size)
 {
@@ -5019,8 +5116,8 @@ void aug_map_resize(aug_map* map, size_t size)
         aug_map_bucket* old_bucket = &old_buckets[i];
         for (j = 0; j < old_bucket->capacity; ++j)
         {
-            aug_string* key = old_bucket->keys[j];
-            if (old_bucket->keys[j] != NULL)
+            aug_value* key = &old_bucket->keys[j];
+            if (old_bucket->keys[j].type != AUG_NONE)
             {
                 aug_value* value = &old_bucket->values[j];
                 size_t hash = aug_map_hash(key);
@@ -5030,7 +5127,7 @@ void aug_map_resize(aug_map* map, size_t size)
                 assert(value != NULL);
                 *new_value = *value;
 
-                aug_string_decref(key);
+                aug_decref(key);
             }
         }
 
@@ -5058,11 +5155,11 @@ aug_map* aug_map_decref(aug_map* map)
             size_t j;
             for (j = 0; j < bucket->capacity; ++j)
             {
-                if (bucket->keys[j] != NULL)
+                if (bucket->keys[j].type != AUG_NONE)
                 {
                     aug_decref(&bucket->values[j]);
-                    aug_string_decref(bucket->keys[j]);
-                    bucket->keys[j] = NULL;
+                    aug_decref(&bucket->keys[j]);
+                    bucket->keys[j] = aug_none();
                 }
             }
             AUG_FREE(bucket->values);
@@ -5075,8 +5172,11 @@ aug_map* aug_map_decref(aug_map* map)
     return map;
 }
 
-aug_value* aug_map_create(aug_map* map, aug_string* key)
+aug_value* aug_map_create(aug_map* map, aug_value* key)
 {
+    if(!aug_map_can_hash(key))
+        return NULL;
+
     size_t hash = aug_map_hash(key);
     aug_map_bucket* bucket = &map->buckets[hash % map->capacity];
     // If a bucket is larger than the map capacity, reindex all entries
@@ -5089,37 +5189,42 @@ aug_value* aug_map_create(aug_map* map, aug_string* key)
     aug_value* data = aug_map_bucket_create(map, bucket, key);
     if (data != NULL)
         ++map->count;
+    aug_incref(data);
     return data;
 }
 
-bool aug_map_remove(aug_map* map, aug_string* key)
-{
+bool aug_map_remove(aug_map* map, aug_value* key)
+{   
+    if(!aug_map_can_hash(key))
+        return false;
+    
     size_t hash = aug_map_hash(key);
     aug_map_bucket* bucket = &map->buckets[hash % map->capacity];
     size_t i;
     for (i = 0; i < bucket->capacity; ++i)
     {
-        aug_string* check_key = bucket->keys[i];
-        if (aug_string_compare(check_key, key))
+        if (aug_compare(&bucket->keys[i], key))
         {
-            aug_string_decref(check_key);
-            bucket->keys[i] = NULL;
+            aug_decref(&bucket->keys[i]);
             aug_decref(&bucket->values[i]);
+            bucket->keys[i] = aug_none();
             return true;
         }
     }
     return false;
 }
 
-aug_value* aug_map_get(aug_map* map, aug_string* key)
+aug_value* aug_map_get(aug_map* map, aug_value* key)
 {
+    if(!aug_map_can_hash(key))
+        return NULL;
+
     size_t hash = aug_map_hash(key);
     aug_map_bucket* bucket = &map->buckets[hash % map->capacity];
     size_t i;
     for (i = 0; i < bucket->capacity; ++i)
     {
-        aug_string* check_key = bucket->keys[i];
-        if (aug_string_compare(check_key, key))
+        if (aug_compare(&bucket->keys[i], key))
         {
             return &bucket->values[i];
         }
@@ -5135,8 +5240,8 @@ void aug_map_foreach(aug_map* map, aug_map_iterator* iterator)
         aug_map_bucket* bucket = &map->buckets[i];
         for (j = 0; j < bucket->capacity; ++j)
         {
-            if (bucket->keys[j] != NULL)
-                iterator(bucket->keys[j], &bucket->values[j]);
+            if (bucket->keys[j].type == AUG_NONE)
+                iterator(&bucket->keys[j], &bucket->values[j]);
         }
     }
 }

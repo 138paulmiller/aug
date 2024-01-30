@@ -70,6 +70,9 @@ public:
 			func(vm);
 		else
 			aug_execute(vm, filename.c_str());
+		
+		if(!vm->valid)
+			passed = 0;
 	}
 
 	void end()
