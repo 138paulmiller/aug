@@ -108,6 +108,14 @@ public:
 };
 aug_tester* aug_tester::s_tester;
 
+std::string to_string(const aug_value& value);
+
+void to_string_map_pair(const aug_value* key, aug_value* value, void* user_data)
+{
+	std::string* str = (std::string*)user_data;
+	*str += "\n\t" + to_string(*key) + " : " + to_string(*value);
+}
+
 std::string to_string(const aug_value& value)
 {
     char out[1024];
@@ -138,21 +146,38 @@ std::string to_string(const aug_value& value)
 		break;
     case AUG_ARRAY:
     {
-        std::string str = "[ ";
+        std::string str = "[";
 		if(value.array)
 		{
 			for( size_t i = 0; i < value.array->length; ++i)
 			{
+				str += " ";
 				const aug_value* entry = aug_array_at(value.array, i);
 				str += to_string(*entry);
-				str += " ";
 			}
 		}
 		str += "]";
         return str;
     }
+	case AUG_MAP:
+	{
+		std::string str = "{";
+		aug_map_foreach(value.map, to_string_map_pair, &str);
+		str += "\n}";
+		return str;
+	}
     }
     return std::string(out, len);
+}
+
+void print(const aug_value& value);
+
+void print_map_pair(const aug_value* key, aug_value* value, void* user_data)
+{
+	printf("\n\t");
+	print(*key);
+	printf(" : ");
+	print(*value);
 }
 
 void print(const aug_value& value)
@@ -185,14 +210,22 @@ void print(const aug_value& value)
 		break;
 	case AUG_ARRAY:
 	{
-		printf("[ ");
+		printf("[");
 		for( size_t i = 0; i < value.array->length; ++i)
 		{
+			printf(" ");
 			const aug_value* entry = aug_array_at(value.array, i);
 			print(*entry);
-			printf(" ");
 		}
 		printf("]");
+		break;
+	}
+	case AUG_MAP:
+	{		
+		printf("{");
+		aug_map_foreach(value.map, print_map_pair, NULL);
+		printf("\n}");
+
 		break;
 	}
 	}

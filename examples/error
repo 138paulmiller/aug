@@ -1,13 +1,5 @@
-func count(a) {
-    if a <= 0 { 
-        return 0; 
-    }
-    return count(a-1) + 1;
-}
+a = { 
+	"str1" : "1+2+3+4+5",
+};
 
-func call_func(callback, x) {
-    return callback(x);
-}
-
-a = call_func(count, 10);
-           expect(a == 10, "call_func(count, 1000) = ", a);
+expect(a["str1"] == "1+2+3+4+5", a["str1"]);

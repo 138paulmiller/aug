@@ -29,9 +29,10 @@ void dump_lexer(const char* filename)
 	aug_input* input = aug_input_open(filename, nullptr);
 
 	aug_lexer* lexer = aug_lexer_new(input);
-	while (lexer && aug_lexer_move(lexer) && lexer->curr.id != AUG_TOKEN_END)
+	while (lexer && aug_lexer_move(lexer) && aug_lexer_curr(lexer).id != AUG_TOKEN_END)
 	{
-		dump_token(&lexer->curr);
+		aug_token curr = aug_lexer_curr(lexer);
+		dump_token(&curr);
 	}
 
 	aug_lexer_delete(lexer);
@@ -145,6 +146,16 @@ void dump_ast_tree(const aug_ast* node, std::string prefix, bool is_leaf)
 			printf("ARRAY\n");
 			for (int i = 0; i < children_size; ++i)
 				dump_ast_tree(children[i], prefix, i == children_size - 1);
+			break;
+		case AUG_AST_MAP:
+			printf("MAP\n");
+			for (int i = 0; i < children_size; ++i)
+				dump_ast_tree(children[i], prefix, i == children_size - 1);
+			break;
+		case AUG_AST_MAP_PAIR:
+			printf("PAIR\n");
+			dump_ast_tree(children[0], prefix, false);
+			dump_ast_tree(children[1], prefix, true);
 			break;
 		case AUG_AST_ELEMENT:
 			printf("ELEMENT\n");
