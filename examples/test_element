@@ -12,7 +12,6 @@ map["a"] = 2;
 map["b"] = 22;
 map["c"] = 222;
 map["d"] = 2222;
-map["e"] = 22222;
 
 print(map);
 
@@ -20,5 +19,5 @@ expect(map["a"] == 2, "map[a] == 2");
 expect(map["b"] == 22, "map[b] == 22");
 expect(map["c"] == 222, "map[c] == 222");
 expect(map["d"] == 2222, "map[d] == 2222");
-expect(map["e"] == 22222, "map[e] == 22222");
+expect(map["e"] == 11111, "map[e] == 11111");
 

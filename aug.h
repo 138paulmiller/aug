@@ -298,7 +298,7 @@ bool aug_array_compare(const aug_array* a, const aug_array* b);
 aug_map* aug_map_new(size_t size);
 void aug_map_incref(aug_map* map);
 aug_map* aug_map_decref(aug_map* map);
-void aug_map_insert(aug_map* map, aug_value* key, aug_value* value);
+bool aug_map_insert(aug_map* map, aug_value* key, aug_value* value);
 bool aug_map_insert_or_update(aug_map* map, aug_value* key, aug_value* value);
 bool aug_map_remove(aug_map* map, aug_value* key);
 aug_value* aug_map_get(aug_map* map, aug_value* key);
@@ -4151,8 +4151,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value value;
                 if(!aug_get_element(container, index, &value))    
                 {
-                    aug_log_vm_error(vm, "Index of of range error"); // TODO: more descriptive
-                    break;  
+                    aug_log_vm_error(vm, "Index out of range error"); // TODO: more descriptive
                 }
                 aug_decref(container);
                 aug_decref(index);
@@ -4185,8 +4184,7 @@ void aug_vm_execute(aug_vm* vm)
 
                 if(!aug_set_element(container, index, value))    
                 {
-                    aug_log_vm_error(vm, "Index of of range error"); // TODO: more descriptive
-                    break;  
+                    aug_log_vm_error(vm, "Index out of range error"); // TODO: more descriptive
                 }
                 aug_decref(container);
                 aug_decref(index);
@@ -5432,10 +5430,10 @@ aug_map* aug_map_decref(aug_map* map)
     return map;
 }
 
-void aug_map_insert(aug_map* map, aug_value* key, aug_value* data)
+bool aug_map_insert(aug_map* map, aug_value* key, aug_value* data)
 {
     if(!aug_map_can_hash(key) || data == NULL)
-        return;
+        return false;
 
     size_t hash = aug_map_hash(key);
     aug_map_bucket* bucket = &map->buckets[hash % map->capacity];
@@ -5448,11 +5446,12 @@ void aug_map_insert(aug_map* map, aug_value* key, aug_value* data)
 
     aug_value* entry = aug_map_bucket_insert(map, bucket, key);
     if (entry == NULL)
-        return;
+        return false;
 
     ++map->count;
     *entry = *data;
     aug_incref(entry);
+    return true;
 }
 
 bool aug_map_remove(aug_map* map, aug_value* key)
@@ -5496,27 +5495,16 @@ aug_value* aug_map_get(aug_map* map, aug_value* key)
 
 bool aug_map_insert_or_update(aug_map* map, aug_value* key, aug_value* data)
 {
-    if(!aug_map_can_hash(key) || data == NULL)
-        return false;
-
-    size_t hash = aug_map_hash(key);
-    aug_map_bucket* bucket = &map->buckets[hash % map->capacity];
-    // If a bucket is larger than the map capacity, reindex all entries
-    if (bucket->capacity > map->capacity)
+    // TODO: better solution, avoid duplicate traversal from initial lookup
+    aug_value* entry = aug_map_get(map, key);
+    if(entry != NULL)
     {
-        aug_map_resize(map, map->capacity * 2);
-        bucket = &map->buckets[hash % map->capacity];
+        *entry = *data;
+        aug_incref(entry);
+        return true;
     }
 
-    aug_value* entry = aug_map_bucket_insert_or_update(map, bucket, key, data);
-    if (entry == NULL)
-        return false;
-
-    ++map->count;
-    aug_incref(entry);
-    *entry = *data;
-
-    return true;
+    return aug_map_insert(map, key, data);
 }
 
 
