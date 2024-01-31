@@ -4307,15 +4307,17 @@ void aug_vm_execute(aug_vm* vm)
 
                 // Call the external function. Move return value on to top of stack
                 aug_value ret_value = vm->extensions[func_index](arg_count, args);
+                
+                // Cleanup arguments
+                aug_decref(func_index_value);
+                for (i = 0; i < arg_count; ++i)
+                    aug_decref(&args[i]);
+                AUG_FREE(args);
+                
+                // Return on top
                 aug_value* top = aug_vm_push(vm);
                 if(top)
                     aug_move(top, &ret_value);
-
-                // Cleanup arguments
-                aug_decref(func_index_value);
-                for(i = 0; i < arg_count; ++i)
-                    aug_decref(&args[i]);
-                AUG_FREE(args);
                 break;
             }
             case AUG_OPCODE_ARG_COUNT:
@@ -4385,10 +4387,10 @@ void aug_vm_execute(aug_vm* vm)
 
 #if AUG_DEBUG_VM
         printf("OP:   %s\n", aug_opcode_labels[(int)opcode]);
-        for(size_t i = 0; i < 5; ++i)
+        for(size_t i = 0; i < 10; ++i)
         {
             aug_value val = vm->stack[i];
-            printf("%s %ld: %s ", (vm->stack_index-1) == i ? ">" : " ", i, aug_value_type_labels[(int)val.type]);
+            printf("%s %ld: %s ", (vm->stack_index-1) == i ? ">" : " ", i, aug_get_type_label(&val));
             switch(val.type)
             {
                 case AUG_INT: printf("%d", val.i); break;
@@ -4400,7 +4402,6 @@ void aug_vm_execute(aug_vm* vm)
             }
             printf("\n");
         }
-        getchar();
 #endif 
     }
 }
