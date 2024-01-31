@@ -6,14 +6,10 @@ map = {
     "e" : 11111
 };
 
-print(map);
-
 map["a"] = 2;
 map["b"] = 22;
 map["c"] = 222;
 map["d"] = 2222;
-
-print(map);
 
 expect(map["a"] == 2, "map[a] == 2");
 expect(map["b"] == 22, "map[b] == 22");

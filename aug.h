@@ -4111,6 +4111,8 @@ void aug_vm_execute(aug_vm* vm)
                    aug_value* arg_value = aug_vm_pop(vm);
                    aug_value* arg_key = aug_vm_pop(vm);
                    aug_map_insert(value.map, arg_key, arg_value);
+                   aug_decref(arg_key);
+                   aug_decref(arg_value);
                }
 
                aug_value* top = aug_vm_push(vm);
