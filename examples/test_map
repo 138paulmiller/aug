@@ -7,3 +7,25 @@ a = {
 expect(a["str1"] == "1+2+3+4+5", a["str1"]);
 expect(a[1] == 15, "a[1] == ", a[1]);
 expect(a[0x123] == 0b1010101, "a[0x123] == ", a[0x123]);
+
+
+a = { };
+
+n = 10;
+i = 0;
+while i < n {
+	map_insert(a, i, i);
+	i = i + 1;
+}
+
+i = 0;
+while i < n {
+	expect(a[i] == i, a[i], " == ", i);
+	i = i + 1;
+}
+
+if a {
+}
+else { 
+	print("A");
+}

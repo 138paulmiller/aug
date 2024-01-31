@@ -30,6 +30,7 @@ SOFTWARE. */
         #include "aug.h"
 
     Todo: 
+    - Create an assign element AST/Opcode semantics
     - Create Programs for loading/unloading compiled code. 
         - The compiled scripts will also dump symtables to allow aug_call*s
     - Implement for loops
@@ -295,7 +296,7 @@ bool aug_array_compare(const aug_array* a, const aug_array* b);
 aug_map* aug_map_new(size_t size);
 void aug_map_incref(aug_map* map);
 aug_map* aug_map_decref(aug_map* map);
-aug_value* aug_map_insert(aug_map* map, aug_value* key);
+void aug_map_insert(aug_map* map, aug_value* key, aug_value* value);
 bool aug_map_remove(aug_map* map, aug_value* key);
 aug_value* aug_map_get(aug_map* map, aug_value* key);
 
@@ -1705,11 +1706,15 @@ aug_ast* aug_parse_expr(aug_lexer* lexer)
     // Shunting yard algorithm
     aug_container* op_stack = aug_container_new_type(aug_token, 1); 
     aug_container* expr_stack = aug_container_new_type(aug_ast*, 1); 
+
+    bool expect_value = true;
     while(aug_lexer_curr(lexer).id != AUG_TOKEN_SEMICOLON)
     {
         aug_token op = aug_lexer_curr(lexer);
         if(op.detail->prec > 0)
         {
+            expect_value = true;
+
             // left associate by default (for right, <= becomes <)
             while(op_stack->length)
             {
@@ -1722,8 +1727,13 @@ aug_ast* aug_parse_expr(aug_lexer* lexer)
             aug_container_push_type(aug_token, op_stack, op);
             aug_lexer_move(lexer);
         }
-        else
+        else 
         {
+            // Disallow two values from being pushed in succesion with an operator
+            if (!expect_value)
+                break;
+            
+            expect_value = false;
             aug_ast* value = aug_parse_value(lexer);
             if(value == NULL)
                 break;
@@ -1911,6 +1921,12 @@ aug_ast* aug_parse_map(aug_lexer* lexer)
         return NULL;
 
     aug_lexer_move(lexer); // eat LBRACE
+
+    if (aug_lexer_curr(lexer).id == AUG_TOKEN_RBRACE)
+    {
+        aug_lexer_move(lexer); // eat RBRACE
+        return aug_ast_new(AUG_AST_MAP, aug_token_new());
+    }
 
     // must have key : comma. Otherwise, not a map literal
     if (!aug_parse_is_key(aug_lexer_curr(lexer)) || aug_lexer_next(lexer).id != AUG_TOKEN_COLON)
@@ -4045,13 +4061,7 @@ void aug_vm_execute(aug_vm* vm)
                {
                    aug_value* arg_value = aug_vm_pop(vm);
                    aug_value* arg_key = aug_vm_pop(vm);
-
-                   aug_value* element = aug_map_insert(value.map, arg_key);
-                   if (element != NULL)
-                   {
-                       *element = aug_none();
-                       aug_move(element, arg_value);
-                   }
+                   aug_map_insert(value.map, arg_key, arg_value);
                }
 
                aug_value* top = aug_vm_push(vm);
@@ -5291,10 +5301,10 @@ aug_map* aug_map_decref(aug_map* map)
     return map;
 }
 
-aug_value* aug_map_insert(aug_map* map, aug_value* key)
+void aug_map_insert(aug_map* map, aug_value* key, aug_value* data)
 {
-    if(!aug_map_can_hash(key))
-        return NULL;
+    if(!aug_map_can_hash(key) || data == NULL)
+        return;
 
     size_t hash = aug_map_hash(key);
     aug_map_bucket* bucket = &map->buckets[hash % map->capacity];
@@ -5305,11 +5315,11 @@ aug_value* aug_map_insert(aug_map* map, aug_value* key)
         bucket = &map->buckets[hash % map->capacity];
     }
 
-    aug_value* data = aug_map_bucket_insert(map, bucket, key);
-    if (data != NULL)
+    aug_value* entry = aug_map_bucket_insert(map, bucket, key);
+    if (entry != NULL)
         ++map->count;
-    aug_incref(data);
-    return data;
+    aug_incref(entry);
+    *entry = *data;
 }
 
 bool aug_map_remove(aug_map* map, aug_value* key)

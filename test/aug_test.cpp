@@ -279,6 +279,20 @@ aug_value sum(int argc, aug_value* args)
 	return aug_none();
 }
 
+aug_value map_insert(int argc, aug_value* args)
+{
+	if (argc != 3)
+		return aug_none();
+	aug_value map = args[0];
+	aug_value key = args[1];
+	aug_value value = args[2];
+	if(map.type != AUG_MAP)
+		return aug_none();
+	aug_map_insert(map.map, &key, &value);
+
+	return aug_none();
+}
+
 aug_value append(int argc, aug_value* args)
 {
 	if (argc == 0)
@@ -391,6 +405,7 @@ int aug_test(int argc, char** argv)
 	aug_register(vm, "expect", expect);
 	aug_register(vm, "sum", sum);
 	aug_register(vm, "append", append);
+	aug_register(vm, "map_insert", map_insert);
 
 	aug_tester::startup();
 	for(int i = 1; i < argc; ++i)
