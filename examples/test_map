@@ -14,7 +14,7 @@ a = { };
 n = 10;
 i = 0;
 while i < n {
-	map_insert(a, i, i);
+	a[i] = i;
 	i = i + 1;
 }
 
@@ -22,10 +22,4 @@ i = 0;
 while i < n {
 	expect(a[i] == i, a[i], " == ", i);
 	i = i + 1;
-}
-
-if a {
-}
-else { 
-	print("A");
 }
