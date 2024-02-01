@@ -39,7 +39,9 @@ SOFTWARE. */
     - Serialize Bytecode to external file. Execute compiled bytecode from file
     - Serialize debug symbols to file. Link from bytecode to source file.
         - Better runtime error handling, add source file and line to debug symbols
-    - Vector Matrix primitive types ?
+    - File, Directory, Vector, Matrix primitive types 
+        - create default language bindings to sdl, fileio, win32 etc...
+    - Operator overloading
     - Map from debug symbol addr to symbol
 */
 
@@ -778,7 +780,7 @@ aug_input* aug_input_open(const char* filename, aug_error_function* error_callba
     fopen_s(&file, filename, "r");
 #else
     FILE* file = fopen(filename, "r");
-#endif //_WIN32
+#endif //AUG_SECURE
     if(file == NULL)
     {
         aug_log_error(error_callback, "Input failed to open file %s", filename);
