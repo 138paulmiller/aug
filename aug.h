@@ -30,16 +30,13 @@ SOFTWARE. */
         #include "aug.h"
 
     Todo: 
-    - Create an assign element AST/Opcode semantics
     - Create Programs for loading/unloading compiled code. 
         - The compiled scripts will also dump symtables to allow aug_call*s
     - Implement for loops
-    - Serialize Bytecode to external file. Execute compiled bytecode from file
-    - Opcodes for iterators, values references etc...
-    - Create bespoke hashmap symtable.
+        - Opcodes for iterators, values references etc...
     - Implement objects 
         - Custom type registration. create accessors from field offset. allow users to define struct. 
-            Also create an alloc/dealloc interface. Custom Object struct { refcount, void* data; }
+    - Serialize Bytecode to external file. Execute compiled bytecode from file
     - Serialize debug symbols to file. Link from bytecode to source file.
         - Better runtime error handling, add source file and line to debug symbols
     - Vector Matrix primitive types ?
@@ -80,6 +77,7 @@ typedef struct aug_value aug_value;
 typedef struct aug_hashtable aug_hashtable;
 typedef struct aug_container aug_container;
 
+// String data type value
 typedef struct aug_string
 {
 	char *buffer;
@@ -88,6 +86,7 @@ typedef struct aug_string
 	size_t length;
 } aug_string;
 
+// Array data type value
 typedef struct aug_array
 {
 	aug_value* buffer;
@@ -98,6 +97,7 @@ typedef struct aug_array
 
 typedef struct aug_map_bucket aug_map_bucket;
 
+// Associate Array data type value
 typedef struct aug_map
 {
     aug_map_bucket* buckets;
@@ -106,6 +106,7 @@ typedef struct aug_map
     size_t ref_count;
 } aug_map;
 
+// TODO: Class data types value
 typedef struct aug_object
 {
     int ref_count;
@@ -113,8 +114,8 @@ typedef struct aug_object
     //aug_std_array<aug_attribute> attribs;
 } aug_object;
 
-// Value Types
-typedef enum aug_value_type
+// All support engine type values
+typedef enum aug_type
 {
     AUG_BOOL,
     AUG_CHAR,
@@ -126,12 +127,12 @@ typedef enum aug_value_type
     AUG_OBJECT,
     AUG_FUNCTION,
     AUG_NONE,
-} aug_value_type;
+} aug_type;
 
 // Values instance 
 typedef struct aug_value
 {
-    aug_value_type type;
+    aug_type type;
     union 
     {
         bool b;
@@ -144,39 +145,6 @@ typedef struct aug_value
         aug_object* obj;
     };
 } aug_value;
-
-// Symbol types
-typedef enum aug_symbol_type
-{
-    AUG_SYM_NONE,
-    AUG_SYM_VAR,
-    AUG_SYM_FUNC,
-} aug_symbol_type;
-
-typedef enum aug_symbol_scope
-{
-    AUG_SYM_SCOPE_LOCAL,
-    AUG_SYM_SCOPE_GLOBAL,
-    AUG_SYM_SCOPE_PARAM,
-} aug_symbol_scope;
-
-// Script symbols 
-typedef struct aug_symbol
-{
-    aug_string* name;
-    aug_symbol_scope scope;
-    aug_symbol_type type;
-    // Functions - offset is the bytecode address, argc is the number of expected params
-    // Variables - offset is the stack offset from the base index
-    int offset;
-    int argc;
-} aug_symbol;
-
-typedef struct aug_debug_symbol
-{
-    int bytecode_addr;
-    aug_symbol symbol;
-} aug_debug_symbol;
 
 // Represents a "compiled" script
 typedef struct aug_script
@@ -2641,6 +2609,42 @@ static const char* aug_opcode_labels[] =
 // Values pushes onto stack to track function calls. (return address, calling base index)  
 #define AUG_CALL_FRAME_STACK_SIZE 2
 
+// Symbols ================================================= Symbols ============================================== Symbols //
+
+// Internally managed script symbol types used by IR symtable and the VM debug symbols
+
+typedef enum aug_symbol_type
+{
+    AUG_SYM_NONE,
+    AUG_SYM_VAR,
+    AUG_SYM_FUNC,
+} aug_symbol_type;
+
+typedef enum aug_symbol_scope
+{
+    AUG_SYM_SCOPE_LOCAL,
+    AUG_SYM_SCOPE_GLOBAL,
+    AUG_SYM_SCOPE_PARAM,
+} aug_symbol_scope;
+
+// Script symbols 
+typedef struct aug_symbol
+{
+    aug_string* name;
+    aug_symbol_scope scope;
+    aug_symbol_type type;
+    // Functions - offset is the bytecode address, argc is the number of expected params
+    // Variables - offset is the stack offset from the base index
+    int offset;
+    int argc;
+} aug_symbol;
+
+// Script symbols source info
+typedef struct aug_debug_symbol
+{
+    int bytecode_addr;
+    aug_symbol symbol;
+} aug_debug_symbol;
 
 // IR ===================================================   IR   ======================================================= IR // 
 

@@ -231,7 +231,7 @@ void print(const aug_value& value)
 	}
 }
 
-float sum(const aug_value& value, aug_value_type& type)
+float sum(const aug_value& value, aug_type& type)
 {
 	switch (value.type)
 	{
@@ -267,7 +267,7 @@ float sum(const aug_value& value, aug_value_type& type)
 
 aug_value sum(int argc, aug_value* args)
 {
-	aug_value_type type = AUG_INT;
+	aug_type type = AUG_INT;
 	float total = 0.0;
 	for( int i = 0; i < argc; ++i)
 		total += sum(args[i], type);
