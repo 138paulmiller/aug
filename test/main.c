@@ -55,7 +55,7 @@ void print_value(aug_value value)
 	}
 }
 
-float sum_value(aug_value value, aug_value_type* type)
+float sum_value(aug_value value, aug_type* type)
 {
 	switch (value.type)
 	{
@@ -91,7 +91,7 @@ float sum_value(aug_value value, aug_value_type* type)
 
 aug_value sum(int argc, aug_value* args)
 {
-	aug_value_type type = AUG_INT;
+	aug_type type = AUG_INT;
 	float total = 0.0;
 	for( int i = 0; i < argc; ++i)
 		total += sum_value(args[i], &type);
@@ -149,7 +149,7 @@ aug_value expect(int argc, aug_value* args)
 	if (argc == 0)
 		return aug_none();
 
-	bool success = aug_get_bool(&args[0]);
+	bool success = aug_to_bool(&args[0]);
 	++tests_total;
     if (success)
         ++tests_passed;
