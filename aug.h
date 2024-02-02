@@ -227,9 +227,9 @@ aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, i
 // Value API ------------------------------------- Value API ------------------------------------------------ Value API//
 aug_value aug_none();
 
-bool aug_get_bool(const aug_value* value);
-int aug_get_int(const aug_value* value);
-float aug_get_float(const aug_value* value);
+bool aug_to_bool(const aug_value* value);
+int aug_to_int(const aug_value* value);
+float aug_to_float(const aug_value* value);
 const char* aug_get_type_label(const aug_value* value);
 
 aug_value aug_create_array();
@@ -3190,7 +3190,7 @@ aug_value aug_create_array()
     return value;
 }
 
-bool aug_get_bool(const aug_value* value)
+bool aug_to_bool(const aug_value* value)
 {
     if(value == NULL)
         return false;
@@ -3223,7 +3223,7 @@ bool aug_get_bool(const aug_value* value)
     return false;
 }
 
-int aug_get_int(const aug_value* value)
+int aug_to_int(const aug_value* value)
 {    
     if(value == NULL)
         return 0;
@@ -3244,7 +3244,7 @@ int aug_get_int(const aug_value* value)
     return 0;
 }
 
-float aug_get_float(const aug_value* value)
+float aug_to_float(const aug_value* value)
 {
     if(value == NULL)
     	return 0.0f;
@@ -3405,7 +3405,7 @@ static inline bool aug_get_element(aug_value* value, aug_value* index, aug_value
     {
     case AUG_STRING:
     {
-        size_t i = (size_t)aug_get_int(index);
+        size_t i = (size_t)aug_to_int(index);
         char c = aug_string_at(value->str, i);
         if(c == -1)
             return false;
@@ -3414,7 +3414,7 @@ static inline bool aug_get_element(aug_value* value, aug_value* index, aug_value
     }
     case AUG_ARRAY:
     {
-        size_t i = (size_t)aug_get_int(index);
+        size_t i = (size_t)aug_to_int(index);
         aug_value* element = aug_array_at(value->array, i);
         if(element == NULL)
             return false;
@@ -3445,14 +3445,14 @@ static inline bool aug_set_element(aug_value* value, aug_value* index, aug_value
     {
     case AUG_STRING:
     {
-        size_t i = (size_t)aug_get_int(index);
+        size_t i = (size_t)aug_to_int(index);
         if(element->type == AUG_CHAR)
             return aug_string_set(value->str, i, element->c);
         return false;
     }
     case AUG_ARRAY:
     {
-        size_t i = (size_t)aug_get_int(index);
+        size_t i = (size_t)aug_to_int(index);
         return aug_array_set(value->array, i, element);
     }
     case AUG_MAP:
@@ -3698,17 +3698,17 @@ static inline bool aug_approxeq(aug_value* result, aug_value* lhs, aug_value* rh
 
 static inline bool aug_and(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
-    return aug_set_bool(result, aug_get_bool(lhs) && aug_get_bool(rhs));
+    return aug_set_bool(result, aug_to_bool(lhs) && aug_to_bool(rhs));
 }
 
 static inline bool aug_or(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
-    return aug_set_bool(result, aug_get_bool(lhs) || aug_get_bool(rhs));
+    return aug_set_bool(result, aug_to_bool(lhs) || aug_to_bool(rhs));
 }
 
 static inline bool aug_not(aug_value* result, aug_value* arg)
 {
-    return aug_set_bool(result, !aug_get_bool(arg));
+    return aug_set_bool(result, !aug_to_bool(arg));
 }
 
 #undef AUG_DEFINE_BINOP_POD
@@ -4185,7 +4185,7 @@ void aug_vm_execute(aug_vm* vm)
             {
                 const int instruction_offset = aug_vm_read_int(vm);
                 aug_value* cond = aug_vm_pop(vm);
-                if(aug_get_bool(cond) != 0)
+                if(aug_to_bool(cond) != 0)
                     vm->instruction = vm->bytecode + instruction_offset;
                 aug_decref(cond);
                 break;
@@ -4194,7 +4194,7 @@ void aug_vm_execute(aug_vm* vm)
             {
                 const int instruction_offset = aug_vm_read_int(vm);
                 aug_value* cond = aug_vm_pop(vm);
-                if(aug_get_bool(cond) == 0)
+                if(aug_to_bool(cond) == 0)
                     vm->instruction = vm->bytecode + instruction_offset;
                 aug_decref(cond);
                 break;
