@@ -128,6 +128,7 @@ typedef enum aug_type
     AUG_MAP,
     AUG_OBJECT,
     AUG_FUNCTION,
+    AUG_CUSTOM,
     AUG_NONE,
 } aug_type;
 
@@ -137,14 +138,15 @@ typedef struct aug_value
     aug_type type;
     union 
     {
-        bool b;
-        int i; 
-        char c;
-        float f;
-        aug_string* str;
-        aug_array* array;
-        aug_map* map;
-        aug_object* obj;
+        bool b;             // AUG_BOOL
+        int i;              // AUG_INT/AUG_FUNCTION
+        char c;             // AUG_CHAR
+        float f;            // AUG_FLOAT
+        aug_string* str;    // AUG_STRING
+        aug_array* array;   // AUG_ARRAY
+        aug_map* map;       // AUG_MAP
+        aug_object* obj;    // AUG_OBJECT
+        void* data;         // AUG_CUSTOM (custom data type for users)
     };
 } aug_value;
 
@@ -236,6 +238,7 @@ aug_value aug_create_int(int data);
 aug_value aug_create_char(char data);
 aug_value aug_create_float(float data);
 aug_value aug_create_string(const char* data);
+aug_value aug_create_user_data(void* data);
 
 // String API------------------------------------ String API ----------------------------------------------- String API//
 aug_string* aug_string_new(size_t size);
@@ -3214,6 +3217,8 @@ bool aug_get_bool(const aug_value* value)
         return value->obj != NULL;
     case AUG_FUNCTION:
         return value->i != 0;
+     case AUG_CUSTOM:
+        return value->data != NULL;       
     }
     return false;
 }
@@ -3225,13 +3230,6 @@ int aug_get_int(const aug_value* value)
 
     switch (value->type)
     {
-    case AUG_NONE:
-    case AUG_STRING:
-    case AUG_ARRAY:
-    case AUG_MAP:
-    case AUG_OBJECT:
-    case AUG_FUNCTION:
-        return 0;
     case AUG_BOOL:
         return value->b ? 1 : 0;
     case AUG_INT:
@@ -3240,6 +3238,8 @@ int aug_get_int(const aug_value* value)
         return (int)value->c;
     case AUG_FLOAT:
         return (int)value->f;
+    default:
+        return 0;
     }
     return 0;
 }
@@ -3247,17 +3247,10 @@ int aug_get_int(const aug_value* value)
 float aug_get_float(const aug_value* value)
 {
     if(value == NULL)
-        return 0;
+    	return 0.0f;
 
     switch (value->type)
-    {
-    case AUG_NONE:
-    case AUG_STRING:
-    case AUG_ARRAY:
-    case AUG_MAP:
-    case AUG_OBJECT:
-    case AUG_FUNCTION:
-        break;    
+    { 
     case AUG_BOOL:
         return value->b ? 1.0f : 0.0f;
     case AUG_INT:
@@ -3266,6 +3259,8 @@ float aug_get_float(const aug_value* value)
         return (float)value->c;
     case AUG_FLOAT:
         return value->f;
+    default:
+        return 0.0f;
     }
     return 0.0f;
 }
@@ -3299,6 +3294,8 @@ static inline bool aug_compare(aug_value* a, aug_value* b)
         return a->c == b->c;
     case AUG_FLOAT:
         return (float)fabs(a->f - b->f) < AUG_APPROX_THRESHOLD;
+    case AUG_CUSTOM:
+        return a->data == b->data;
     }
     return false;
 }
@@ -3318,6 +3315,7 @@ const char* aug_get_type_label(const aug_value* value)
     case AUG_OBJECT:    return "object";
     case AUG_MAP:       return "map";
     case AUG_FUNCTION:  return "function";
+    case AUG_CUSTOM:  return "custom";
     }
     return NULL;
 }
@@ -3329,13 +3327,6 @@ static inline void aug_decref(aug_value* value)
 
     switch (value->type)
     {
-    case AUG_NONE:
-    case AUG_BOOL:
-    case AUG_INT:
-    case AUG_CHAR:
-    case AUG_FLOAT:
-    case AUG_FUNCTION:
-        break;
     case AUG_STRING:
         value->str = aug_string_decref(value->str);
         break;
@@ -3349,6 +3340,8 @@ static inline void aug_decref(aug_value* value)
         if(value->obj && --value->obj->ref_count <= 0)
             AUG_FREE(value->obj);
         break;
+    default:
+        break;
     }
 
     value->type = AUG_NONE;
@@ -3361,13 +3354,6 @@ static inline void aug_incref(aug_value* value)
 
     switch (value->type)
     {
-    case AUG_NONE:
-    case AUG_BOOL:
-    case AUG_INT:
-    case AUG_CHAR:
-    case AUG_FLOAT:
-    case AUG_FUNCTION:
-        break;
     case AUG_STRING:
         aug_string_incref(value->str);
         break;
@@ -3380,6 +3366,8 @@ static inline void aug_incref(aug_value* value)
     case AUG_OBJECT:
         assert(value->obj);
         ++value->obj->ref_count;
+        break;
+    default:
         break;
     }
 }
@@ -3442,13 +3430,7 @@ static inline bool aug_get_element(aug_value* value, aug_value* index, aug_value
         *element_out = *element;
         return true;
     }
-    case AUG_NONE:
-    case AUG_BOOL:
-    case AUG_INT:
-    case AUG_CHAR:
-    case AUG_FLOAT:
-    case AUG_OBJECT:
-    case AUG_FUNCTION:
+    default:
         break;
     }
     return false;
@@ -3477,13 +3459,7 @@ static inline bool aug_set_element(aug_value* value, aug_value* index, aug_value
     {
         return aug_map_insert_or_update(value->map, index, element);
     }
-    case AUG_NONE:
-    case AUG_BOOL:
-    case AUG_INT:
-    case AUG_CHAR:
-    case AUG_FLOAT:
-    case AUG_OBJECT:
-    case AUG_FUNCTION:
+    default:
         break;
     }
     return false;
@@ -5694,7 +5670,7 @@ void aug_unload(aug_vm* vm, aug_script* script)
 
 aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, int argc, aug_value* args)
 {
-    if (vm == NULL)
+    if (vm == NULL || script == NULL)
         return aug_none();
 
     aug_value ret_value = aug_none();
@@ -5777,6 +5753,14 @@ aug_value aug_create_string(const char* data)
 {
     aug_value value;
     aug_set_string(&value, data);
+    return value;
+}
+
+aug_value aug_create_custom(void* data)
+{
+    aug_value value;
+    value.type = AUG_CUSTOM;
+    value.data = data;
     return value;
 }
 
