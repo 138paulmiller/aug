@@ -809,6 +809,8 @@ aug_input* aug_input_open(const char* filename, aug_error_function* error_callba
 
 void aug_input_close(aug_input* input)
 {
+    if(input == NULL) 
+        return;
     input->filename = aug_string_decref(input->filename);
     if(input->file != NULL)
         fclose(input->file);
@@ -1943,15 +1945,12 @@ aug_ast* aug_parse_map(aug_lexer* lexer)
     return map;
 }
 
-aug_ast* aug_parse_element(aug_lexer* lexer, bool is_get)
+aug_ast* aug_parse_element(aug_lexer* lexer, aug_ast* container, bool is_get)
 {
     // [ expr ]
-    if(aug_lexer_next(lexer).id != AUG_TOKEN_LBRACKET)
+    if(aug_lexer_curr(lexer).id != AUG_TOKEN_LBRACKET)
         return NULL;
 
-    aug_token name_token = aug_token_copy(aug_lexer_curr(lexer));
-
-    aug_lexer_move(lexer); // eat NAME
     aug_lexer_move(lexer); // eat LBRACKET
 
     aug_ast* expr = aug_parse_expr(lexer);
@@ -1961,7 +1960,6 @@ aug_ast* aug_parse_element(aug_lexer* lexer, bool is_get)
         return NULL;
     }
 
-    aug_ast* container = aug_ast_new(AUG_AST_VARIABLE, name_token);
     aug_ast* element = aug_ast_new(is_get ? AUG_AST_GET_ELEMENT : AUG_AST_SET_ELEMENT, aug_token_new());
 
     aug_ast_resize(element, 2);
@@ -1976,6 +1974,13 @@ aug_ast* aug_parse_element(aug_lexer* lexer, bool is_get)
     }
 
     aug_lexer_move(lexer); // eat RBRACKET
+    
+    aug_ast* nested_element = aug_parse_element(lexer, element, is_get);
+    if(nested_element)
+    {
+        element->id = AUG_AST_GET_ELEMENT; // If a following element access exists, ensure inner map access are GET not SET operations
+        return nested_element;
+    }
     return element;
 }
 
@@ -2006,16 +2011,16 @@ aug_ast* aug_parse_value(aug_lexer* lexer)
         if (value != NULL)
             break;
 
-        // try parse index of variable
-        value = aug_parse_element(lexer, true);
-        if (value != NULL)
-            break;
-
         // consume token. return variable node
         aug_token token = aug_token_copy(aug_lexer_curr(lexer));
         value = aug_ast_new(AUG_AST_VARIABLE, token);
 
         aug_lexer_move(lexer); // eat name
+
+        // try parse index of variable
+        aug_ast* element = aug_parse_element(lexer, value, true);
+        if (element != NULL)
+            value = element;
         break;
     }
     case AUG_TOKEN_LBRACKET:
@@ -2129,11 +2134,17 @@ aug_ast* aug_parse_stmt_assign(aug_lexer* lexer)
     if(aug_lexer_curr(lexer).id != AUG_TOKEN_NAME)
         return NULL;
 
-    aug_token eq_token = aug_lexer_next(lexer);
+    aug_token eq_token;
     aug_ast* element = NULL;
     if(aug_lexer_next(lexer).id == AUG_TOKEN_LBRACKET)
     {
-        element = aug_parse_element(lexer, false);
+        // consume token. return variable node
+        aug_token token = aug_token_copy(aug_lexer_curr(lexer));
+        aug_ast* var = aug_ast_new(AUG_AST_VARIABLE, token);
+
+        aug_lexer_move(lexer); // eat name
+
+        element = aug_parse_element(lexer, var, false);
         eq_token = aug_lexer_curr(lexer);
     }
     else
@@ -5484,6 +5495,7 @@ bool aug_map_insert_or_update(aug_map* map, aug_value* key, aug_value* data)
     aug_value* entry = aug_map_get(map, key);
     if(entry != NULL)
     {
+        aug_decref(entry);
         *entry = *data;
         aug_incref(entry);
         return true;

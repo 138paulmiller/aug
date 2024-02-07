@@ -24,6 +24,9 @@ while i < n {
 	i = i + 1;
 }
 
+
+# Testing nesting
+
 nested = {
 	"0" : { 
 		"0" : "A", 
@@ -35,9 +38,23 @@ nested = {
 	},	
 };
 
-temp = nested["0"];
-expect(temp["0"] == "A", "nested[\"0\"][\"0\"] ==", temp);
-expect(temp["1"] == "B", "nested[\"0\"][\"1\"] ==", temp);
-temp = nested["1"];
-expect(temp["0"] == "C", "nested[\"1\"][\"0\"] ==", temp);
-expect(temp["1"] == "D", "nested[\"1\"][\"1\"] ==", temp);
+expect(nested["0"]["0"] == "A", "nested[\"0\"][\"0\"] ==", nested["0"]["0"] );
+expect(nested["0"]["1"] == "B", "nested[\"0\"][\"1\"] ==", nested["0"]["1"] );
+expect(nested["1"]["0"] == "C", "nested[\"1\"][\"0\"] ==", nested["1"]["0"] );
+expect(nested["1"]["1"] == "D", "nested[\"1\"][\"1\"] ==", nested["1"]["1"] );
+
+
+nested["0"]["1"] = { "2" : "012" };
+expect(nested["0"]["1"]["2"] == "012", "nested[\"0\"][\"1\"][\"2\"] ==", nested["0"]["1"]["2"]);
+
+nested["0"]["1"]["2"] = "001122";
+expect(nested["0"]["1"]["2"] == "001122", "nested[\"0\"][\"1\"][\"2\"] ==", nested["0"]["1"]["2"]);
+
+nested = {};
+nested["0"] = { 
+		"0" : "A", 
+		"1" : "B"
+};
+
+expect(nested["0"]["0"] == "A");
+expect(nested["0"]["1"] == "B");
