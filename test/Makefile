@@ -5,6 +5,7 @@ CC = g++
 CFLAGS = -Wall -O3
 LIBS = -I../ -std=c++11
 LD =
+DEBUG = 0
 
 all: $(OUT_DIR) $(TARGET)
 	echo "Done"
@@ -16,4 +17,4 @@ $(OUT_DIR):
 	mkdir $(OUT_DIR)
 
 $(TARGET): $(SRC)
-	$(CC) -g -o $@ $^ $(CFLAGS) $(LIBS) $(LD)
+	$(CC) -DAUG_DEBUG_VM=$(DEBUG) -g -o $@ $^ $(CFLAGS) $(LIBS) $(LD)

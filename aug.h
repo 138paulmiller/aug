@@ -34,6 +34,8 @@ SOFTWARE. */
         - The compiled scripts will also dump symtables to allow aug_call*s
     - Implement for loops
         - Opcodes for iterators, values references etc...
+    - Implement Closures
+        - Allow user to return functions that contains parameter state
     - Implement objects 
         - Custom type registration. create accessors from field offset. allow users to define struct. 
     - Serialize Bytecode to external file. Execute compiled bytecode from file
@@ -52,7 +54,9 @@ extern "C" {
 #ifndef __AUG_HEADER__
 #define __AUG_HEADER__
 
-#define AUG_DEBUG_VM 0
+#ifndef AUG_DEBUG_VM
+#define AUG_DEBUG_VM 1
+#endif//AUG_DEBUG_VM
 
 // Size of the virtual machine's value stack 
 #ifndef AUG_STACK_SIZE
@@ -1571,7 +1575,8 @@ typedef enum aug_ast_id
     AUG_AST_GET_ELEMENT,
     AUG_AST_UNARY_OP, 
     AUG_AST_BINARY_OP, 
-    AUG_AST_FUNC_CALL,
+    AUG_AST_FUNC_CALL, 
+    AUG_AST_FUNC_CALL_UNNAMED,
     AUG_AST_STMT_DEFINE_FUNC, 
     AUG_AST_PARAM_LIST,
     AUG_AST_PARAM,
@@ -1753,20 +1758,29 @@ aug_ast* aug_parse_expr(aug_lexer* lexer)
     return expr;
 }
 
-aug_ast* aug_parse_funccall(aug_lexer* lexer)
+aug_ast* aug_parse_funccall(aug_lexer* lexer, aug_ast* value)
 {
-    if(aug_lexer_curr(lexer).id != AUG_TOKEN_NAME)
+    if(aug_lexer_curr(lexer).id != AUG_TOKEN_LPAREN)
         return NULL;
 
-    if(aug_lexer_next(lexer).id != AUG_TOKEN_LPAREN)
-        return NULL;
-
-    aug_token name_token = aug_token_copy(aug_lexer_curr(lexer));
-
-    aug_lexer_move(lexer); // eat NAME
     aug_lexer_move(lexer); // eat LPAREN
 
-    aug_ast* funccall = aug_ast_new(AUG_AST_FUNC_CALL, name_token);
+    // TODO: If value is a variable, then have this be a standard function call. Otherwise, will be a call from stack
+    // This will allow func calls from elements, and returns values
+    aug_ast* funccall = NULL;
+    if(value->id == AUG_AST_VARIABLE)
+    {
+        // pass token to func call
+        funccall = aug_ast_new(AUG_AST_FUNC_CALL, value->token);
+        value->token = aug_token_new();
+        aug_ast_delete(value);
+    }
+    else
+    {
+        funccall = aug_ast_new(AUG_AST_FUNC_CALL_UNNAMED, aug_token_new());
+        aug_ast_add(funccall, value); //NOTE: first child is the function value
+    }
+    
     aug_ast* expr = aug_parse_expr(lexer);
     if(expr != NULL)
     {
@@ -2006,21 +2020,11 @@ aug_ast* aug_parse_value(aug_lexer* lexer)
     }
     case AUG_TOKEN_NAME:
     {
-        // try parse funccall
-        value = aug_parse_funccall(lexer);
-        if (value != NULL)
-            break;
-
         // consume token. return variable node
         aug_token token = aug_token_copy(aug_lexer_curr(lexer));
         value = aug_ast_new(AUG_AST_VARIABLE, token);
 
         aug_lexer_move(lexer); // eat name
-
-        // try parse index of variable
-        aug_ast* element = aug_parse_element(lexer, value, true);
-        if (element != NULL)
-            value = element;
         break;
     }
     case AUG_TOKEN_LBRACKET:
@@ -2051,6 +2055,29 @@ aug_ast* aug_parse_value(aug_lexer* lexer)
     }
     default: break;
     }
+
+    // Parse the qualifying operations, func call (), element [], and dot .
+    while(value)
+    {
+        // try parse funccall
+        aug_ast* funccall = aug_parse_funccall(lexer, value);
+        if (funccall != NULL)
+        {
+            value = funccall;
+            continue;
+        }
+
+        // try parse index of variable
+        aug_ast* element = aug_parse_element(lexer, value, true);
+        if (element != NULL)
+        {
+            value = element;
+            continue;
+        }
+
+        break;
+    }
+
     return value;
 }
 
@@ -2592,6 +2619,7 @@ aug_ast* aug_parse(aug_input* input)
     AUG_OPCODE(CALL_FRAME)        \
     AUG_OPCODE(ARG_COUNT)         \
 	AUG_OPCODE(CALL)              \
+	AUG_OPCODE(CALL_TOP)          \
 	AUG_OPCODE(CALL_LOCAL)        \
 	AUG_OPCODE(CALL_GLOBAL)       \
 	AUG_OPCODE(CALL_EXT)          \
@@ -4231,6 +4259,22 @@ void aug_vm_execute(aug_vm* vm)
                 vm->base_index = vm->stack_index;
                 break;
             }
+            case AUG_OPCODE_CALL_TOP:
+            {
+                aug_value* top = aug_vm_pop(vm);
+                if(top == NULL || top->type != AUG_FUNCTION)
+                {
+                    aug_string* name = aug_vm_get_debug_symbol_name(vm, sizeof(int));
+                    aug_log_vm_error(vm, "Unnamed value %s is not a function", 
+                        name ? name->buffer : "(anonymous)");
+                    break;
+                }
+
+                const int func_addr = top->i;
+                vm->instruction = vm->bytecode + func_addr;
+                vm->base_index = vm->stack_index;
+                break;
+            }
             case AUG_OPCODE_CALL_LOCAL:
             {
                 const int stack_offset = aug_vm_read_int(vm);
@@ -4271,7 +4315,7 @@ void aug_vm_execute(aug_vm* vm)
                 {
                     aug_decref(func_index_value);
                     aug_log_vm_error(vm, "External Function call expected function index to be pushed on stack");
-                    break;                    
+                    break;
                 }
 
                 const int func_index = func_index_value->i;
@@ -4395,6 +4439,7 @@ void aug_vm_execute(aug_vm* vm)
             }
             printf("\n");
         }
+        getchar();
 #endif 
     }
 }
@@ -4825,8 +4870,7 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
                 else
                 {
                     // offset to account for the pushed base
-                    aug_ir_operand stub = aug_ir_operand_from_int(0);
-                    size_t push_frame = aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL_FRAME, stub);
+                    size_t push_frame = aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL_FRAME, aug_ir_operand_from_int(0));
 
                     // Push arguments onto stack
                     int i;
@@ -4883,11 +4927,33 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             for(i = arg_count - 1; i >= 0; --i)
                 aug_ast_to_ir(vm, children[i], ir);
 
-            const aug_ir_operand func_index_operand = aug_ir_operand_from_int(func_index);
-            aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_INT, func_index_operand);
+            aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_INT, aug_ir_operand_from_int(func_index));
+            aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL_EXT, aug_ir_operand_from_int(arg_count));
+            break;
+        }
+        case AUG_AST_FUNC_CALL_UNNAMED:
+        {
+            assert(children_size >= 1); 
+            const int arg_count = children_size - 1; // off by one since first child is the value to push onto the stack to be called
 
-            const aug_ir_operand arg_count_operand = aug_ir_operand_from_int(arg_count);
-            aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL_EXT, arg_count_operand);
+            // offset to account for the pushed base
+            size_t push_frame = aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL_FRAME, aug_ir_operand_from_int(0));
+
+            // Push arguments onto stack
+            int i;
+            for(i = 1; i < children_size; ++i)
+                aug_ast_to_ir(vm, children[i], ir);
+
+            // First arg is the value of the function to call 
+            aug_ast_to_ir(vm, children[0], ir);
+
+            // TODO: Push arg count, and have the function body check that arg count matches in the vm runtime
+            aug_ir_add_operation_arg(ir, AUG_OPCODE_ARG_COUNT, aug_ir_operand_from_int(arg_count));
+            aug_ir_add_operation(ir, AUG_OPCODE_CALL_TOP);
+
+            // fixup the return address to after the call
+            aug_ir_get_operation(ir, push_frame)->operand = aug_ir_operand_from_int(ir->bytecode_offset);
+
             break;
         }
         case AUG_AST_RETURN:
@@ -5503,7 +5569,6 @@ bool aug_map_insert_or_update(aug_map* map, aug_value* key, aug_value* data)
 
     return aug_map_insert(map, key, data);
 }
-
 
 void aug_map_foreach(aug_map* map, aug_map_iterator* iterator, void* user_data)
 {

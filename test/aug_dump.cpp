@@ -172,6 +172,14 @@ void dump_ast_tree(const aug_ast* node, std::string prefix, bool is_leaf)
 			for (int i = 0; i < children_size; ++i)
 				dump_ast_tree(children[i], prefix, i == children_size - 1);
 			break;
+
+		case AUG_AST_FUNC_CALL_UNNAMED:
+			printf("FUNC CALL UNNAMED\n");
+			dump_ast_tree(children[0], prefix, 0 == children_size - 1);
+			printf("ARGS\n");
+			for (int i = 1; i < children_size; ++i)
+				dump_ast_tree(children[i], prefix, i == children_size - 1);
+			break;
 		case AUG_AST_PARAM:
 		case AUG_AST_VARIABLE:
 		case AUG_AST_LITERAL:

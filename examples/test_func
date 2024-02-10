@@ -93,7 +93,19 @@ expect(a == 1000, "call_func(count, 1000) = ", a);
 a = call_func(count, 1000);
 expect(a == 1000, "call_func(count, 1000) = ", a);
 
+func square(x){
+    return x * x;
+}
+
+map = { "sq" : square };
+expect( map["sq"](100) == square(100), "map[\"sq\"](100) == square(100)");
 
 
-
-
+func Nested(){ 
+    func Inner(f){ 
+        return f + 1; 
+    }
+    var temp = Inner;
+   return temp;
+}
+print(Nested()(100));
