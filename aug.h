@@ -180,7 +180,13 @@ typedef struct aug_frame
 } aug_frame;
 
 typedef void(aug_error_function)(const char* /*msg*/);
-typedef aug_value /*return*/(aug_extension)(int argc, aug_value* /*args*/);
+typedef aug_value /*return*/(aug_extension_callback)(int argc, aug_value* /*args*/);
+
+typedef struct aug_extension
+{
+    aug_extension_callback* callback;
+    aug_string* name;
+} aug_extension;
 
 // Running instance of the virtual machine
 typedef struct aug_vm
@@ -199,10 +205,7 @@ typedef struct aug_vm
     // Extensions are external functions are native functions that can be called from scripts   
     // This external function map contains the user's registered functions. 
     // Use aug_register/aug_unregister to modify these fields
-    aug_extension* extensions[AUG_EXTENSION_SIZE];      
-    aug_string* extension_names[AUG_EXTENSION_SIZE]; 
-    int extension_count;
-
+    aug_container* extensions; //aug_extension
     aug_container* debug_symbols; //weak pointer to script debug symbols
 } aug_vm;
 
@@ -214,7 +217,7 @@ void aug_shutdown(aug_vm* vm);
 // Extend the script functions via external functions. 
 // NOTE: Changing the registered functions will require a script recompilation. 
 //       Can not guarantee the external function call will work, as bytecode uses function index. 
-void aug_register(aug_vm* vm, const char* func_name, aug_extension* extension);
+void aug_register(aug_vm* vm, const char* func_name, aug_extension_callback* callback);
 void aug_unregister(aug_vm* vm, const char* func_name);
 
 // Will reboot the VM to execute the standalone script or code
@@ -4323,7 +4326,8 @@ void aug_vm_execute(aug_vm* vm)
 
                 const int func_index = func_index_value->i;
                 // Check function call
-                if (func_index < 0 || func_index >= AUG_EXTENSION_SIZE || vm->extensions[func_index] == NULL)
+                aug_extension* extension = aug_container_ptr_type(aug_extension, vm->extensions, func_index);
+                if (extension == NULL || extension->callback == NULL)
                 {
                     aug_decref(func_index_value);
                     aug_log_vm_error(vm, "External Function at index %d not registered", func_index);
@@ -4346,7 +4350,7 @@ void aug_vm_execute(aug_vm* vm)
                 }
 
                 // Call the external function. Move return value on to top of stack
-                aug_value ret_value = vm->extensions[func_index](arg_count, args);
+                aug_value ret_value = extension->callback(arg_count, args);
                 
                 // Cleanup arguments
                 aug_decref(func_index_value);
@@ -4910,23 +4914,26 @@ void aug_ast_to_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
             }
 
             // Check if the symbol is a registered extension function
-            int func_index = -1;
-            int i;
-            for(i = 0; i < AUG_EXTENSION_SIZE; ++i)
+            bool found = false;
+            size_t func_index;
+            for(func_index = 0; func_index < vm->extensions->length; ++func_index)
             {
-                if(vm->extensions[i] != NULL && aug_string_compare(vm->extension_names[i], token_data))
+                aug_extension* extension = aug_container_ptr_type(aug_extension, vm->extensions, func_index);
+                if(extension->callback != NULL && aug_string_compare(extension->name, token_data))
                 {
-                    func_index = i;
+                    found = true;
                     break;
                 }
             }
 
-            if(func_index == -1)
+            if(!found)
             {
                 ir->valid = false;
                 aug_log_input_error_at(ir->input, &token.pos, "Function %s not defined", token_data->buffer);
                 break;
             }
+
+            int i;
             for(i = arg_count - 1; i >= 0; --i)
                 aug_ast_to_ir(vm, children[i], ir);
 
@@ -5633,17 +5640,13 @@ void aug_script_delete(aug_script* script)
 aug_vm* aug_startup(aug_error_function* error_callback)
 {
     aug_vm* vm = (aug_vm*)AUG_ALLOC(sizeof(aug_vm));
-    int i;
-    for (i = 0; i < AUG_EXTENSION_SIZE; ++i)
-    {
-        vm->extensions[i] = NULL;
-        vm->extension_names[i] = NULL;
-    }
 
+    size_t i;
     for (i = 0; i < AUG_STACK_SIZE; ++i)
         vm->stack[i] = aug_none();
 
     // Initialize
+    vm->extensions = aug_container_new_type(aug_extension, 16);
     vm->error_callback = error_callback;
     aug_vm_startup(vm);
     return vm;
@@ -5653,39 +5656,47 @@ void aug_shutdown(aug_vm* vm)
 {
     aug_vm_shutdown(vm);
 
-    int i;
-    for (i = 0; i < AUG_EXTENSION_SIZE; ++i)
+    size_t i;
+    for (i = 0; i < vm->extensions->length; ++i)
     {
-        vm->extensions[i] = NULL;
-        vm->extension_names[i] = aug_string_decref(vm->extension_names[i]);
+        aug_extension* extension = aug_container_ptr_type(aug_extension, vm->extensions, i);
+        extension->name = aug_string_decref(extension->name);
     }
+    vm->extensions = aug_container_decref(vm->extensions);
 
     AUG_FREE(vm);
 }
 
-void aug_register(aug_vm* vm, const char* name, aug_extension* extension)
+void aug_register(aug_vm* vm, const char* name, aug_extension_callback* callback)
 {
-    int i;
-    for (i = 0; i < AUG_EXTENSION_SIZE; ++i)
+    size_t i;
+    for (i = 0; i < vm->extensions->length; ++i)
     {
-        if (vm->extensions[i] == NULL)
+        aug_extension* extension = aug_container_ptr_type(aug_extension, vm->extensions, i);
+        if (extension->callback == NULL)
         {
-            vm->extensions[i] = extension;
-            vm->extension_names[i] = aug_string_create(name);
-            break;
+            extension->callback = callback;
+            extension->name = aug_string_create(name);
+            return;
         }
     }
+
+    aug_extension new_extension;
+    new_extension.callback = callback;
+    new_extension.name = aug_string_create(name);
+    aug_container_push_type(aug_extension, vm->extensions, new_extension);
 }
 
 void aug_unregister(aug_vm* vm, const char* func_name)
 {
-    int i;
-    for (i = 0; i < AUG_EXTENSION_SIZE; ++i)
+    size_t i;
+    for (i = 0; i < vm->extensions->length; ++i)
     {
-        if (aug_string_compare_bytes(vm->extension_names[i], func_name))
+        aug_extension* extension = aug_container_ptr_type(aug_extension, vm->extensions, i);
+        if (aug_string_compare_bytes(extension->name, func_name))
         {
-            vm->extensions[i] = NULL;
-            vm->extension_names[i] = aug_string_decref(vm->extension_names[i]);
+            extension->callback = NULL;
+            extension->name = aug_string_decref(extension->name);
             break;
         }
     }
