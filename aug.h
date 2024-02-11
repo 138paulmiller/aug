@@ -57,10 +57,6 @@ extern "C" {
 #ifndef __AUG_HEADER__
 #define __AUG_HEADER__
 
-#ifndef AUG_DEBUG_VM
-#define AUG_DEBUG_VM 1
-#endif//AUG_DEBUG_VM
-
 // Size of the virtual machine's value stack 
 #ifndef AUG_STACK_SIZE
 #define AUG_STACK_SIZE (1024 * 16)
@@ -4429,7 +4425,7 @@ void aug_vm_execute(aug_vm* vm)
             break;
         }
 
-#if AUG_DEBUG_VM
+#if defined(AUG_DEBUG_VM) && AUG_DEBUG_VM
         printf("OP:   %s\n", aug_opcode_labels[(int)opcode]);
         for(size_t i = 0; i < 10; ++i)
         {
