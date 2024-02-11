@@ -1,5 +1,0 @@
-i = 0;
-func update(){
-	i = i + 1;
-	expect(i != 0);
-}

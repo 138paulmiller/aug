@@ -23,29 +23,25 @@ expect(a == 1000, "call_func(count, 1000) = ", a);
 a = call_func(count, 1000);
 expect(a == 1000, "call_func(count, 1000) = ", a);
 
+func _internal_call_func(a, y) {
+    return a(y);
+}
+
 func delay_call_func(callback, x){
-    func _internal_call_func(a, y) {
-        return a(y);
-    }
     var a = _internal_call_func(count, x);
     expect(a == x, "_internal_call_func = ", a);
 }
 
 delay_call_func(count, 10);
 
-func local_call_func(){
-    func _local_call_func(a, x) {
-        return a(x);
-    }
+func _local_call_func(a, x) {
+    return a(x);
+}
 
-    func count(a) {
-        if a <= 0 { 
-            return 0; 
-        }
-        global += 1;
-        return count(a-1) + 1;
-    }
+func local_call_func(){
     var a = _local_call_func(count, 10);
     expect(a == 10, "_local_call_func(count, 10) = ", a);
 }
+
+local_call_func();
 

@@ -21,9 +21,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE. */
 
 /*
-    AUG - embeddable script engine
-
-    * aug.h - single file implementation, self-contained lexer, parser, bytecode compiler, and virtual machine 
+    aug.h - single file embeddable script engine. Self-contained bytecode compiler and virtual machine 
 
     * To use exactly one source file must contain the following 
         #define AUG_IMPLEMENTATION
@@ -34,8 +32,6 @@ SOFTWARE. */
         - The compiled scripts will also dump symtables to allow aug_call*s
     - Implement for loops
         - Opcodes for iterators, values references etc...
-    - Implement Closures
-        - Allow user to return functions that contains parameter state
     - Implement objects 
         - Custom type registration. create accessors from field offset. allow users to define struct. 
     - Serialize Bytecode to external file. Execute compiled bytecode from file
@@ -45,6 +41,13 @@ SOFTWARE. */
         - create default language bindings to sdl, fileio, win32 etc...
     - Operator overloading
     - Map from debug symbol addr to symbol
+    
+    - Allow user to access global func/vars out of order. To do this, add a global symtable pass. Set symbol offset to an unknown value. 
+        - Then during the bytecode serialization, update any operands that are waiting for the new symbol offset  
+
+    Note:
+    - Locally defined functions can be supported, but will require closures to be implemented. See the aug_parse_stmt(aug_lexer* lexer, bool is_block)
+        - To define closures, pass all the reference variables on the stack and re-add to the functions local symtable. Adjust the decstack well
 */
 
 #ifdef __cplusplus
@@ -2463,12 +2466,9 @@ aug_ast* aug_parse_stmt_return(aug_lexer* lexer)
     return return_stmt;
 }
 
-aug_ast* aug_parse_stmt(aug_lexer* lexer)
+aug_ast* aug_parse_stmt(aug_lexer* lexer, bool is_block)
 {
-    //TODO: assignment, funcdef etc..
-    // Default, epxression parsing. 
     aug_ast* stmt = NULL;
-
     switch (aug_lexer_curr(lexer).id)
     {
     case AUG_TOKEN_NAME:
@@ -2487,11 +2487,14 @@ aug_ast* aug_parse_stmt(aug_lexer* lexer)
     case AUG_TOKEN_VAR:
         stmt = aug_parse_stmt_define_var(lexer);
         break;
-    case AUG_TOKEN_FUNC:
-        stmt = aug_parse_stmt_func(lexer);
-        break;
     case AUG_TOKEN_RETURN:
         stmt = aug_parse_stmt_return(lexer);
+        break;
+    case AUG_TOKEN_FUNC:
+        if(!is_block)
+            stmt = aug_parse_stmt_func(lexer);
+        else
+            aug_log_input_error(lexer->input,  "Unexpected function defintion");
         break;
     default:
         stmt = aug_parse_stmt_expr(lexer);
@@ -2510,11 +2513,11 @@ aug_ast* aug_parse_block(aug_lexer* lexer)
     aug_lexer_move(lexer); // eat LBRACE
 
     aug_ast* block = aug_ast_new(AUG_AST_BLOCK, aug_token_new());    
-    aug_ast* stmt = aug_parse_stmt(lexer);
+    aug_ast* stmt = aug_parse_stmt(lexer, true);
     while(stmt)
     {
         aug_ast_add(block, stmt);
-        stmt = aug_parse_stmt(lexer);
+        stmt = aug_parse_stmt(lexer, true);
     }   
 
     if(aug_lexer_curr(lexer).id != AUG_TOKEN_RBRACE)
@@ -2536,11 +2539,11 @@ aug_ast* aug_parse_root(aug_lexer* lexer)
     aug_lexer_move(lexer); // move to first token
 
     aug_ast* root = aug_ast_new(AUG_AST_ROOT, aug_token_new());
-    aug_ast* stmt = aug_parse_stmt(lexer);
+    aug_ast* stmt = aug_parse_stmt(lexer, false);
     while(stmt)
     {
         aug_ast_add(root, stmt);
-        stmt = aug_parse_stmt(lexer);
+        stmt = aug_parse_stmt(lexer, false);
     }   
 
     if(root->children_size == 0)

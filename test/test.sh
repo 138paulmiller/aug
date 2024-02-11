@@ -1,7 +1,7 @@
 #/bin/sh
 clear 
 
-if [ "$1" == "build" ]; then
+if [ "$1" == "--build" ]; then
     make clean 
     make
     shift;

@@ -340,6 +340,7 @@ aug_value expect(int argc, aug_value* args)
 		return aug_none();
 
 	bool success = aug_to_bool(&args[0]);
+
 	std::string message;
 	for( int i = 1; i < argc; ++i)
 		message += to_string(args[i]);
