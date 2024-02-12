@@ -1,14 +1,5 @@
-
-#ifdef  _WIN32
-// compile by using: cl /EHsc /W4 /D_DEBUG /MDd
-#define _CRTDBG_MAP_ALLOC
-#include <stdlib.h>
-#include <crtdbg.h>
-#endif  //_WIN32
-
 #define AUG_IMPLEMENTATION
 #define AUG_LOG_VERBOSE
-#define AUG_DEBUG
 #include <aug.h>
 #include <string>
 
@@ -262,7 +253,7 @@ void aug_dump_file(aug_vm* vm, const char* filename)
 
 	// Generate IR
 	aug_ir* ir = aug_ir_new(input);
-	aug_ast_to_ir(vm, root, ir);
+	aug_generate_ir(vm, root, ir);
 
 	dump_ir(ir);
 
