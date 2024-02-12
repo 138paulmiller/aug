@@ -2819,7 +2819,7 @@ static inline size_t aug_ir_operation_size(aug_ir_operation operation)
     return size;
 }
 
-static inline size_t aug_ir_add_operation_arg(aug_ir*ir, aug_opcode opcode, aug_ir_operand operand)
+static inline size_t aug_ir_add_operation_arg(aug_ir* ir, aug_opcode opcode, aug_ir_operand operand)
 {
     assert(ir->operations != NULL);
     aug_ir_operation operation;
@@ -2832,20 +2832,20 @@ static inline size_t aug_ir_add_operation_arg(aug_ir*ir, aug_opcode opcode, aug_
     return ir->operations->length-1;
 }
 
-static inline size_t aug_ir_add_operation(aug_ir*ir, aug_opcode opcode)
+static inline size_t aug_ir_add_operation(aug_ir* ir, aug_opcode opcode)
 {
     aug_ir_operand operand;
     operand.type = AUG_IR_OPERAND_NONE;
     return aug_ir_add_operation_arg(ir, opcode, operand);
 }
 
-static inline aug_ir_operation* aug_ir_last_operation(aug_ir*ir)
+static inline aug_ir_operation* aug_ir_last_operation(aug_ir* ir)
 {
     assert(ir->operations != NULL && ir->operations->length > 0);
     return aug_container_ptr_type(aug_ir_operation, ir->operations, ir->operations->length - 1);
 }
 
-static inline aug_ir_operation* aug_ir_get_operation(aug_ir*ir, size_t operation_index)
+static inline aug_ir_operation* aug_ir_get_operation(aug_ir* ir, size_t operation_index)
 {   
     assert(ir->operations != NULL);
     assert(operation_index < ir->operations->length);
@@ -2892,14 +2892,14 @@ static inline aug_ir_operand aug_ir_operand_from_str(const char* data)
     return operand;
 }
 
-static inline aug_ir_frame* aug_ir_current_frame(aug_ir*ir)
+static inline aug_ir_frame* aug_ir_current_frame(aug_ir* ir)
 {
     assert(ir != NULL && ir->frame_stack != NULL);
     assert(ir->frame_stack->length > 0);
     return aug_container_ptr_type(aug_ir_frame, ir->frame_stack, ir->frame_stack->length - 1);
 }
 
-static inline aug_ir_scope* aug_ir_current_scope(aug_ir*ir)
+static inline aug_ir_scope* aug_ir_current_scope(aug_ir* ir)
 {
     aug_ir_frame* frame = aug_ir_current_frame(ir);
     assert(frame != NULL && frame->scope_stack != NULL);
@@ -2907,7 +2907,7 @@ static inline aug_ir_scope* aug_ir_current_scope(aug_ir*ir)
     return aug_container_ptr_type(aug_ir_scope, frame->scope_stack, frame->scope_stack->length - 1);
 }
 
-static inline bool aug_ir_current_scope_is_global(aug_ir*ir)
+static inline bool aug_ir_current_scope_is_global(aug_ir* ir)
 {
     aug_ir_frame* frame = aug_ir_current_frame(ir);
     if(ir->frame_stack->length == 1 && frame->scope_stack->length == 1)
@@ -2915,20 +2915,20 @@ static inline bool aug_ir_current_scope_is_global(aug_ir*ir)
     return false;
 }
 
-static inline int aug_ir_current_scope_local_offset(aug_ir*ir)
+static inline int aug_ir_current_scope_local_offset(aug_ir* ir)
 {
     const aug_ir_scope* scope = aug_ir_current_scope(ir);
     return scope->stack_offset - scope->base_index;
 }
 
-static inline int aug_ir_calling_offset(aug_ir*ir)
+static inline int aug_ir_calling_offset(aug_ir* ir)
 {
     aug_ir_scope* scope = aug_ir_current_scope(ir);
     aug_ir_frame* frame = aug_ir_current_frame(ir);
     return (scope->stack_offset - frame->base_index) + frame->arg_count;
 }
 
-static inline void aug_ir_push_frame(aug_ir*ir, int arg_count)
+static inline void aug_ir_push_frame(aug_ir* ir, int arg_count)
 {
     aug_ir_frame frame;
     frame.arg_count = arg_count;
@@ -2953,7 +2953,7 @@ static inline void aug_ir_push_frame(aug_ir*ir, int arg_count)
     aug_container_push_type(aug_ir_frame, ir->frame_stack, frame);
 }
 
-static inline void aug_ir_pop_frame(aug_ir*ir)
+static inline void aug_ir_pop_frame(aug_ir* ir)
 {
     if(ir->frame_stack->length == 1)
     {
@@ -2973,7 +2973,7 @@ static inline void aug_ir_pop_frame(aug_ir*ir)
     aug_container_decref(frame.scope_stack);
 }
 
-static inline void aug_ir_push_scope(aug_ir*ir)
+static inline void aug_ir_push_scope(aug_ir* ir)
 {
     const aug_ir_scope* current_scope = aug_ir_current_scope(ir);
     aug_ir_frame* frame = aug_ir_current_frame(ir);
@@ -2985,7 +2985,7 @@ static inline void aug_ir_push_scope(aug_ir*ir)
     aug_container_push_type(aug_ir_scope, frame->scope_stack, scope);
 }
 
-static inline void aug_ir_pop_scope(aug_ir*ir)
+static inline void aug_ir_pop_scope(aug_ir* ir)
 {
     const aug_ir_operand delta = aug_ir_operand_from_int(aug_ir_current_scope_local_offset(ir));
     aug_ir_add_operation_arg(ir, AUG_OPCODE_DEC_STACK, delta);
@@ -3003,7 +3003,7 @@ static inline void aug_ir_add_debug_symbol(aug_ir* ir, aug_symbol symbol)
     aug_container_push_type(aug_debug_symbol, ir->debug_symbols, debug_symbol);
 }
 
-static inline bool aug_ir_set_var(aug_ir*ir, aug_string* var_name)
+static inline bool aug_ir_set_var(aug_ir* ir, aug_string* var_name)
 {
     aug_ir_scope* scope = aug_ir_current_scope(ir);
     const int offset = scope->stack_offset++;
@@ -3027,7 +3027,7 @@ static inline bool aug_ir_set_var(aug_ir*ir, aug_string* var_name)
     return true;
 }
 
-static inline bool aug_ir_set_param(aug_ir*ir, aug_string* param_name)
+static inline bool aug_ir_set_param(aug_ir* ir, aug_string* param_name)
 {
     aug_ir_scope* scope = aug_ir_current_scope(ir);
     const int offset = scope->stack_offset++;
@@ -3051,7 +3051,7 @@ static inline bool aug_ir_set_param(aug_ir*ir, aug_string* param_name)
     return true;
 }
 
-static inline bool aug_ir_set_func(aug_ir*ir, aug_string* func_name, int param_count)
+static inline bool aug_ir_set_func(aug_ir* ir, aug_string* func_name, int param_count)
 {
     aug_ir_scope* scope = aug_ir_current_scope(ir);
     const int offset = ir->bytecode_offset;
@@ -3075,7 +3075,7 @@ static inline bool aug_ir_set_func(aug_ir*ir, aug_string* func_name, int param_c
     return true;
 }
 
-static inline aug_symbol aug_ir_get_symbol(aug_ir*ir, aug_string* name)
+static inline aug_symbol aug_ir_get_symbol(aug_ir* ir, aug_string* name)
 {
     int i,j;
     for(i = ir->frame_stack->length - 1; i >= 0; --i)
@@ -3097,7 +3097,7 @@ static inline aug_symbol aug_ir_get_symbol(aug_ir*ir, aug_string* name)
     return sym;
 }
 
-static inline aug_symbol aug_ir_symbol_relative(aug_ir*ir, aug_string* name)
+static inline aug_symbol aug_ir_symbol_relative(aug_ir* ir, aug_string* name)
 {
     int i,j;
     for(i = ir->frame_stack->length - 1; i >= 0; --i)
@@ -4483,7 +4483,7 @@ aug_value aug_vm_execute_from_frame(aug_vm* vm, int func_addr, int argc, aug_val
 
 // COMPILER ============================================== COMPILER ========================================== COMPILER // 
 
-void aug_generate_ir(aug_vm* vm, const aug_ast* node, aug_ir*ir)
+void aug_generate_ir(aug_vm* vm, const aug_ast* node, aug_ir* ir)
 {
     if(node == NULL || !ir->valid)
         return;
