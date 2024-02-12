@@ -2703,7 +2703,8 @@ typedef enum aug_ir_operand_type
     AUG_IR_OPERAND_CHAR,
     AUG_IR_OPERAND_INT,
     AUG_IR_OPERAND_FLOAT,  
-    AUG_IR_OPERAND_BYTES,
+    AUG_IR_OPERAND_BYTES,  
+    AUG_IR_OPERAND_SYMBOL, //Translates from sym name (str) to offset (int)
 } aug_ir_operand_type;
 
 typedef struct aug_ir_operand
@@ -2808,6 +2809,8 @@ static inline size_t aug_ir_operand_size(aug_ir_operand operand)
         return sizeof(operand.data.f);
     case AUG_IR_OPERAND_BYTES:
         return strlen(operand.data.str) + 1; // +1 for null term
+    case AUG_IR_OPERAND_SYMBOL:
+        return sizeof(operand.data.i); 
     }
     return 0;
 }
@@ -2889,6 +2892,23 @@ static inline aug_ir_operand aug_ir_operand_from_str(const char* data)
     aug_ir_operand operand;
     operand.type = AUG_IR_OPERAND_BYTES;
     operand.data.str = data;
+    return operand;
+}
+
+
+static inline aug_ir_operand aug_ir_operand_from_symbol(const aug_symbol symbol)
+{
+    aug_ir_operand operand;
+    if(symbol.scope == AUG_SYM_SCOPE_GLOBAL)
+    {
+        operand.type = AUG_IR_OPERAND_SYMBOL;
+        operand.data.str = symbol.name->buffer;
+    }
+    else
+    {
+        operand.type = AUG_IR_OPERAND_INT;
+        operand.data.i = symbol.offset;
+    }
     return operand;
 }
 
@@ -3051,7 +3071,7 @@ static inline bool aug_ir_set_param(aug_ir* ir, aug_string* param_name)
     return true;
 }
 
-static inline bool aug_ir_set_func(aug_ir* ir, aug_string* func_name, int param_count)
+static inline bool aug_ir_set_func(aug_ir* ir, aug_string* func_name, int param_count, bool update)
 {
     aug_ir_scope* scope = aug_ir_current_scope(ir);
     const int offset = ir->bytecode_offset;
@@ -3069,7 +3089,12 @@ static inline bool aug_ir_set_func(aug_ir* ir, aug_string* func_name, int param_
 
     aug_symbol* symbol_ptr = aug_hashtable_insert_type(aug_symbol, scope->symtable, func_name->buffer);
     if(symbol_ptr == NULL)
-        return false;
+    {
+        if(update)
+            symbol_ptr = aug_hashtable_ptr_type(aug_symbol, scope->symtable, func_name->buffer);
+        else
+            return false;
+    }
 
     *symbol_ptr = symbol;
     return true;
@@ -3091,13 +3116,11 @@ static inline aug_symbol aug_ir_get_symbol(aug_ir* ir, aug_string* name)
     }
 
     aug_symbol sym;
-    sym.offset = AUG_OPCODE_INVALID;
     sym.type = AUG_SYM_NONE;
-    sym.argc = 0;
     return sym;
 }
 
-static inline aug_symbol aug_ir_symbol_relative(aug_ir* ir, aug_string* name)
+static inline aug_symbol aug_ir_get_symbol_relative(aug_ir* ir, aug_string* name)
 {
     int i,j;
     for(i = ir->frame_stack->length - 1; i >= 0; --i)
@@ -3136,9 +3159,19 @@ static inline aug_symbol aug_ir_symbol_relative(aug_ir* ir, aug_string* name)
     }
 
     aug_symbol sym;
-    sym.offset = AUG_OPCODE_INVALID;
     sym.type = AUG_SYM_NONE;
-    sym.argc = 0;
+    return sym;
+}
+
+static inline aug_symbol aug_ir_get_symbol_local(aug_ir* ir, aug_string* name)
+{
+    aug_ir_scope* scope = aug_ir_current_scope(ir);
+    aug_symbol* symbol_ptr =  aug_hashtable_ptr_type(aug_symbol, scope->symtable, name->buffer);
+    if(symbol_ptr != NULL)
+        return *symbol_ptr;
+
+    aug_symbol sym;
+    sym.type = AUG_SYM_NONE;
     return sym;
 }
 
@@ -4429,7 +4462,7 @@ void aug_vm_execute(aug_vm* vm)
 #if defined(AUG_DEBUG) && AUG_DEBUG
         printf("OP:   %s\n", aug_opcode_labels[(int)opcode]);
         int i;
-        for(i = 0; i < 10; ++i)
+        for(i = 0; i < 16; ++i)
         {
             aug_value val = vm->stack[i];
             printf("%s %d: %s ", (vm->stack_index-1) == i ? ">" : " ", i, aug_get_type_label(&val));
@@ -4483,6 +4516,57 @@ aug_value aug_vm_execute_from_frame(aug_vm* vm, int func_addr, int argc, aug_val
 
 // COMPILER ============================================== COMPILER ========================================== COMPILER // 
 
+void aug_gather_globals(aug_vm* vm, const aug_ast* node, aug_ir* ir)
+{
+        if(node == NULL || !ir->valid)
+        return;
+
+    const aug_token token = node->token;
+    aug_string* token_data = token.data; 
+    aug_ast** children = node->children;
+    const int children_size = node->children_size;
+
+    switch(node->id)
+    {
+        case AUG_AST_ROOT:
+        case AUG_AST_BLOCK: 
+        {
+            int i;
+            for(i = 0; i < children_size; ++ i)
+                aug_gather_globals(vm, children[i], ir);
+            break;
+        }
+        case AUG_AST_STMT_DEFINE_VAR: 
+        {
+            if(!aug_ir_set_var(ir, token_data))
+            {
+                ir->valid = false;
+                aug_log_input_error_at(ir->input, &token.pos, "Global %s already defined", token_data->buffer);
+                break;
+            }
+            break;
+        }
+        case AUG_AST_STMT_DEFINE_FUNC: 
+        {
+            assert(token_data != NULL && children_size == 2); //func token [0] {[1]};
+
+            aug_ast* params = children[0];
+            assert(params && params->id == AUG_AST_PARAM_LIST);
+            const int param_count = params->children_size;
+
+            if(!aug_ir_set_func(ir, token_data, param_count, false))
+            {
+                ir->valid = false;
+                aug_log_input_error_at(ir->input, &token.pos, "Global %s already defined", token_data->buffer);
+                break;
+            }
+            break;
+        }
+        default: 
+            break;
+    }
+}
+
 void aug_generate_ir(aug_vm* vm, const aug_ast* node, aug_ir* ir)
 {
     if(node == NULL || !ir->valid)
@@ -4498,6 +4582,7 @@ void aug_generate_ir(aug_vm* vm, const aug_ast* node, aug_ir* ir)
         case AUG_AST_ROOT:
         {
             aug_ir_push_frame(ir, 0); // push a global frame
+            aug_gather_globals(vm, node, ir);
 
             int i;
             for(i = 0; i < children_size; ++ i)
@@ -4588,7 +4673,7 @@ void aug_generate_ir(aug_vm* vm, const aug_ast* node, aug_ir* ir)
         {
             assert(token_data != NULL);
 
-            const aug_symbol symbol = aug_ir_symbol_relative(ir, token_data);
+            const aug_symbol symbol = aug_ir_get_symbol_relative(ir, token_data);
             if(symbol.type == AUG_SYM_NONE)
             {
                 ir->valid = false;
@@ -4602,12 +4687,12 @@ void aug_generate_ir(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             if(symbol.type == AUG_SYM_FUNC)
             {
                 //TODO: create function type
-                const aug_ir_operand address_operand = aug_ir_operand_from_int(symbol.offset);
+                const aug_ir_operand address_operand = aug_ir_operand_from_symbol(symbol);
                 aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_FUNC, address_operand);
                 break;
             }
 
-            const aug_ir_operand address_operand = aug_ir_operand_from_int(symbol.offset);
+            const aug_ir_operand address_operand = aug_ir_operand_from_symbol(symbol);
             if(symbol.scope == AUG_SYM_SCOPE_GLOBAL)
                 aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_GLOBAL, address_operand);
             else // if local or param
@@ -4716,13 +4801,25 @@ void aug_generate_ir(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             
             aug_generate_ir(vm, children[0], ir);
 
-            const aug_symbol symbol = aug_ir_symbol_relative(ir, token_data);
+            // NOTE allow users to assign without define
+            // this currently does not work with the global pass. Instead, check if exist 
+            //const aug_symbol symbol = aug_ir_get_symbol_relative(ir, token_data);
+            //if(symbol.type == AUG_SYM_NONE)
+            //{
+            //    aug_ir_set_var(ir, token_data);
+            //    break;
+            //}
+            
+            const aug_symbol symbol = aug_ir_get_symbol_relative(ir, token_data);
             if(symbol.type == AUG_SYM_NONE)
             {
-                aug_ir_set_var(ir, token_data);
+                ir->valid = false;
+                aug_log_input_error_at(ir->input, &token.pos, "Variable %s not defined", 
+                    token_data->buffer);
                 break;
             }
-            else if(symbol.type == AUG_SYM_FUNC)
+
+            if(symbol.type == AUG_SYM_FUNC)
             {
                 ir->valid = false;
                 aug_log_input_error_at(ir->input, &token.pos, "Can not assign function %s to a value", 
@@ -4732,7 +4829,7 @@ void aug_generate_ir(aug_vm* vm, const aug_ast* node, aug_ir* ir)
 
             aug_ir_add_debug_symbol(ir, symbol);
 
-            const aug_ir_operand address_operand = aug_ir_operand_from_int(symbol.offset);
+            const aug_ir_operand address_operand = aug_ir_operand_from_symbol(symbol);
             if(symbol.scope == AUG_SYM_SCOPE_GLOBAL)
                 aug_ir_add_operation_arg(ir, AUG_OPCODE_LOAD_GLOBAL, address_operand);
             else // if local or param
@@ -4755,18 +4852,22 @@ void aug_generate_ir(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             else
                 aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
 
-            // Get variable in the current block. If it exists, error out. If it does not exist, set in table
-            aug_ir_scope* scope = aug_ir_current_scope(ir);
-            aug_symbol* symbol_ptr =  aug_hashtable_ptr_type(aug_symbol, scope->symtable, token_data->buffer);
-            if(symbol_ptr != NULL && symbol_ptr->type != AUG_SYM_NONE)
+            // Gather global pass handles global symbol table, only process locals 
+            if(!aug_ir_current_scope_is_global(ir))
             {
-                ir->valid = false;
-                aug_log_input_error_at(ir->input, &token.pos, "Variable %s already defined in block", 
-                    token_data->buffer);
-                break;
+                // Get variable in the current block. If it exists, error out. If it does not exist, set in table
+                aug_symbol symbol = aug_ir_get_symbol_local(ir, token_data);
+                if(symbol.type != AUG_SYM_NONE)
+                {
+                    ir->valid = false;
+                    aug_log_input_error_at(ir->input, &token.pos, "Variable %s already defined in block", 
+                        token_data->buffer);
+                    break;
+                }
+
+                aug_ir_set_var(ir, token_data);
             }
 
-            aug_ir_set_var(ir, token_data);
             break;
         }
         case AUG_AST_STMT_IF:
@@ -4890,15 +4991,15 @@ void aug_generate_ir(aug_vm* vm, const aug_ast* node, aug_ir* ir)
                     {
                         aug_ir_add_debug_symbol(ir, symbol);
 
-                        aug_ir_operand address_operand = aug_ir_operand_from_int(symbol.offset);
+                        aug_ir_operand address_operand = aug_ir_operand_from_symbol(symbol);
                         aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL, address_operand);
                     }
                     if(symbol.type == AUG_SYM_VAR)
                     {
-                        const aug_symbol var_symbol = aug_ir_symbol_relative(ir, token_data);
+                        const aug_symbol var_symbol = aug_ir_get_symbol_relative(ir, token_data);
                         aug_ir_add_debug_symbol(ir, var_symbol);
 
-                        aug_ir_operand address_operand = aug_ir_operand_from_int(var_symbol.offset);
+                        aug_ir_operand address_operand = aug_ir_operand_from_symbol(var_symbol);
                         if(var_symbol.scope == AUG_SYM_SCOPE_GLOBAL)
                             aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL_GLOBAL, address_operand);
                         else // if local or param
@@ -5004,8 +5105,11 @@ void aug_generate_ir(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             assert(params && params->id == AUG_AST_PARAM_LIST);
             const int param_count = params->children_size;
 
+            // Gather global pass handles global symbol table. The offset however is incorrect, this pass will fixup the function offset  
+            bool update = aug_ir_current_scope_is_global(ir); 
+
             // Try to set function in symbol table. Func name is token
-            if(!aug_ir_set_func(ir, token_data, param_count))
+            if(!aug_ir_set_func(ir, token_data, param_count, update))
             {
                 ir->valid = false;
                 aug_log_input_error_at(ir->input, &token.pos, "Function %s already defined", token_data->buffer);
@@ -5084,6 +5188,13 @@ char* aug_emit_bytecode(aug_ir* ir)
             for(size_t i = 0; i < strlen(operand.data.str); ++i)
                 *(instruction++) = operand.data.str[i];
             *(instruction++) = 0; // null terminate
+            break;
+        case AUG_IR_OPERAND_SYMBOL:
+            aug_symbol* symbol = aug_hashtable_ptr_type(aug_symbol, ir->globals, operand.data.str);
+            assert(symbol);
+            operand.data.i = symbol->offset;
+            for(size_t i = 0; i < aug_ir_operand_size(operand); ++i)
+                *(instruction++) = operand.data.bytes[i];
             break;
         }
     }

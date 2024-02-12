@@ -220,6 +220,13 @@ void dump_ir(aug_ir* ir)
 		case AUG_IR_OPERAND_BYTES:
 			printf(" %s", operand.data.str);
 			break;
+		case AUG_IR_OPERAND_SYMBOL:
+		{
+		    aug_symbol* symbol = aug_hashtable_ptr_type(aug_symbol, ir->globals, operand.data.str);
+            assert(symbol);
+			printf(" %d:%s", symbol->offset, operand.data.str);
+			break;
+		}
 		case AUG_IR_OPERAND_NONE:
 			break;
 		}

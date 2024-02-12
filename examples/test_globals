@@ -1,0 +1,12 @@
+func main(a, b){
+	expect(global_a == a, global_a, " == ", a);
+	expect(global_b == b, global_b, " == ", b);
+
+	expect(add(a, b) + add(global_a, global_b), "add(a, b) + add(global_a, global_b)");
+}
+
+var global_a = 100;
+var global_b = 200;
+func add(x,y) { return x + y; }
+
+main(100, 200);

@@ -15,7 +15,7 @@ func fibonacci(n) {
 }
 
 
-a = fibonacci(20);
+var a = fibonacci(20);
 expect(a == 6765, "fibonacci(20) = ", a);
 
 a = fibonacci(30);

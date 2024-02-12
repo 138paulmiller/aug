@@ -8,7 +8,7 @@ func fib_recursive(a) {
     return fib_recursive(a-1) + fib_recursive(a-2);
 }
 
-a = fib_recursive(20);
+var a = fib_recursive(20);
 expect(a == 6765, "fib_recursive(50) = ", a);
 
 #a = fib_recursive(30);

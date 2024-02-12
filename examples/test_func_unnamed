@@ -2,7 +2,7 @@ func square(x){
     return x * x;
 }
 
-map = { "sq" : square };
+var map = { "sq" : square };
 expect( map["sq"](100) == square(100), "map[\"sq\"](100) == square(100)");
 
 
@@ -16,7 +16,7 @@ func stage1(){
     return stage2; 
 }
 
-a = 100;
+var a = 100;
 func get_a(){
     return a;
 }

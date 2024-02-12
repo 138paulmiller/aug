@@ -8,7 +8,7 @@ func NestedSum(){
     return Inner0;
 }
 
-h = NestedSum()();
+var h = NestedSum()();
 print("H: ", h(10));
 
 h = NestedSum()()(1000);

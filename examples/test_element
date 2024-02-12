@@ -1,4 +1,4 @@
-map = { 
+var map = { 
     "a" : 1, 
     "b" : 11, 
     "c" : 111, 
@@ -18,7 +18,7 @@ expect(map["d"] == 2222, "map[d] == 2222");
 expect(map["e"] == 11111, "map[e] == 11111");
 
 
-nested = {
+var nested = {
 	"0" : { 
 		"0" : "A", 
 		"1" : "B"

@@ -1,9 +1,15 @@
 #/bin/sh
 clear 
 
-if [ "$1" == "--build" ]; then
+if [ "$1" == "-b" ]; then
     make clean 
     make
+    shift;
+fi;
+
+if [ "$1" == "-bd" ]; then
+    make clean 
+    make DEBUG=1
     shift;
 fi;
 

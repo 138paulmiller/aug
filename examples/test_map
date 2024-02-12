@@ -1,4 +1,4 @@
-a = { 
+var a = { 
 	1 : 1+2+3+4+5,
 	"str1" : "1+2+3+4+5",
 	0x123 : 0b1010101,
@@ -11,8 +11,8 @@ expect(a[0x123] == 0b1010101, "a[0x123] == ", a[0x123]);
 
 a = { };
 
-n = 10;
-i = 0;
+var n = 10;
+var i = 0;
 while i < n {
 	a[i] = i;
 	i = i + 1;
@@ -27,7 +27,7 @@ while i < n {
 
 # Testing nesting
 
-nested = {
+var nested = {
 	"0" : { 
 		"0" : "A", 
 		"1" : "B"

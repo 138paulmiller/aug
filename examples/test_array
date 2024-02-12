@@ -1,7 +1,7 @@
-a0 = [ 1, 10, 100 ];
-a1 = [ 1000, 10000];
-a = append(a0, a1);
-b = sum(a);
+var a0 = [ 1, 10, 100 ];
+var a1 = [ 1000, 10000];
+var a = append(a0, a1);
+var b = sum(a);
 expect(b == 11111, "sum(append(", a0, ",", a1, ")) = ", b);
 
 a = [ 0,1,2,3,4,5];
@@ -15,7 +15,7 @@ expect(b == 21, "sum(", a, ") = ", b);
 
 a = [0, 1,2,3,4,5];
 
-e = a[1];
+var e = a[1];
 expect(e == 1, "a[1] = ", e);
 
 e = a[2];
@@ -24,7 +24,7 @@ expect(e == 2, "a[2] = ", e);
 e = a[ 1 + 1];
 expect(e == 2, "a[1+1] = ", e);
 
-i = 5;
+var i = 5;
 e = a[i];
 expect(e == 5, "a[i] = ", e);
 
