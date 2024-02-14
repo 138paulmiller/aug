@@ -75,11 +75,6 @@ void dump_ast_tree(const aug_ast* node, std::string prefix, bool is_leaf)
 			if(children_size==1)
 				dump_ast_tree(children[0], prefix, true);
 			break;
-		case AUG_AST_STMT_ASSIGN_VAR:
-			assert(children_size == 1);
-			printf("ASSIGN: %s\n", token.data ?  token.data->buffer : "(null)");
-			dump_ast_tree(children[0], prefix, false);
-			break;
 		case AUG_AST_STMT_EXPR:
 			printf("EXPR:\n");
 			dump_ast_tree(children[0], prefix, true);
@@ -148,22 +143,11 @@ void dump_ast_tree(const aug_ast* node, std::string prefix, bool is_leaf)
 			dump_ast_tree(children[0], prefix, false);
 			dump_ast_tree(children[1], prefix, true);
 			break;
-		case AUG_AST_GET_ELEMENT:
-			printf("GET ELEMENT\n");
+		case AUG_AST_ELEMENT:
+			printf("ELEMENT\n");
 			for (int i = 0; i < children_size; ++i)
 				dump_ast_tree(children[i], prefix, i == children_size - 1);
 			break;
-		case AUG_AST_SET_ELEMENT:
-			printf("SET ELEMENT\n");
-			for (int i = 0; i < children_size; ++i)
-				dump_ast_tree(children[i], prefix, i == children_size - 1);
-			break;
-		case AUG_AST_STMT_ASSIGN_ELEMENT:
-			printf("ASSIGN ELEMENT\n");
-			for (int i = 0; i < children_size; ++i)
-				dump_ast_tree(children[i], prefix, i == children_size - 1);
-			break;
-
 		case AUG_AST_FUNC_CALL_UNNAMED:
 			printf("FUNC CALL UNNAMED\n");
 			dump_ast_tree(children[0], prefix, 0 == children_size - 1);

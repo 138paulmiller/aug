@@ -1,15 +1,3 @@
-func NestedSum(){ 
-    func Inner0(){
-		func Inner1(y){
-	        return y + 1; 
-		}
-		return Inner1;
-    }
-    return Inner0;
-}
-
-var h = NestedSum()();
-print("H: ", h(10));
-
-h = NestedSum()()(1000);
-print("H: ", h);
+var a  = 10;
+a = a + 100;
+print(a);
