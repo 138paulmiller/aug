@@ -32,3 +32,11 @@ expect(e == 5, "a[i] = ", e);
 i = 5;
 a[i] = "Hello";
 expect(a[i] == "Hello", "a[i] = ", a[i]);
+
+a0 = [ 1, 10, 100 ];
+a1 = [ 1000, 10000];
+a = append(a0, a1);
+
+var total = 0;
+for x in a { total += x; }
+expect( total == 11111, "total(", a , ") = ", total);
