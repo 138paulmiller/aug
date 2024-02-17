@@ -13,7 +13,6 @@ for x in [1, 10, 100, 1000, 10000] {
 expect( total2 == 11111);
 expect( sum_array([1, 10, 100, 1000, 10000] ) == total2);
 
-
 func sum_array(arr){
     var total = 0;
     for x in arr{ 
@@ -21,3 +20,25 @@ func sum_array(arr){
     }
     return total;  
 }
+
+var array2d = [
+    [1, 10, 100, 1000, 10000],
+    [2, 20, 200, 2000, 20000],
+    [3, 30, 300, 3000, 30000],
+    [4, 40, 400, 4000, 40000],
+];
+
+
+var total3 = 0;
+for row in array2d {
+    for x in row {
+        total3 += x;
+    }
+}
+expect( total3 == 11111 + 22222 + 33333 + 44444);
+
+var total4 = 0;
+for row in array2d {
+    total4 += sum_array(row);
+}
+expect( total4 == 11111 + 22222 + 33333 + 44444);

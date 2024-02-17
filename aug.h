@@ -5024,7 +5024,8 @@ void aug_generate_ir(aug_vm* vm, const aug_ast* node, aug_ir* ir)
 
             // Evaluate and initialize iterable expression. 
             aug_ir_scope* scope = aug_ir_current_scope(ir);
-            const int it_offset = aug_ir_current_frame_local_offset(ir, scope->stack_offset, 0);
+            int it_offset = scope->stack_offset++;
+            it_offset = aug_ir_current_frame_local_offset(ir, it_offset, 0);
             
             aug_generate_ir(vm, children[1], ir);
 
