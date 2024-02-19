@@ -54,13 +54,12 @@ SOFTWARE. */
     - Locally defined functions can be supported, but will require closures to be implemented. See the aug_parse_stmt(aug_lexer* lexer, bool is_block)
         - To define closures, pass all the reference variables on the stack and re-add to the functions local symtable. Adjust the decstack well
 */
+#ifndef __AUG_HEADER__
+#define __AUG_HEADER__
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#ifndef __AUG_HEADER__
-#define __AUG_HEADER__
 
 // Size of the virtual machine's value stack 
 #ifndef AUG_STACK_SIZE
