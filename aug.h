@@ -249,6 +249,7 @@ aug_value aug_none();
 bool aug_to_bool(const aug_value* value);
 int aug_to_int(const aug_value* value);
 float aug_to_float(const aug_value* value);
+bool aug_compare(aug_value* a, aug_value* b);
 const char* aug_type_label(const aug_value* value);
 
 aug_value aug_create_array();
@@ -277,13 +278,17 @@ bool aug_string_compare_bytes(const aug_string* a, const char* bytes);
 aug_array* aug_array_new(size_t size);
 void  aug_array_incref(aug_array* array);
 aug_array* aug_array_decref(aug_array* array);
-void  aug_array_resize(aug_array* array, size_t size);
+void aug_array_reserve(aug_array* array, size_t size);
+void aug_array_resize(aug_array* array, size_t size);
 aug_value* aug_array_push(aug_array* array);
 aug_value* aug_array_pop(aug_array* array);
 aug_value* aug_array_at(const aug_array* array, size_t index);
 bool aug_array_set(const aug_array* array, size_t index, aug_value* value);
 aug_value* aug_array_back(const aug_array* array);
 bool aug_array_compare(const aug_array* a, const aug_array* b);
+void aug_array_append(aug_array* array, aug_value* value);
+void aug_array_remove(aug_array* array, int index);
+aug_array* aug_array_copy(aug_array* array);
 
 // Map API ------------------------------------------ Map API ------------------------------------------------- Map API//
 
@@ -969,23 +974,23 @@ typedef struct aug_token_detail
     AUG_TOKEN(LBRACE,         0, 0, 0, NULL)       \
     AUG_TOKEN(RBRACE,         0, 0, 0, NULL)       \
     /* Operators - Arithmetic */                   \
-    AUG_TOKEN(ADD,            3, 2, 0, NULL)       \
-    AUG_TOKEN(SUB,            3, 2, 0, NULL)       \
-    AUG_TOKEN(MUL,            4, 2, 0, NULL)       \
-    AUG_TOKEN(DIV,            4, 2, 0, NULL)       \
-    AUG_TOKEN(POW,            4, 2, 0, NULL)       \
-    AUG_TOKEN(MOD,            4, 2, 0, NULL)       \
+    AUG_TOKEN(ADD,            5, 2, 0, NULL)       \
+    AUG_TOKEN(SUB,            5, 2, 0, NULL)       \
+    AUG_TOKEN(MUL,            6, 2, 0, NULL)       \
+    AUG_TOKEN(DIV,            6, 2, 0, NULL)       \
+    AUG_TOKEN(POW,            6, 2, 0, NULL)       \
+    AUG_TOKEN(MOD,            6, 2, 0, NULL)       \
+    /* Operators - Boolean */                      \
     AUG_TOKEN(AND,            2, 2, 0, "and")      \
     AUG_TOKEN(OR,             2, 2, 0, "or")       \
-    /* Operators - Boolean */                      \
-    AUG_TOKEN(NOT,            4, 1, 0, NULL)       \
-    AUG_TOKEN(NOT_EQ,         2, 2, 0, NULL)       \
-    AUG_TOKEN(APPROX_EQ,      2, 2, 0, NULL)       \
-    AUG_TOKEN(EQ,             2, 2, 0, NULL)       \
-    AUG_TOKEN(LT,             3, 2, 0, NULL)       \
-    AUG_TOKEN(GT,             3, 2, 0, NULL)       \
-    AUG_TOKEN(LT_EQ,          3, 2, 0, NULL)       \
-    AUG_TOKEN(GT_EQ,          3, 2, 0, NULL)       \
+    AUG_TOKEN(NOT,            7, 1, 0, NULL)       \
+    AUG_TOKEN(NOT_EQ,         3, 2, 0, NULL)       \
+    AUG_TOKEN(APPROX_EQ,      3, 2, 0, NULL)       \
+    AUG_TOKEN(EQ,             3, 2, 0, NULL)       \
+    AUG_TOKEN(LT,             4, 2, 0, NULL)       \
+    AUG_TOKEN(GT,             4, 2, 0, NULL)       \
+    AUG_TOKEN(LT_EQ,          4, 2, 0, NULL)       \
+    AUG_TOKEN(GT_EQ,          4, 2, 0, NULL)       \
     /* Operators - Assignment */                   \
     AUG_TOKEN(ASSIGN,         1, 2, 0, NULL)       \
     AUG_TOKEN(ADD_ASSIGN,     1, 2, 0, NULL)       \
@@ -1507,6 +1512,9 @@ aug_token aug_lexer_tokenize(aug_lexer* lexer)
             case AUG_TOKEN_HEX:
             case AUG_TOKEN_FLOAT:
             case AUG_TOKEN_INT:
+            case AUG_TOKEN_RPAREN:
+            case AUG_TOKEN_RBRACE:
+            case AUG_TOKEN_RBRACKET:
                 allow_sign = false;
                 break;
             default:
@@ -3366,7 +3374,7 @@ float aug_to_float(const aug_value* value)
     return 0.0f;
 }
 
-static inline bool aug_compare(aug_value* a, aug_value* b)
+bool aug_compare(aug_value* a, aug_value* b)
 {
     if(a->type != b->type)
         return false;
@@ -3769,6 +3777,7 @@ static inline bool aug_eq(aug_value* result, aug_value* lhs, aug_value* rhs)
     switch (lhs->type)
     {
     case AUG_STRING: return aug_set_bool(result, aug_string_compare(lhs->str, rhs->str));
+    case AUG_ARRAY: return aug_set_bool(result, aug_array_compare(lhs->array, rhs->array));
     default: break;
     }
     return false;
@@ -3861,7 +3870,7 @@ static inline aug_value* aug_vm_push(aug_vm* vm)
 {
     if(vm->stack_index >= AUG_STACK_SIZE)
     {                                              
-        aug_log_vm_error(vm, "Stack overflow");      
+        //aug_log_vm_error(vm, "Stack overflow");      
         return NULL;                           
     }
     aug_value* top = &vm->stack[vm->stack_index++];
@@ -3879,12 +3888,12 @@ static inline aug_value* aug_vm_get_global(aug_vm* vm, int stack_offset)
 {
     if(stack_offset < 0)
     {
-        aug_log_vm_error(vm, "Stack underflow");
+        //aug_log_vm_error(vm, "Stack underflow");
         return NULL;
     }
     else if(stack_offset >= AUG_STACK_SIZE)
     {
-        aug_log_vm_error(vm, "Stack overflow");
+        //aug_log_vm_error(vm, "Stack overflow");
         return NULL;
     }
 
@@ -4047,7 +4056,7 @@ void aug_vm_save_script(aug_vm* vm, aug_script* script)
     {
         script->stack_state = aug_array_new(1);
 
-        aug_array_resize(script->stack_state, vm->stack_index);
+        aug_array_reserve(script->stack_state, vm->stack_index);
         script->stack_state->length = vm->stack_index;
 
         while(vm->stack_index > 0)
@@ -4244,7 +4253,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* index = aug_vm_pop(vm);
 
                 aug_value value;
-                if(!aug_get_element(container, index, &value))    
+                if(!aug_get_element(container, index, &value))
                     aug_log_vm_error(vm, "Index out of range error"); // TODO: more descriptive
                 aug_decref(container);
                 aug_decref(index);
@@ -5448,16 +5457,25 @@ aug_array* aug_array_decref(aug_array* array)
     return array;
 }       
 
-void aug_array_resize(aug_array* array, size_t size)    
+void aug_array_reserve(aug_array* array, size_t size)    
 {
 	array->capacity = size; 
 	array->buffer = (aug_value*)AUG_REALLOC(array->buffer, sizeof(aug_value)*array->capacity);
 }
+
+void aug_array_resize(aug_array* array, size_t size)    
+{
+    aug_array_reserve(array, size);
+    array->length = array->capacity;
+    size_t i;
+    for(i = 0; i < array->length; ++i)
+        array->buffer[i] = aug_none();
+}
  
 aug_value* aug_array_push(aug_array* array)  
 {
-	if(array->length + 1 >= array->capacity)   
-        aug_array_resize(array, 2 * array->capacity);     
+	if(array->length + 1 >= array->capacity)
+        aug_array_reserve(array, array->capacity * 2); 
     return &array->buffer[array->length++];     
 }
  
@@ -5497,6 +5515,39 @@ bool aug_array_compare(const aug_array* a, const aug_array* b)
             return false;
     }
     return true;
+}
+
+void aug_array_append(aug_array* array, aug_value* value)  
+{
+    aug_value* new_value = aug_array_push(array);
+    if(new_value == NULL)
+        return;
+
+    *new_value = aug_none(); 
+    aug_array_set(array, array->length-1, value);
+}
+
+void aug_array_remove(aug_array* array, int index)  
+{
+    aug_value* value = aug_array_at(array, index); 
+
+    if(value == NULL)
+        return;
+
+    aug_decref(value);
+    size_t i;
+    for(i = index; i < array->length-1; ++i)
+        array->buffer[i] = array->buffer[i+1];
+    array->length--;
+}
+
+aug_array* aug_array_copy(aug_array* array)
+{
+    aug_array* new_array = aug_array_new(array->length);
+    size_t i;
+    for(i = 0; i < array->length; ++i)
+        aug_array_append(new_array, aug_array_at(array, i));
+    return new_array;
 }
 
 // MAP ==================================================== MAP =================================================== MAP //
