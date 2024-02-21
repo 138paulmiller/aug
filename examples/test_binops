@@ -41,9 +41,10 @@ expect( 1.5 ^ 8 ~= 25.62890625,  "1.5 ^ 8 = ",  1.5 ^ 8);
 
 expect( true and true == true,  "true and true = ",  true and true);
 expect( true and false == false,  "true and false = ",  true and false);
-expect( false and false == false,  "false and false = ",  false and false);
+expect( (false and false) == false,  "(false and false) = ",  false and false);
 expect( true or false == true,  "true or false = ",  true or false);
 expect( false or false == false,  "false or false = ",  false or false);
+expect( (false and false == false) == false,  "false and false == false = ", false and false == false);
 
 var a = (1 / 2 + 3 * 4 * 5 * ( 6 + 7 )) - 8 - 9;
 expect( a ~= 763.5, "(1 / 2 + 3 * 4 * 5 * ( 6 + 7 )) - 8 - 9 = ", a);

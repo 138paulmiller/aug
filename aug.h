@@ -249,6 +249,7 @@ aug_value aug_none();
 bool aug_to_bool(const aug_value* value);
 int aug_to_int(const aug_value* value);
 float aug_to_float(const aug_value* value);
+const char* aug_to_string(const aug_value* value);
 bool aug_compare(aug_value* a, aug_value* b);
 const char* aug_type_label(const aug_value* value);
 
@@ -974,23 +975,23 @@ typedef struct aug_token_detail
     AUG_TOKEN(LBRACE,         0, 0, 0, NULL)       \
     AUG_TOKEN(RBRACE,         0, 0, 0, NULL)       \
     /* Operators - Arithmetic */                   \
-    AUG_TOKEN(ADD,            5, 2, 0, NULL)       \
-    AUG_TOKEN(SUB,            5, 2, 0, NULL)       \
-    AUG_TOKEN(MUL,            6, 2, 0, NULL)       \
-    AUG_TOKEN(DIV,            6, 2, 0, NULL)       \
-    AUG_TOKEN(POW,            6, 2, 0, NULL)       \
-    AUG_TOKEN(MOD,            6, 2, 0, NULL)       \
+    AUG_TOKEN(ADD,            6, 2, 0, NULL)       \
+    AUG_TOKEN(SUB,            6, 2, 0, NULL)       \
+    AUG_TOKEN(MUL,            7, 2, 0, NULL)       \
+    AUG_TOKEN(DIV,            7, 2, 0, NULL)       \
+    AUG_TOKEN(POW,            7, 2, 0, NULL)       \
+    AUG_TOKEN(MOD,            7, 2, 0, NULL)       \
     /* Operators - Boolean */                      \
-    AUG_TOKEN(AND,            2, 2, 0, "and")      \
-    AUG_TOKEN(OR,             2, 2, 0, "or")       \
-    AUG_TOKEN(NOT,            7, 1, 0, NULL)       \
-    AUG_TOKEN(NOT_EQ,         3, 2, 0, NULL)       \
-    AUG_TOKEN(APPROX_EQ,      3, 2, 0, NULL)       \
-    AUG_TOKEN(EQ,             3, 2, 0, NULL)       \
-    AUG_TOKEN(LT,             4, 2, 0, NULL)       \
-    AUG_TOKEN(GT,             4, 2, 0, NULL)       \
-    AUG_TOKEN(LT_EQ,          4, 2, 0, NULL)       \
-    AUG_TOKEN(GT_EQ,          4, 2, 0, NULL)       \
+    AUG_TOKEN(AND,            3, 2, 0, "and")      \
+    AUG_TOKEN(OR,             3, 2, 0, "or")       \
+    AUG_TOKEN(NOT,            8, 1, 0, NULL)       \
+    AUG_TOKEN(NOT_EQ,         4, 2, 0, NULL)       \
+    AUG_TOKEN(APPROX_EQ,      4, 2, 0, NULL)       \
+    AUG_TOKEN(EQ,             4, 2, 0, NULL)       \
+    AUG_TOKEN(LT,             5, 2, 0, NULL)       \
+    AUG_TOKEN(GT,             5, 2, 0, NULL)       \
+    AUG_TOKEN(LT_EQ,          5, 2, 0, NULL)       \
+    AUG_TOKEN(GT_EQ,          5, 2, 0, NULL)       \
     /* Operators - Assignment */                   \
     AUG_TOKEN(ASSIGN,         1, 2, 0, NULL)       \
     AUG_TOKEN(ADD_ASSIGN,     1, 2, 0, NULL)       \

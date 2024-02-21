@@ -13,6 +13,12 @@ all: $(OUT_DIR) $(TARGET)
 clean: 
 	rm -f $(TARGET)
 
+test: clean all
+	clear;
+	valgrind  --main-stacksize=1048576 --tool=memcheck --leak-check=full \
+	../build/aug_test --test_all $(shell ls ../examples/test_*)\
+	 --test_native ../examples/test_native 
+
 $(OUT_DIR):
 	mkdir $(OUT_DIR)
 

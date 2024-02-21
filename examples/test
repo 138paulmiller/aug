@@ -1,15 +1,2 @@
-var array2d = [
-    [1, 10, 100, 1000, 10000],
-    [2, 20, 200, 2000, 20000],
-    [3, 30, 300, 3000, 30000],
-    [4, 40, 400, 4000, 40000],
-];
 
-
-var total3 = 0;
-for row in array2d {
-    for x in row {
-        total3 += x;
-    }
-}
-expect( total3 == 11111 + 22222 + 33333 + 44444);
+expect( false and false == false);
