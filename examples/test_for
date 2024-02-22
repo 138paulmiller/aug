@@ -42,3 +42,10 @@ for row in array2d {
     total4 += sum_array(row);
 }
 expect( total4 == 11111 + 22222 + 33333 + 44444);
+
+for row in array2d {
+    for x in row {
+        var y = x;
+        expect(y == x);
+    }
+}

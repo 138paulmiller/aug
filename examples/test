@@ -1,2 +1,15 @@
+var a = [1, 10];
+var total = 0;
+for x in a { 
+    total += x;
+}
+expect( total == 11);
 
-expect( false and false == false);
+var array2d = [ [1, 10, 100],];
+total = 0;
+for row in array2d {
+    for x in row {
+        total += x;
+    }
+}
+expect( total == 111);

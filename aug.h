@@ -32,20 +32,27 @@ SOFTWARE. */
         - Create a map from bytecode addr to source code position. In aug_vm log error, add this. 
     - Create Programs for loading/unloading compiled code. 
         - The compiled scripts will also dump symtables to allow aug_call*s
-    - Implement for loops
-        - Opcodes for iterators, values references etc...
+    - Imports Create a framework for extending language via plugins. 
+        - i.e. a DLL or SO that contains an aug_register_plugin(aug_vm* vm), from within the lib will register the functionality
+        - create a libcall opcode that will load these libraries via an import statement. Can import files or libs  
+    - Implement value references to allow iterators to modify the element
+    - Implement match statements, like switch statements that ease "if else if" chains 
+    - Implement wildcard, glob matching for strings
     - Implement range semantics
         - add support to push range objects onto stack [0..n]. Creating an iterable from these will only store beginning, end, and step amount. 
     - Implement objects 
         - Custom type registration. create accessors from field offset. allow users to define struct. 
+    - Create default methods for built-in types
+        - Add, remove, push, pop, find, sort
     - Serialize Bytecode to external file. Execute compiled bytecode from file
     - Serialize debug symbols to file. Link from bytecode to source file.
         - add source file and line to debug symbols
     - File, Directory, Vector, Matrix primitive types 
         - create default language bindings to sdl, fileio, win32 etc...
     - Operator overloading
-    
+
     - Built-in math and utility functions. Perhaps registered as the default ? For math, directly use opcodes
+    - Syntax to allow multiple var defines in aug_parse_stmt_define_var. Create a Define_Var_List AST node, seperate by comma
 
     - Allow user to access global func/vars out of order. To do this, add a global symtable pass. To support this, create a gather global prepass. 
         This will setup a decl for each var/func. Then create a new symbol operand that will translate from symbol name to offset during bytecode emit
@@ -249,9 +256,10 @@ aug_value aug_none();
 bool aug_to_bool(const aug_value* value);
 int aug_to_int(const aug_value* value);
 float aug_to_float(const aug_value* value);
-const char* aug_to_string(const aug_value* value);
 bool aug_compare(aug_value* a, aug_value* b);
 const char* aug_type_label(const aug_value* value);
+void aug_decref(aug_value* value);
+void aug_incref(aug_value* value);
 
 aug_value aug_create_array();
 aug_value aug_create_bool(bool data);
@@ -269,6 +277,8 @@ aug_string* aug_string_decref(aug_string* string);
 void aug_string_resize(aug_string* string, size_t size);
 void aug_string_push(aug_string* string, char c);
 char aug_string_pop(aug_string* string);
+void aug_string_append(aug_string* a, const aug_string* b);
+void aug_string_append_bytes(aug_string* string, const char* bytes, int len);
 char aug_string_at(const aug_string* string, size_t index);
 bool aug_string_set(const aug_string* string, size_t index, char c);
 char aug_string_back(const aug_string* string);
@@ -3434,7 +3444,7 @@ const char* aug_type_label(const aug_value* value)
     return NULL;
 }
 
-static inline void aug_decref(aug_value* value)
+void aug_decref(aug_value* value)
 {
     if(value == NULL)
         return;
@@ -3464,7 +3474,7 @@ static inline void aug_decref(aug_value* value)
     value->type = AUG_NONE;
 }
 
-static inline void aug_incref(aug_value* value)
+void aug_incref(aug_value* value)
 {
     if(value == NULL)
         return;
@@ -4534,7 +4544,7 @@ void aug_vm_execute(aug_vm* vm)
         }
 
 #if defined(AUG_DEBUG) && AUG_DEBUG
-        printf("OP:   %s\n", aug_opcode_labels[(int)opcode]);
+        printf("%d:   %s\n", vm->instruction - vm->bytecode, aug_opcode_labels[(int)opcode]);
         int i;
         for(i = 0; i < 10; ++i)
         {
@@ -5024,6 +5034,16 @@ void aug_generate_ir(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             assert(children_size == 3); //for [0] in [1] {[2]}
             assert(children[0] && children[0]->id == AUG_AST_VARIABLE);
 
+            // Evaluate and initialize iterable expression. 
+            aug_ir_scope* scope = aug_ir_current_scope(ir);
+            int it_offset = scope->stack_offset++;
+            it_offset = aug_ir_current_frame_local_offset(ir, it_offset, 0);
+            aug_generate_ir(vm, children[1], ir);
+            aug_ir_add_operation(ir, AUG_OPCODE_PUSH_ITERATOR);
+
+            // Top of the loop.
+            const aug_ir_operand begin_block_operand = aug_ir_operand_from_int(ir->bytecode_offset);
+
             aug_ir_push_scope(ir);
 
             // initialize the variable
@@ -5031,19 +5051,7 @@ void aug_generate_ir(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             aug_ir_set_var(ir, var_token_data);
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE); // initialize the slot for the var
 
-            // Evaluate and initialize iterable expression. 
-            aug_ir_scope* scope = aug_ir_current_scope(ir);
-            int it_offset = scope->stack_offset++;
-            it_offset = aug_ir_current_frame_local_offset(ir, it_offset, 0);
-            
-            aug_generate_ir(vm, children[1], ir);
-
-            aug_ir_add_operation(ir, AUG_OPCODE_PUSH_ITERATOR);
-
             aug_symbol var_symbol = aug_ir_get_symbol_relative(ir, var_token_data);
-
-            // Top of the loop.
-            const aug_ir_operand begin_block_operand = aug_ir_operand_from_int(ir->bytecode_offset);
 
             //Move the iterator, jump to end if false
             aug_ir_add_operation_arg(ir, AUG_OPCODE_ITERATE, aug_ir_operand_from_int(it_offset));
@@ -5055,10 +5063,10 @@ void aug_generate_ir(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             // Loop block
             aug_generate_ir(vm, children[2], ir);
 
+            aug_ir_pop_scope(ir);
+
             // Jump back to beginning, expr evaluation 
             aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP, begin_block_operand);
-
-            aug_ir_pop_scope(ir);
 
             // Tag end address
             const size_t end_block_addr = ir->bytecode_offset;
@@ -5066,9 +5074,12 @@ void aug_generate_ir(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             // Fixup stubbed block offsets
             aug_ir_get_operation(ir, end_block_jmp)->operand = aug_ir_operand_from_int(end_block_addr);
 
-            // pop the temporary var and iterator to restore stack
+            // pop the temporary iterator and iteration temp slot to restore stack
             aug_ir_add_operation(ir, AUG_OPCODE_POP); 
             aug_ir_add_operation(ir, AUG_OPCODE_POP); 
+
+            scope = aug_ir_current_scope(ir);
+            scope->stack_offset--; // remove iterator from stack
             break;
         }
         case AUG_AST_FUNC_CALL:
@@ -5361,6 +5372,23 @@ void aug_string_push(aug_string* string, char c)
 char aug_string_pop(aug_string* string) 
 {
 	return string->length > 0 ? string->buffer[--string->length] : -1;
+}
+
+void aug_string_append(aug_string* a, const aug_string* b)
+{
+    if(a != NULL && b != NULL && b->buffer != NULL)
+        aug_string_append_bytes(a, b->buffer, b->length);
+}
+
+void aug_string_append_bytes(aug_string* string, const char* bytes, int len)
+{
+    if(string->length + len >= string->capacity) 
+        aug_string_resize(string, string->capacity + len * 2);
+
+    int i;
+    for(i = 0; i < len; ++i)
+        string->buffer[string->length++] = bytes[i];
+    string->buffer[string->length] = '\0'; 
 }
 
 char aug_string_at(const aug_string* string, size_t index) 
