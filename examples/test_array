@@ -1,8 +1,10 @@
-var a0 = [ 1, 10, 100 ];
-var a1 = [ 1000, 10000];
-var a = append(a0, a1);
+use std;
+
+var a = [ 1, 10, 100 ];
+append(a, 1000, 10000);
+
 var b = sum(a);
-expect(b == 11111, "sum(append(", a0, ",", a1, ")) = ", b);
+expect(b == 11111);
 
 a = [ 0,1,2,3,4,5];
 b = sum(a);
@@ -33,9 +35,8 @@ i = 5;
 a[i] = "Hello";
 expect(a[i] == "Hello", "a[i] = ", a[i]);
 
-a0 = [ 1, 10, 100 ];
-a1 = [ 1000, 10000];
-a = append(a0, a1);
+a = [ 1, 10, 100 ];
+append(a, 1000, 10000);
 
 var total = 0;
 for x in a { total += x; }

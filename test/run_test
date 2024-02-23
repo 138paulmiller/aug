@@ -1,17 +1,29 @@
 #/bin/sh
 clear 
 
-if [ "$1" == "-b" ]; then
-    make clean 
-    make
-    shift;
-fi;
+cd libtest
+make clean 
+make
+cd .. 
 
-if [ "$1" == "-bd" ]; then
-    make clean 
+make clean 
+if [ "$1" == "-dbg" ]; then
     make DEBUG=1
     shift;
+else 
+    make
 fi;
 
-valgrind  --main-stacksize=1048576 --tool=memcheck --leak-check=full \
-../build/aug_test --dump --verbose --test ../examples/$1
+yes | cp -rf libtest/lib/. ../build
+cd ../build
+
+if [ "$1" == "-all" ]; then
+
+    valgrind  --main-stacksize=1048576 --tool=memcheck --leak-check=full \
+    ./aug_test --test_all $(ls ../examples/test_*)
+else 
+    valgrind  --main-stacksize=1048576 --tool=memcheck --leak-check=full \
+    ./aug_test --dump --verbose --test ../examples/$1
+
+fi;
+

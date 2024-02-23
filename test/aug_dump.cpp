@@ -1,5 +1,6 @@
 #define AUG_IMPLEMENTATION
 #define AUG_LOG_VERBOSE
+#define AUG_OPCODE_LABELS
 #include <aug.h>
 #include <string>
 
@@ -91,6 +92,11 @@ void dump_ast_tree(const aug_ast* node, std::string prefix, bool is_leaf)
 			printf("ELSE\n");
 			dump_ast_tree(children[2], prefix, true);
 			break;
+		case AUG_AST_STMT_FOR:
+			printf("FOR\n");
+			for (int i = 0; i < children_size; ++i)
+				dump_ast_tree(children[i], prefix, i == children_size-1);
+			break;
 		case AUG_AST_STMT_WHILE:
 			printf("WHILE\n");
 			for (int i = 0; i < children_size; ++i)
@@ -155,6 +161,12 @@ void dump_ast_tree(const aug_ast* node, std::string prefix, bool is_leaf)
 			for (int i = 1; i < children_size; ++i)
 				dump_ast_tree(children[i], prefix, i == children_size - 1);
 			break;
+		case AUG_AST_USE_LIB:
+			printf("USE LIB %s\n", token.data->buffer);
+			break;
+		case AUG_AST_USE_SCRIPT:
+			printf("USE SCRIPT %s\n", token.data->buffer);
+			break;
 		case AUG_AST_PARAM:
 		case AUG_AST_VARIABLE:
 		case AUG_AST_LITERAL:
@@ -165,6 +177,7 @@ void dump_ast_tree(const aug_ast* node, std::string prefix, bool is_leaf)
 			else
 				printf("%s\n", token.data->buffer);
 			break;
+
 	}
 }
 
@@ -237,15 +250,19 @@ void aug_dump_file(aug_vm* vm, const char* filename)
 
 	dump_lexer(filename);
 
-	aug_input* input = aug_input_open(filename, vm->error_callback);
+	aug_input* input = aug_input_open(filename, vm->error_func);
+	if(input == NULL)
+		return;
 	aug_ast* root = aug_parse(input);
+	if(root == NULL)
+		return;
 
 	dump_ast(root);
 
 	// Generate IR
-	aug_ir* ir = aug_ir_new(input);
-	aug_generate_ir(vm, root, ir);
 
+	   // Generate IR
+    aug_ir* ir = aug_generate_ir(vm, input, root);
 	dump_ir(ir);
 
 	aug_ast_delete(root);

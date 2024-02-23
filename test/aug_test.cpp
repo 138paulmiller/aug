@@ -170,67 +170,6 @@ std::string to_string(const aug_value& value)
     return std::string(out, len);
 }
 
-void print(const aug_value& value);
-
-void print_map_pair(const aug_value* key, aug_value* value, void* user_data)
-{
-	printf("\n\t");
-	print(*key);
-	printf(" : ");
-	print(*value);
-}
-
-void print(const aug_value& value)
-{
-	switch (value.type)
-	{
-	case AUG_NONE:
-		printf("none");
-		break;
-	case AUG_BOOL:
-		printf("%s", value.b ? "true" : "false");
-		break;
-	case AUG_CHAR:
-		printf("%c", value.c);
-		break;
-	case AUG_INT:
-		printf("%d", value.i);
-		break;
-	case AUG_FLOAT:
-		printf("%0.3f", value.f);
-		break;
-	case AUG_STRING:
-		printf("%s", value.str->buffer);
-		break;
-	case AUG_OBJECT:
-		printf("object");
-		break;
-	case AUG_FUNCTION:
-		printf("function %d", value.i);
-		break;
-	case AUG_ARRAY:
-	{
-		printf("[");
-		for( size_t i = 0; i < value.array->length; ++i)
-		{
-			printf(" ");
-			const aug_value* entry = aug_array_at(value.array, i);
-			print(*entry);
-		}
-		printf("]");
-		break;
-	}
-	case AUG_MAP:
-	{		
-		printf("{");
-		aug_map_foreach(value.map, print_map_pair, NULL);
-		printf("\n}");
-
-		break;
-	}
-	}
-}
-
 float sum(const aug_value& value, aug_type& type)
 {
 	switch (value.type)
@@ -289,47 +228,6 @@ aug_value map_insert(int argc, aug_value* args)
 	if(map.type != AUG_MAP)
 		return aug_none();
 	aug_map_insert(map.map, &key, &value);
-
-	return aug_none();
-}
-
-aug_value append(int argc, aug_value* args)
-{
-	if (argc == 0)
-		aug_none();
-	if (argc == 1)
-		return args[0];
-
-	aug_value value = aug_create_array();
-	for (int i = 0; i < argc; ++i)
-	{
-		aug_value arg = args[i];
-		if (arg.type == AUG_ARRAY)
-		{
-			for (size_t j = 0; j < arg.array->length; ++j)
-			{
-				const aug_value* entry = aug_array_at(arg.array, j);
-				aug_value* element = aug_array_push(value.array);
-				if (entry != NULL && element != NULL)
-					*element = *entry;
-			}
-		}
-		else
-		{
-			aug_value* element = aug_array_push(value.array);
-			if (element != NULL)
-				*element = arg;
-		}
-	}
-	return value;
-}
-
-aug_value print(int argc, aug_value* args)
-{
-	for( int i = 0; i < argc; ++i)
-		print(args[i]);
-
-	printf("\n");
 
 	return aug_none();
 }
@@ -402,11 +300,8 @@ int aug_test(int argc, char** argv)
 {
 	aug_vm* vm = aug_startup(aug_error);
 	
-	aug_register(vm, "print", print);
 	aug_register(vm, "expect", expect);
 	aug_register(vm, "sum", sum);
-	aug_register(vm, "append", append);
-	aug_register(vm, "map_insert", map_insert);
 
 	aug_tester::startup();
 	for(int i = 1; i < argc; ++i)
