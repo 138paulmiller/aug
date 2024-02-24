@@ -30,6 +30,7 @@ SOFTWARE. */
     Todo: 
     -  Better runtime error handling!
         - Create a map from bytecode addr to source code position. In aug_vm log error, add this. 
+        - Create an error type to allow extensions for forward errors to VM
     - Create Programs for loading/unloading compiled code. 
         - This will compile script code to a string literal and create a standalone c/c++ app that boots vm and executes bytecode 
         - The compiled scripts will also dump symtables to allow aug_call*s
@@ -243,8 +244,9 @@ typedef struct aug_vm
     // Extensions are external functions are native functions that can be called from scripts   
     // This external function map contains the user's registered functions. 
     // Use aug_register/aug_unregister to modify these fields
-    aug_container* extensions; //aug_extension
-    aug_container* debug_symbols; //weak pointer to script debug symbols
+    aug_container* extensions;      // aug_extension
+    aug_container* debug_symbols;   // weak pointer to script aug_debug_symbols
+    aug_container* libs;            // loaded library handles
 } aug_vm;
 
 // VM API ----------------------------------------- VM API ---------------------------------------------------- VM API//
@@ -345,10 +347,13 @@ bool aug_iterator_get(aug_iterator* iterator, aug_value* out_element);
 
 // LIBCALL API ---------------------------------- LIBCALL API ------------------------------------------- LIBCALL API//
 
+typedef size_t aug_lib_handle;
+
 // Type signature for external library entry points
-typedef void (*aug_register_lib_func)(aug_vm* /*vm*/, void* /*libhandle*/);
-typedef aug_value /*return*/(*aug_register_libcall_func)(int argc, aug_value* /*args*/);
-void aug_register_libcall(aug_vm* vm, void* lib_handle, const char* funcname, const char* lib_funcname);
+typedef void (*aug_register_lib_func)(aug_vm* /*vm*/);
+
+void aug_lib_load(aug_vm* vm, const char* libname);
+void aug_lib_unload(aug_vm* vm, aug_lib_handle handle);
 
 #ifdef __cplusplus
 }
@@ -2877,6 +2882,7 @@ static inline aug_ir* aug_ir_new(aug_input* input)
     ir->frame_stack =  aug_container_new_type(aug_ir_frame, 1);
     ir->operations = aug_container_new_type(aug_ir_operation, 1);
     ir->debug_symbols = aug_container_new_type(aug_debug_symbol, 1);
+    
     ir->globals = NULL; // initialized in ast to ir pass
     return ir;
 }
@@ -4679,7 +4685,7 @@ aug_value aug_vm_execute_from_frame(aug_vm* vm, int func_addr, int argc, aug_val
 
 // LIBCALL ============================================== LIBCALL ========================================== LIBCALL // 
 
-void aug_use_lib(aug_vm* vm, const char* libname)
+void aug_lib_load(aug_vm* vm, const char* libname)
 {
 #if _WIN32
 #elif __linux
@@ -4704,23 +4710,21 @@ void aug_use_lib(aug_vm* vm, const char* libname)
         return;
     }
 
-    register_lib(vm, handle);
+    register_lib(vm);
+    aug_container_push_type(aug_lib_handle, vm->libs, (aug_lib_handle)handle);
 #endif  
 }
 
-void aug_register_libcall(aug_vm* vm, void* lib_handle, const char* funcname, const char* lib_funcname)
+void aug_lib_unload(aug_vm* vm, aug_lib_handle handle)
 {
-    aug_register_libcall_func libcall = (aug_register_libcall_func)dlsym(lib_handle, lib_funcname);
-    char* error = dlerror();
-    if (error != NULL)
-    {
-        aug_log_error(vm->error_func, "Library %s failed to setup", lib_funcname);
-        aug_log_error(vm->error_func, "Reason: %s", error);
+    if(handle == 0)
         return;
-    }
-
-    aug_register(vm, funcname, libcall);
+#if _WIN32
+#elif __linux
+    dlclose((void*)handle);
+#endif
 }
+
 
 // COMPILER ============================================== COMPILER ========================================== COMPILER // 
 
@@ -4765,7 +4769,7 @@ void aug_generate_ir_prepass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
         }
         case AUG_AST_USE_LIB:
         {
-            aug_use_lib(vm, token_data->buffer);
+            aug_lib_load(vm, token_data->buffer);
             break;  
         } 
         case AUG_AST_USE_SCRIPT:
@@ -6193,18 +6197,29 @@ aug_vm* aug_startup(aug_error_func* error_func)
     for (i = 0; i < AUG_STACK_SIZE; ++i)
         vm->stack[i] = aug_none();
 
-    // Initialize
-    vm->extensions = aug_container_new_type(aug_extension, 16);
-    vm->error_func = error_func;
     aug_vm_startup(vm);
+
+    // Initialize global vm state, non script context sensitive
+    vm->extensions = aug_container_new_type(aug_extension, 16);
+    vm->libs = aug_container_new_type(aug_lib_handle, 1);
+    vm->error_func = error_func;
     return vm;
 }
 
 void aug_shutdown(aug_vm* vm)
 {
-    aug_vm_shutdown(vm);
+    // Deinitialize global vm state, non script context sensitive
+    
+    // Unregister all extensions and lib extensions
 
     size_t i;
+    for (i = 0; i < vm->libs->length; ++i)
+    {
+        aug_lib_handle handle = aug_container_at_type(aug_lib_handle, vm->libs, i);
+        aug_lib_unload(vm, handle);
+    }
+    vm->libs = aug_container_decref(vm->libs);
+
     for (i = 0; i < vm->extensions->length; ++i)
     {
         aug_extension* extension = aug_container_ptr_type(aug_extension, vm->extensions, i);
@@ -6212,6 +6227,7 @@ void aug_shutdown(aug_vm* vm)
     }
     vm->extensions = aug_container_decref(vm->extensions);
 
+    aug_vm_shutdown(vm);
     AUG_FREE(vm);
 }
 

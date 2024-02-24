@@ -28,7 +28,7 @@ void aug_std_print_map_pair(const aug_value* key, aug_value* value, void* user_d
 	aug_std_print_value(*value);
 }
 
-AUG_LIBCALL void aug_std_print_value(const aug_value value)
+ void aug_std_print_value(const aug_value value)
 {
 	switch (value.type)
 	{
@@ -81,7 +81,7 @@ AUG_LIBCALL void aug_std_print_value(const aug_value value)
 	}
 }
 
-AUG_LIBCALL aug_value aug_std_print(int argc, aug_value* args)
+ aug_value aug_std_print(int argc, aug_value* args)
 {
 	for( int i = 0; i < argc; ++i)
 		aug_std_print_value(args[i]);
@@ -91,7 +91,7 @@ AUG_LIBCALL aug_value aug_std_print(int argc, aug_value* args)
 	return aug_none();
 }
 
-AUG_LIBCALL aug_value aug_std_concat(int argc, aug_value* args)
+ aug_value aug_std_concat(int argc, aug_value* args)
 {
 	if (argc == 0)
 		return aug_none();
@@ -114,7 +114,7 @@ AUG_LIBCALL aug_value aug_std_concat(int argc, aug_value* args)
 	return value;
 }
 
-AUG_LIBCALL aug_value aug_std_split(int argc, aug_value* args)
+ aug_value aug_std_split(int argc, aug_value* args)
 {
 	if (argc != 2)
 		return aug_none();
@@ -156,7 +156,7 @@ AUG_LIBCALL aug_value aug_std_split(int argc, aug_value* args)
 	return value;
 }
 
-AUG_LIBCALL aug_value aug_std_append(int argc, aug_value* args)
+ aug_value aug_std_append(int argc, aug_value* args)
 {
 	if (argc == 0)
 		return aug_none();
@@ -191,7 +191,7 @@ AUG_LIBCALL aug_value aug_std_append(int argc, aug_value* args)
 	return aug_none();
 }
 
-AUG_LIBCALL aug_value aug_std_remove(int argc, aug_value* args)
+ aug_value aug_std_remove(int argc, aug_value* args)
 {
 	if (argc != 2 || args[0].type != AUG_ARRAY)
 		return aug_none();
@@ -202,7 +202,7 @@ AUG_LIBCALL aug_value aug_std_remove(int argc, aug_value* args)
 	return aug_none();
 }
 
-AUG_LIBCALL aug_value aug_std_front(int argc, aug_value* args)
+ aug_value aug_std_front(int argc, aug_value* args)
 {
 	if (argc == 0 || args[0].type != AUG_ARRAY)
 		return aug_none();
@@ -214,7 +214,7 @@ AUG_LIBCALL aug_value aug_std_front(int argc, aug_value* args)
 	return aug_none();
 }
 
-AUG_LIBCALL aug_value aug_std_back(int argc, aug_value* args)
+ aug_value aug_std_back(int argc, aug_value* args)
 {
 	if (argc == 0 || args[0].type != AUG_ARRAY)
 		return aug_none(); 
@@ -226,7 +226,7 @@ AUG_LIBCALL aug_value aug_std_back(int argc, aug_value* args)
 	return aug_none();
 }
 
-AUG_LIBCALL aug_value aug_std_length(int argc, aug_value* args)
+ aug_value aug_std_length(int argc, aug_value* args)
 {
 	if(argc != 1)
 		return aug_none();
@@ -244,7 +244,7 @@ AUG_LIBCALL aug_value aug_std_length(int argc, aug_value* args)
 	return aug_none();
 }
 
-AUG_LIBCALL aug_value aug_std_contains(int argc, aug_value* args)
+ aug_value aug_std_contains(int argc, aug_value* args)
 {
 	if (argc != 1 || args[0].type != AUG_ARRAY)
 		return aug_none();
@@ -259,7 +259,7 @@ AUG_LIBCALL aug_value aug_std_contains(int argc, aug_value* args)
 	return aug_create_bool(false);
 }
 
-AUG_LIBCALL aug_value aug_std_snap(int argc, aug_value* args)
+ aug_value aug_std_snap(int argc, aug_value* args)
 {
 	if(argc == 0)
 		return aug_none();
@@ -268,7 +268,7 @@ AUG_LIBCALL aug_value aug_std_snap(int argc, aug_value* args)
 	return aug_create_int(floor(x / grid) * grid);
 }
 
-AUG_LIBCALL aug_value aug_std_to_string(int argc, aug_value* args)
+ aug_value aug_std_to_string(int argc, aug_value* args)
 {
 	printf("TO_STR ARGC %d \n", argc);
 	if(argc != 1)
@@ -306,18 +306,18 @@ AUG_LIBCALL aug_value aug_std_to_string(int argc, aug_value* args)
 	return aug_create_string(out);
 }
 
-AUG_LIBCALL void aug_register_lib(aug_vm* vm, void* lib)
+AUG_LIBCALL void aug_register_lib(aug_vm* vm)
 {
-	aug_register_libcall(vm, lib, "snap",      "aug_std_snap"      );
-	aug_register_libcall(vm, lib, "random",    "aug_std_random"    );
-	aug_register_libcall(vm, lib, "print",     "aug_std_print"     );
-	aug_register_libcall(vm, lib, "to_string", "aug_std_to_string" );
-	aug_register_libcall(vm, lib, "concat",    "aug_std_concat"    );
-	aug_register_libcall(vm, lib, "append",    "aug_std_append"    );
-	aug_register_libcall(vm, lib, "remove",    "aug_std_remove"    );
-	aug_register_libcall(vm, lib, "front",     "aug_std_front"     );
-	aug_register_libcall(vm, lib, "back",      "aug_std_back"      );
-	aug_register_libcall(vm, lib, "length",    "aug_std_length"    ) ;
-	aug_register_libcall(vm, lib, "contains",  "aug_std_contains"  );
-	aug_register_libcall(vm, lib, "split",     "aug_std_split"     );
+	aug_register(vm, "snap",      aug_std_snap      );
+	aug_register(vm, "random",    aug_std_random    );
+	aug_register(vm, "print",     aug_std_print     );
+	aug_register(vm, "to_string", aug_std_to_string );
+	aug_register(vm, "concat",    aug_std_concat    );
+	aug_register(vm, "append",    aug_std_append    );
+	aug_register(vm, "remove",    aug_std_remove    );
+	aug_register(vm, "front",     aug_std_front     );
+	aug_register(vm, "back",      aug_std_back      );
+	aug_register(vm, "length",    aug_std_length    ) ;
+	aug_register(vm, "contains",  aug_std_contains  );
+	aug_register(vm, "split",     aug_std_split     );
 }

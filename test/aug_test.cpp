@@ -139,11 +139,13 @@ std::string to_string(const aug_value& value)
     case AUG_STRING:
         len = snprintf(out, sizeof(out), "%s", value.str->buffer);
         break;
-    case AUG_OBJECT:
-        return "object";
 	case AUG_FUNCTION:
         len = snprintf(out, sizeof(out), "function %d", value.i);
 		break;
+    case AUG_OBJECT:
+        return "object";
+	case AUG_ITERATOR:
+        return "iterator";
     case AUG_ARRAY:
     {
         std::string str = "[";
@@ -166,6 +168,7 @@ std::string to_string(const aug_value& value)
 		str += "\n}";
 		return str;
 	}
+	default: return "";
     }
     return std::string(out, len);
 }
@@ -200,6 +203,8 @@ float sum(const aug_value& value, aug_type& type)
 		}
 		return total;
 	}
+	default: 
+		return 0;
 	}
 	return 0.0f;
 }
