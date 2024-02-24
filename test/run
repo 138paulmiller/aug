@@ -2,10 +2,11 @@
 clear 
 
 # Build the libs
-cd libtest
+pushd .
+cd ../lib
 make clean 
 make
-cd .. 
+popd
 
 # Build the test/dump
 make clean 
@@ -17,7 +18,7 @@ else
 fi;
 
 # Copy libs to runtime dir
-yes | cp -rf libtest/lib/. ../build
+yes | cp -rf ../lib/linux/. ../build
 cd ../build
 
 # exec

@@ -856,9 +856,9 @@ aug_input* aug_input_open(const char* filename, aug_error_func* error_func)
 {
 #ifdef AUG_SECURE
     FILE* file;
-    fopen_s(&file, filename, "r");
+    fopen_s(&file, filename, "r+");
 #else
-    FILE* file = fopen(filename, "r");
+    FILE* file = fopen(filename, "r+");
 #endif //AUG_SECURE
     if(file == NULL)
     {

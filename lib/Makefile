@@ -1,6 +1,6 @@
-OUT_DIR = lib
+OUT_DIR = linux
 CC = gcc
-CFLAGS = -I../.. -Wall -Werror
+CFLAGS = -I../ -Wall -Werror
 TARGETS = std
 
 .PHONY: $(TARGETS)

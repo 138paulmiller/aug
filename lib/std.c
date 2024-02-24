@@ -270,11 +270,8 @@ void aug_std_print_map_pair(const aug_value* key, aug_value* value, void* user_d
 
  aug_value aug_std_to_string(int argc, aug_value* args)
 {
-	printf("TO_STR ARGC %d \n", argc);
 	if(argc != 1)
 		return aug_none();
-
-	printf("TO_STR\n");
 	aug_value value = args[0];
    	char out[1024];
     switch (value.type)
@@ -288,11 +285,7 @@ void aug_std_print_map_pair(const aug_value* key, aug_value* value, void* user_d
         snprintf(out, sizeof(out), "%c", value.c);
         break;
     case AUG_INT:
-
-	printf("TO_STR INT %d \n", value.i);
         snprintf(out, sizeof(out), "%d", value.i);
-
-	printf("TO_STR OUT %s \n", out);
         break;
     case AUG_FLOAT:
         snprintf(out, sizeof(out), "%f", value.f);
