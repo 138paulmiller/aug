@@ -249,7 +249,7 @@ aug_value aug_std_length(int argc, aug_value* args)
 
 aug_value aug_std_contains(int argc, aug_value* args)
 {
-	if (argc != 1 || argc != 3 || args[0].type != AUG_ARRAY)
+	if ((argc != 2 || argc != 4) && args[0].type != AUG_ARRAY)
 		return aug_none();
 
 	aug_value value = args[0];

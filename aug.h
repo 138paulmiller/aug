@@ -28,6 +28,7 @@ SOFTWARE. */
         #include "aug.h"
 
     Todo: 
+    -  API to set/get values from script instance, like aug_call
     -  Better runtime error handling!
         - Create a map from bytecode addr to source code position. In aug_vm log error, add this. 
         - Create an error type to allow extensions for forward errors to VM
@@ -91,15 +92,22 @@ extern "C" {
 #ifndef AUG_REGISTER_LIB_FUNC
 #define AUG_REGISTER_LIB_FUNC "aug_register_lib"
 
-#if defined(_MSC_VER)
-    #define AUG_LIBCALL __declspec(dllexport)
-#elif defined(__GNUC__)
-    #define AUG_LIBCALL __attribute__((visibility("default")))
-    #define IMPORT
-#else
-    #define AUG_LIBCALL
-    #pragma warning unknown dynamic link import/export semantics.
+//#if defined(_MSC_VER)
+//    #define AUG_LIBCALL __declspec(dllexport)
+//#elif defined(__GNUC__)
+//    #define AUG_LIBCALL __attribute__((visibility("default")))
+//    #define IMPORT
+//#else
+//    #define AUG_LIBCALL
+//    #pragma warning unknown dynamic link import/export semantics.
+//#endif
+
+#ifdef __cplusplus
+#define AUG_LIBCALL extern "C" 
+#else 
+#define AUG_LIBCALL
 #endif
+
 
 #endif//AUG_REGISTER_LIB_FUNC
 
@@ -4694,7 +4702,7 @@ void aug_lib_load(aug_vm* vm, const char* libname)
     char libpath[1024];
     snprintf(libpath, sizeof(libpath), "./%s.so", libname); //seach local to exe
 
-    void* handle = dlopen (libpath, RTLD_LAZY | RTLD_LOCAL);
+    void* handle = dlopen (libpath, RTLD_LAZY | RTLD_GLOBAL);
     if (handle == NULL) 
     {
         char* error = dlerror();
@@ -4706,8 +4714,7 @@ void aug_lib_load(aug_vm* vm, const char* libname)
     char* error = dlerror();
     if (error != NULL)
     {
-        aug_log_error(vm->error_func, "Library %s failed to setup", libname);
-        aug_log_error(vm->error_func, "Reason: %s", error);
+        aug_log_error(vm->error_func, "Library %s failed to setup. %s", libname, error);
         dlclose(handle);
         return;
     }
