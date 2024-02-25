@@ -53,10 +53,13 @@ SOFTWARE. */
     - File, Directory, Vector, Matrix primitive types 
         - create default language bindings to sdl, fileio, win32 etc...
     - Operator overloading?
-
+    
     - Built-in math and utility functions. Perhaps registered as the default ? For math, directly use opcodes
     - Syntax to allow multiple var defines in aug_parse_stmt_define_var. Create a Define_Var_List AST node, seperate by comma
-
+    - Implement method calls. 
+        - Syntax, parse expr, then dot, then expr excluding literals.
+        - Semantics, in AST method call push the object, then the params, then call func
+                     in AST method def, load object, then the params. Find all vars that are fields to the object in prepass. Add to symtable under 
     Note:
     - Locally defined functions can be supported, but will require closures to be implemented. See the aug_parse_stmt(aug_lexer* lexer, bool is_block)
         - To define closures, pass all the reference variables on the stack and re-add to the functions local symtable. Adjust the decstack well
@@ -99,7 +102,6 @@ extern "C" {
 #endif
 
 #endif//AUG_REGISTER_LIB_FUNC
-
 
 #include <stdlib.h>
 #include <stdbool.h>

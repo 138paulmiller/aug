@@ -1,8 +1,11 @@
 #include <math.h>
-
 #include <aug.h>
 
-AUG_LIBCALL aug_value aug_std_random(int argc, aug_value* args)
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+aug_value aug_std_random(int argc, aug_value* args)
 {
 	int x;
 	if(argc == 1)
@@ -28,7 +31,7 @@ void aug_std_print_map_pair(const aug_value* key, aug_value* value, void* user_d
 	aug_std_print_value(*value);
 }
 
- void aug_std_print_value(const aug_value value)
+void aug_std_print_value(const aug_value value)
 {
 	switch (value.type)
 	{
@@ -81,7 +84,7 @@ void aug_std_print_map_pair(const aug_value* key, aug_value* value, void* user_d
 	}
 }
 
- aug_value aug_std_print(int argc, aug_value* args)
+aug_value aug_std_print(int argc, aug_value* args)
 {
 	for( int i = 0; i < argc; ++i)
 		aug_std_print_value(args[i]);
@@ -91,7 +94,7 @@ void aug_std_print_map_pair(const aug_value* key, aug_value* value, void* user_d
 	return aug_none();
 }
 
- aug_value aug_std_concat(int argc, aug_value* args)
+aug_value aug_std_concat(int argc, aug_value* args)
 {
 	if (argc == 0)
 		return aug_none();
@@ -114,7 +117,7 @@ void aug_std_print_map_pair(const aug_value* key, aug_value* value, void* user_d
 	return value;
 }
 
- aug_value aug_std_split(int argc, aug_value* args)
+aug_value aug_std_split(int argc, aug_value* args)
 {
 	if (argc != 2)
 		return aug_none();
@@ -156,7 +159,7 @@ void aug_std_print_map_pair(const aug_value* key, aug_value* value, void* user_d
 	return value;
 }
 
- aug_value aug_std_append(int argc, aug_value* args)
+aug_value aug_std_append(int argc, aug_value* args)
 {
 	if (argc == 0)
 		return aug_none();
@@ -191,7 +194,7 @@ void aug_std_print_map_pair(const aug_value* key, aug_value* value, void* user_d
 	return aug_none();
 }
 
- aug_value aug_std_remove(int argc, aug_value* args)
+aug_value aug_std_remove(int argc, aug_value* args)
 {
 	if (argc != 2 || args[0].type != AUG_ARRAY)
 		return aug_none();
@@ -202,7 +205,7 @@ void aug_std_print_map_pair(const aug_value* key, aug_value* value, void* user_d
 	return aug_none();
 }
 
- aug_value aug_std_front(int argc, aug_value* args)
+aug_value aug_std_front(int argc, aug_value* args)
 {
 	if (argc == 0 || args[0].type != AUG_ARRAY)
 		return aug_none();
@@ -214,7 +217,7 @@ void aug_std_print_map_pair(const aug_value* key, aug_value* value, void* user_d
 	return aug_none();
 }
 
- aug_value aug_std_back(int argc, aug_value* args)
+aug_value aug_std_back(int argc, aug_value* args)
 {
 	if (argc == 0 || args[0].type != AUG_ARRAY)
 		return aug_none(); 
@@ -226,7 +229,7 @@ void aug_std_print_map_pair(const aug_value* key, aug_value* value, void* user_d
 	return aug_none();
 }
 
- aug_value aug_std_length(int argc, aug_value* args)
+aug_value aug_std_length(int argc, aug_value* args)
 {
 	if(argc != 1)
 		return aug_none();
@@ -244,14 +247,26 @@ void aug_std_print_map_pair(const aug_value* key, aug_value* value, void* user_d
 	return aug_none();
 }
 
- aug_value aug_std_contains(int argc, aug_value* args)
+aug_value aug_std_contains(int argc, aug_value* args)
 {
-	if (argc != 1 || args[0].type != AUG_ARRAY)
+	if (argc != 1 || argc != 3 || args[0].type != AUG_ARRAY)
 		return aug_none();
 
 	aug_value value = args[0];
 	aug_value arg = args[1];
-	for (size_t i = 0; i < value.array->length; ++i){
+
+	size_t start = 0;
+	size_t end = value.array->length;
+
+	if(argc == 4)
+	{		
+		if(args[2].type != AUG_INT || args[3].type != AUG_INT)
+			return aug_none();
+		start = aug_to_int(args + 2);
+		end = aug_to_int(args + 3);
+	}
+
+	for (size_t i = start; i < end; ++i){
 		aug_value* element = aug_array_at(value.array, i);
 		if(aug_compare(&arg, element))
 			return aug_create_bool(true);
@@ -259,7 +274,7 @@ void aug_std_print_map_pair(const aug_value* key, aug_value* value, void* user_d
 	return aug_create_bool(false);
 }
 
- aug_value aug_std_snap(int argc, aug_value* args)
+aug_value aug_std_snap(int argc, aug_value* args)
 {
 	if(argc == 0)
 		return aug_none();
@@ -268,7 +283,7 @@ void aug_std_print_map_pair(const aug_value* key, aug_value* value, void* user_d
 	return aug_create_int(floor(x / grid) * grid);
 }
 
- aug_value aug_std_to_string(int argc, aug_value* args)
+aug_value aug_std_to_string(int argc, aug_value* args)
 {
 	if(argc != 1)
 		return aug_none();
@@ -314,3 +329,7 @@ AUG_LIBCALL void aug_register_lib(aug_vm* vm)
 	aug_register(vm, "contains",  aug_std_contains  );
 	aug_register(vm, "split",     aug_std_split     );
 }
+
+#ifdef __cplusplus
+}
+#endif

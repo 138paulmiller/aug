@@ -5,9 +5,10 @@ Highly extendable scripting engine. Designed to augment existing applications.
 
 ## Usage
 
-### Setup Virtual Machine
+### Virtual Machine
 
-1. Initialize the Aug Virtual Machine(VM). To do this, first startup the VM
+1. Initialize the Aug Virtual Machine (VM). To do this, first startup the VM
+
 `aug_vm* vm = aug_startup(NULL);`
 
 An optional error messaging handler can be provided as such
@@ -18,7 +19,7 @@ void on_error(const char* msg)
 }
 aug_vm* vm = aug_startup(on_error);
 ```
- 
+
 2. Register external functions, which will provided interoperability between the aug scripts and your application. 
 External functions expect the following function signature, similar to the C **main** function signature.
 To bind your local function to a script function you must use the ***aug_register** function.
@@ -29,6 +30,10 @@ aug_register(vm, "external_function", external_function);
 argc - the number of values passed into the function
 args - array of argument values passed into the function
 return -  value returned back to the script calling context 
+
+3. When finished using, cleanup the memory and state 
+
+`aug_shutdown(vm);`
 
 
 ### Executing script
@@ -95,16 +100,21 @@ aug_unload(script);
 
  4. Once you have a loaded script instance, you can call functions defined in the script using both **aug_call** and **aug_call_args**.
 ```
+aug_script* script = aug_load("path/to/file.aug");
+
 aug_value args[] = { aug_create_float(100) };
 aug_call(vm, script, "Setup");
-...
+
 aug_value args[] = { aug_create_float(100) };
 aug_call_args(vm, script, "Update", 1, &args[0]);
+
+aug_unload(script);
+
 ```
 
 ### Examples
 
-TODO: Sdl example
+See https://github.com/138paulmiller/aug_demo
 
 ### Syntax
 
