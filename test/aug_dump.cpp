@@ -74,6 +74,9 @@ void dump_ast_tree(const aug_ast* node, std::string prefix, bool is_leaf)
 		case AUG_AST_DISCARD:
 			printf("DISCARD\n");
 			break;
+		case AUG_AST_CONTINUE:
+			printf("CONTINUE\n");
+			break;
 		case AUG_AST_STMT_DEFINE_VAR:
 			printf("DEFINE: %s\n", token.data ?  token.data->buffer : "(null)");
 			if(children_size==1)

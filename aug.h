@@ -36,9 +36,6 @@ SOFTWARE. */
         - This will compile script code to a string literal and create a standalone c/c++ app that boots vm and executes bytecode 
         - The compiled scripts will also dump symtables to allow aug_call*s
 
-    - Imports Create a framework for extending language via plugins. 
-        - i.e. a DLL or SO that contains an aug_register_plugin(aug_vm* vm), from within the lib will register the functionality
-        - create a libcall opcode that will load these libraries via an import statement. Can import files or libs  
     - Implement value references to allow iterators to modify the element
     - Implement match statements, like switch statements that ease "if else if" chains 
     - Implement wildcard, glob matching for strings
@@ -1071,6 +1068,7 @@ typedef struct aug_token_detail
     AUG_TOKEN(VAR,            0, 0, 0, "var")      \
     AUG_TOKEN(FUNC,           0, 0, 0, "func")     \
     AUG_TOKEN(RETURN,         0, 0, 0, "return")   \
+    AUG_TOKEN(CONTINUE,       0, 0, 0, "continue") \
     AUG_TOKEN(TRUE,           0, 0, 0, "true")     \
     AUG_TOKEN(FALSE,          0, 0, 0, "false")    \
     AUG_TOKEN(USE,            0, 0, 0, "use")
@@ -1667,6 +1665,7 @@ typedef enum aug_ast_id
     AUG_AST_PARAM_LIST,
     AUG_AST_PARAM,
     AUG_AST_RETURN,
+    AUG_AST_CONTINUE,
     AUG_AST_USE_SCRIPT,
     AUG_AST_USE_LIB,
 } aug_ast_id;
@@ -2527,6 +2526,26 @@ aug_ast* aug_parse_stmt_return(aug_lexer* lexer)
     return return_stmt;
 }
 
+aug_ast* aug_parse_stmt_continue(aug_lexer* lexer)
+{
+    if(aug_lexer_curr(lexer).id != AUG_TOKEN_CONTINUE)
+        return NULL;
+
+    aug_lexer_move(lexer); // eat CONTINUE
+
+    aug_ast* cont_stmt = aug_ast_new(AUG_AST_CONTINUE, aug_token_new());
+
+    if(aug_lexer_curr(lexer).id != AUG_TOKEN_SEMICOLON)
+    {
+        aug_ast_delete(cont_stmt);
+        aug_log_input_error(lexer->input,  "Missing semicolon at end of continue statement");
+        return NULL;
+    }
+
+    aug_lexer_move(lexer); // eat SEMICOLON
+
+    return cont_stmt;
+}
 
 aug_ast* aug_parse_stmt_use(aug_lexer* lexer)
 {
@@ -2595,6 +2614,9 @@ aug_ast* aug_parse_stmt(aug_lexer* lexer, bool is_block)
         break;
     case AUG_TOKEN_RETURN:
         stmt = aug_parse_stmt_return(lexer);
+        break;
+    case AUG_TOKEN_CONTINUE:
+        stmt = aug_parse_stmt_continue(lexer);
         break;
     case AUG_TOKEN_USE:
         if(!is_block)
@@ -2845,6 +2867,7 @@ typedef struct aug_ir_operation
     size_t bytecode_offset;
 } aug_ir_operation;
 
+// The symbol stack state for a variable scope .
 typedef struct aug_ir_scope
 {
     int base_index;
@@ -2852,6 +2875,7 @@ typedef struct aug_ir_scope
     aug_hashtable* symtable;
 } aug_ir_scope;
 
+// The scope and vm stack state for the function body frames.
 typedef struct aug_ir_frame
 {
     int base_index;
@@ -2859,14 +2883,22 @@ typedef struct aug_ir_frame
     aug_container* scope_stack; //type aug_ir_scope
 } aug_ir_frame;
 
+typedef struct aug_ir_loop
+{
+    int bytecode_begin;     // the beginning of the loop
+    size_t end_jump_operation; // used to jump over block on end condition
+} aug_ir_loop;
+
 // All the blocks within a compilation/translation unit (i.e. file, code literal)
 typedef struct aug_ir
 {		
     aug_input* input; // weak ref to source file/code
 
-    // Transient IR data
+    // Top is the current frame.
     aug_container* frame_stack; // type aug_ir_frame
-    int label_count;
+
+    // Top is the current loop address.
+    aug_container* loop_stack; // type aug_ir_loop
 
     // Generated data
     aug_container* operations; // type aug_ir_operation
@@ -2887,9 +2919,9 @@ static inline aug_ir* aug_ir_new(aug_input* input)
     aug_ir* ir = (aug_ir*)AUG_ALLOC(sizeof(aug_ir));
     ir->valid = true;
     ir->input = input;
-    ir->label_count = 0;
     ir->bytecode_offset = 0;
     ir->frame_stack =  aug_container_new_type(aug_ir_frame, 1);
+    ir->loop_stack =  aug_container_new_type(aug_ir_loop, 1);
     ir->operations = aug_container_new_type(aug_ir_operation, 1);
     ir->debug_symbols = aug_container_new_type(aug_debug_symbol, 1);
     
@@ -2902,6 +2934,7 @@ static inline void aug_ir_delete(aug_ir* ir)
     aug_hashtable_decref(ir->globals);
     aug_container_decref(ir->operations);
     aug_container_decref(ir->frame_stack);
+    aug_container_decref(ir->loop_stack);
     aug_container_decref(ir->debug_symbols);
  
     AUG_FREE(ir);
@@ -3008,7 +3041,6 @@ static inline aug_ir_operand aug_ir_operand_from_str(const char* data)
     operand.data.str = data;
     return operand;
 }
-
 
 static inline aug_ir_operand aug_ir_operand_from_symbol(const aug_symbol symbol)
 {
@@ -3135,6 +3167,46 @@ static inline void aug_ir_pop_scope(aug_ir* ir)
     aug_ir_frame* frame = aug_ir_current_frame(ir);
     aug_ir_scope scope = aug_container_pop_type(aug_ir_scope, frame->scope_stack);
     aug_hashtable_decref(scope.symtable);
+}
+
+static inline void aug_ir_begin_loop(aug_ir* ir)
+{
+    aug_ir_loop loop;
+    loop.bytecode_begin = ir->bytecode_offset;
+    loop.end_jump_operation = 0;
+    aug_container_push_type(aug_ir_loop, ir->loop_stack, loop);
+}
+
+static inline void aug_ir_check_loop(aug_ir* ir)
+{
+    aug_container* loop_stack = ir->loop_stack;
+    aug_ir_loop* loop = aug_container_ptr_type(aug_ir_loop, loop_stack, loop_stack->length-1);
+
+    const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
+    loop->end_jump_operation = aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
+}
+
+static inline void aug_ir_continue_loop(aug_ir* ir)
+{
+    const aug_ir_loop loop = aug_container_back_type(aug_ir_loop, ir->loop_stack);
+    const aug_ir_operand begin_addr_operand = aug_ir_operand_from_int(loop.bytecode_begin);
+    aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP, begin_addr_operand);
+}
+
+static inline void aug_ir_end_loop(aug_ir* ir)
+{
+    const aug_ir_loop loop = aug_container_pop_type(aug_ir_loop, ir->loop_stack);
+    
+    // Close the loop, jump back to beginning
+    const aug_ir_operand begin_addr_operand = aug_ir_operand_from_int(loop.bytecode_begin);
+    aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP, begin_addr_operand);
+
+    // Fixup stubbed block offsets
+    aug_ir_operation* operation = aug_ir_get_operation(ir, loop.end_jump_operation);
+    assert(operation != NULL);
+
+    const size_t end_block_addr = ir->bytecode_offset;
+    operation->operand = aug_ir_operand_from_int(end_block_addr);
 }
 
 static inline void aug_ir_add_debug_symbol(aug_ir* ir, aug_symbol symbol)
@@ -5112,12 +5184,11 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
         {
             assert(children_size == 2); //if([0]) {[1]}
 
-            const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
-
             // Evaluate expression. 
             aug_generate_ir_pass(vm, children[0], ir);
 
             //Jump to end if false
+            const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
             const size_t end_block_jmp = aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
 
             // True block
@@ -5136,12 +5207,11 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
         {
             assert(children_size == 3); //if([0]) {[1]} else {[2]}
 
-            const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
-
             // Evaluate expression. 
             aug_generate_ir_pass(vm, children[0], ir);
 
             //Jump to else if false
+            const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
             const size_t else_block_jmp = aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
 
             // True block
@@ -5171,29 +5241,18 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
         {
             assert(children_size == 2); //while [0] {[1]}
 
-            const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
-
-            const aug_ir_operand begin_block_operand = aug_ir_operand_from_int(ir->bytecode_offset);
+            aug_ir_begin_loop(ir);
 
             // Evaluate expression. 
             aug_generate_ir_pass(vm, children[0], ir);
-
-            //Jump to end if false
-            const size_t end_block_jmp = aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
+            aug_ir_check_loop(ir);
 
             // Loop block
             aug_ir_push_scope(ir);
             aug_generate_ir_pass(vm, children[1], ir);
             aug_ir_pop_scope(ir);
 
-            // Jump back to beginning, expr evaluation 
-            aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP, begin_block_operand);
-
-            // Tag end address
-            const size_t end_block_addr = ir->bytecode_offset;
-
-            // Fixup stubbed block offsets
-            aug_ir_get_operation(ir, end_block_jmp)->operand = aug_ir_operand_from_int(end_block_addr);
+            aug_ir_end_loop(ir);
             break;
         }
         case AUG_AST_STMT_FOR:
@@ -5209,7 +5268,7 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_ITERATOR);
 
             // Top of the loop.
-            const aug_ir_operand begin_block_operand = aug_ir_operand_from_int(ir->bytecode_offset);
+            aug_ir_begin_loop(ir);
 
             aug_ir_push_scope(ir);
 
@@ -5220,9 +5279,9 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
 
             aug_symbol var_symbol = aug_ir_get_symbol_relative(ir, var_token_data);
 
-            //Move the iterator, jump to end if false
+            //Move the iterator, and check the loop
             aug_ir_add_operation_arg(ir, AUG_OPCODE_ITERATE, aug_ir_operand_from_int(it_offset));
-            const size_t end_block_jmp = aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP_ZERO,  aug_ir_operand_from_int(0));
+            aug_ir_check_loop(ir);
 
             // If success, the iterator pushes the element value, load this into local
             aug_ir_add_operation_arg(ir, AUG_OPCODE_LOAD_LOCAL, aug_ir_operand_from_symbol(var_symbol));
@@ -5232,14 +5291,7 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
 
             aug_ir_pop_scope(ir);
 
-            // Jump back to beginning, expr evaluation 
-            aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP, begin_block_operand);
-
-            // Tag end address
-            const size_t end_block_addr = ir->bytecode_offset;
-
-            // Fixup stubbed block offsets
-            aug_ir_get_operation(ir, end_block_jmp)->operand = aug_ir_operand_from_int(end_block_addr);
+            aug_ir_end_loop(ir);
 
             // pop the temporary iterator and iteration temp slot to restore stack
             aug_ir_add_operation(ir, AUG_OPCODE_POP); 
@@ -5247,6 +5299,11 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
 
             scope = aug_ir_current_scope(ir);
             scope->stack_offset--; // remove iterator from stack
+            break;
+        }
+        case AUG_AST_CONTINUE:
+        {
+            aug_ir_continue_loop(ir);
             break;
         }
         case AUG_AST_FUNC_CALL:

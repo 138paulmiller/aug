@@ -1,0 +1,10 @@
+var even_total = 0;
+var i = 0;
+while i < 10 {
+	i+=1;
+	if i % 2 == 1 { 
+		continue; 
+	}
+	even_total += i;
+}
+expect(even_total == 2 + 4 + 6 + 8 + 10);

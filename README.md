@@ -148,8 +148,8 @@ stmt    : expr ;
         | WHILE expr { stmts }
         | FUNC NAME ( params ) block
         | IF block 
-        |  IF block ELSE block 
-        |  IF block ELSE cond
+        | IF block ELSE block 
+        | IF block ELSE cond
 
 stmts   : stmt stmts
         | NULL
