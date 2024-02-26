@@ -94,6 +94,25 @@ aug_value aug_std_print(int argc, aug_value* args)
 	return aug_none();
 }
 
+aug_value aug_std_get(int argc, aug_value* args)
+{
+	if (argc != 2 || args[0].type != AUG_MAP)
+		return aug_none();
+	aug_value* elem = aug_map_get(args[0].map, args + 1);
+	if(elem == NULL)
+		return aug_none();
+	aug_incref(elem);
+	return *elem;
+}
+
+aug_value aug_std_exists(int argc, aug_value* args)
+{
+	if (argc != 2 || args[0].type != AUG_MAP)
+		return aug_create_bool(false);
+	aug_value* elem = aug_map_get(args[0].map, args + 1);
+	return aug_create_bool(elem != NULL);
+}
+
 aug_value aug_std_concat(int argc, aug_value* args)
 {
 	if (argc == 0)
@@ -319,6 +338,8 @@ AUG_LIBCALL void aug_register_lib(aug_vm* vm)
 	aug_register(vm, "snap",      aug_std_snap      );
 	aug_register(vm, "random",    aug_std_random    );
 	aug_register(vm, "print",     aug_std_print     );
+	aug_register(vm, "get",       aug_std_get       );
+	aug_register(vm, "exists",    aug_std_exists    );
 	aug_register(vm, "to_string", aug_std_to_string );
 	aug_register(vm, "concat",    aug_std_concat    );
 	aug_register(vm, "append",    aug_std_append    );

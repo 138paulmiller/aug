@@ -58,11 +58,19 @@ SOFTWARE. */
         - Syntax, parse expr, then dot, then expr excluding literals.
         - Semantics, in AST method call push the object, then the params, then call func
                      in AST method def, load object, then the params. Find all vars that are fields to the object in prepass. Add to symtable under 
+    - Short circuit evaluation with and/or statements. Push one on, check if true, then push next, check it true
+   
     Note:
     - Locally defined functions can be supported, but will require closures to be implemented. See the aug_parse_stmt(aug_lexer* lexer, bool is_block)
         - To define closures, pass all the reference variables on the stack and re-add to the functions local symtable. Adjust the decstack well
     - As of now, external functions are referenced by their index. 
         - So external functions must be registered when the script is compiled, and executing the compiled bytecode must be under the same environment.
+        - Also, to support this, external libs are loaded during IR generation pass to lookup function names
+        - To avoid this, load libs in VM and use function names instead of index. 
+        - Also, perhaps, use dot operator to check which library to search, or just have a single external func lookup? 
+
+    - Issues:
+        - Array literals returned from function are deref'd
 */
 #ifndef __AUG_HEADER__
 #define __AUG_HEADER__
@@ -291,12 +299,13 @@ const char* aug_type_label(const aug_value* value);
 void aug_decref(aug_value* value);
 void aug_incref(aug_value* value);
 
-aug_value aug_create_array();
 aug_value aug_create_bool(bool data);
 aug_value aug_create_int(int data);
 aug_value aug_create_char(char data);
 aug_value aug_create_float(float data);
 aug_value aug_create_string(const char* data);
+aug_value aug_create_array();
+aug_value aug_create_map();
 aug_value aug_create_user_data(void* data);
 
 // String API------------------------------------ String API ----------------------------------------------- String API//
@@ -1011,7 +1020,7 @@ typedef struct aug_token_detail
 
 #define AUG_TOKEN_LIST                             \
     /* State */                                    \
-    AUG_TOKEN(NONE,           0, 0, 0, NULL)       \
+     AUG_TOKEN(INVALID,        0, 0, 0, NULL)       \
     AUG_TOKEN(END,            0, 0, 0, NULL)       \
     /* Symbols */		                           \
     AUG_TOKEN(DOT,            0, 0, 0, NULL)       \
@@ -1071,6 +1080,7 @@ typedef struct aug_token_detail
     AUG_TOKEN(CONTINUE,       0, 0, 0, "continue") \
     AUG_TOKEN(TRUE,           0, 0, 0, "true")     \
     AUG_TOKEN(FALSE,          0, 0, 0, "false")    \
+    AUG_TOKEN(NONE,           0, 0, 0, "none")    \
     AUG_TOKEN(USE,            0, 0, 0, "use")
 
 // Token identifier. 
@@ -1119,7 +1129,7 @@ typedef struct aug_lexer
 aug_token aug_token_new()
 {
     aug_token token;
-    token.id = AUG_TOKEN_NONE;
+    token.id = AUG_TOKEN_INVALID;
     token.detail = &aug_token_details[(int)token.id];
     token.data = NULL;
     return token;
@@ -1275,7 +1285,7 @@ bool aug_lexer_tokenize_string(aug_lexer* lexer, aug_token* token)
 
 bool aug_lexer_tokenize_symbol(aug_lexer* lexer, aug_token* token)
 {
-    aug_token_id id = AUG_TOKEN_NONE;
+    aug_token_id id = AUG_TOKEN_INVALID;
 
     char c = aug_input_get(lexer->input);
     switch(c)
@@ -1356,7 +1366,7 @@ bool aug_lexer_tokenize_symbol(aug_lexer* lexer, aug_token* token)
         break;
     }
 
-    if(id == AUG_TOKEN_NONE)
+    if(id == AUG_TOKEN_INVALID)
     {
         aug_input_unget(lexer->input);
         return false;
@@ -1409,7 +1419,7 @@ bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token* token)
         return false;
     } 
 
-    aug_token_id id = AUG_TOKEN_NONE;
+    aug_token_id id = AUG_TOKEN_INVALID;
 
     if(c == '0' && aug_input_peek(lexer->input) == 'x')
     {
@@ -1421,7 +1431,7 @@ bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token* token)
         while(isalnum(c))
         {
             if(!isdigit(c) && !((c >='a' && c <= 'f') || (c >= 'A' && c <= 'F')))
-                id = AUG_TOKEN_NONE;
+                id = AUG_TOKEN_INVALID;
 
             c = aug_input_get(lexer->input);
         }
@@ -1437,7 +1447,7 @@ bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token* token)
         while(isdigit(c))
         {
             if(c != '0' && c != '1')
-                id = AUG_TOKEN_NONE;
+                id = AUG_TOKEN_INVALID;
 
             c = aug_input_get(lexer->input);
         }
@@ -1467,7 +1477,7 @@ bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token* token)
             if(c == '.')
             {
                 if(dot)
-                    id = AUG_TOKEN_NONE;
+                    id = AUG_TOKEN_INVALID;
                 else
                     id = AUG_TOKEN_FLOAT;
 
@@ -1481,7 +1491,7 @@ bool aug_lexer_tokenize_number(aug_lexer* lexer, aug_token* token)
     token->id = id;
     token->data = aug_input_end_tracking(lexer->input);
 
-    if(id == AUG_TOKEN_NONE)
+    if(id == AUG_TOKEN_INVALID)
     {
         aug_log_input_error(lexer->input, "invalid numeric format %s", token->data->buffer);
         token->data = aug_string_decref(token->data);
@@ -1611,7 +1621,7 @@ bool aug_lexer_move(aug_lexer* lexer)
 
         lexer->tokens[lexer->at_index] = aug_lexer_tokenize(lexer);
         lexer->tokens[lexer->tokenize_index] = aug_lexer_tokenize(lexer);
-        return aug_lexer_curr(lexer).id != AUG_TOKEN_NONE;
+        return aug_lexer_curr(lexer).id != AUG_TOKEN_INVALID;
     }
 
     lexer->at_index = (lexer->at_index + 1) % AUG_LEXER_TOKEN_BUFFER_SIZE;
@@ -1619,13 +1629,13 @@ bool aug_lexer_move(aug_lexer* lexer)
     // to avoid the circular buffer from overstepping. next index time to catch up
     if (lexer->at_index > lexer->tokenize_index)
     {
-        return aug_lexer_curr(lexer).id != AUG_TOKEN_NONE;
+        return aug_lexer_curr(lexer).id != AUG_TOKEN_INVALID;
     }
 
     lexer->tokenize_index = (lexer->tokenize_index + 1) % AUG_LEXER_TOKEN_BUFFER_SIZE;
     aug_token_reset(&lexer->tokens[lexer->tokenize_index]);
     lexer->tokens[lexer->tokenize_index] = aug_lexer_tokenize(lexer);
-    return aug_lexer_curr(lexer).id != AUG_TOKEN_NONE;
+    return aug_lexer_curr(lexer).id != AUG_TOKEN_INVALID;
 }
 
 bool aug_lexer_undo(aug_lexer* lexer)
@@ -1635,7 +1645,7 @@ bool aug_lexer_undo(aug_lexer* lexer)
 
     lexer->at_index = lexer->at_index > 0 ? lexer->at_index - 1 : AUG_LEXER_TOKEN_BUFFER_SIZE - 1;
     assert(lexer->at_index != lexer->tokenize_index);
-    return aug_lexer_curr(lexer).id != AUG_TOKEN_NONE;
+    return aug_lexer_curr(lexer).id != AUG_TOKEN_INVALID;
 }
 
 // AST ================================================   AST   =================================================== AST // 
@@ -2095,6 +2105,7 @@ aug_ast* aug_parse_value(aug_lexer* lexer)
     case AUG_TOKEN_CHAR:
     case AUG_TOKEN_TRUE:
     case AUG_TOKEN_FALSE:
+    case AUG_TOKEN_NONE:
     {
         aug_token token = aug_token_copy(aug_lexer_curr(lexer));
         value = aug_ast_new(AUG_AST_LITERAL, token);
@@ -3475,6 +3486,13 @@ aug_value aug_create_array()
     return value;
 }
 
+aug_value aug_create_map()
+{
+    aug_value value;
+    aug_set_map(&value);
+    return value;
+}
+
 bool aug_to_bool(const aug_value* value)
 {
     if(value == NULL)
@@ -3949,9 +3967,13 @@ static inline bool aug_eq(aug_value* result, aug_value* lhs, aug_value* rhs)
         return aug_set_bool(result, lhs->c == rhs->c),
         return aug_set_bool(result, lhs->b == rhs->b)
     );
-    // TODO: add a special case for object equivalence (per field)
+
+    if (lhs->type == AUG_NONE || rhs->type == AUG_NONE)
+        return aug_set_bool(result, lhs->type == rhs->type);
+
     if (lhs->type != rhs->type)
         return false;
+
     switch (lhs->type)
     {
     case AUG_STRING: return aug_set_bool(result, aug_string_compare(lhs->str, rhs->str));
@@ -3963,7 +3985,6 @@ static inline bool aug_eq(aug_value* result, aug_value* lhs, aug_value* rhs)
 
 static inline bool aug_neq(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
-    // TODO: add a special case for object equivalence (per field)
     AUG_DEFINE_BINOP_POD(result, lhs, rhs,
         return aug_set_bool(result, lhs->i != rhs->i),
         return aug_set_bool(result, lhs->i != rhs->f),
@@ -3972,9 +3993,17 @@ static inline bool aug_neq(aug_value* result, aug_value* lhs, aug_value* rhs)
         return aug_set_bool(result, lhs->c != rhs->c),
         return aug_set_bool(result, lhs->b != rhs->b)
     );
+
+    if (lhs->type == AUG_NONE || rhs->type == AUG_NONE)
+        return aug_set_bool(result, lhs->type != rhs->type);
+
+    if (lhs->type != rhs->type)
+        return false;
+
     switch (lhs->type)
     {
     case AUG_STRING: return aug_set_bool(result, !aug_string_compare(lhs->str, rhs->str));
+    case AUG_ARRAY: return aug_set_bool(result, !aug_array_compare(lhs->array, rhs->array));
     default: break;
     }
     return false;
@@ -4430,7 +4459,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* container = aug_vm_pop(vm);
                 aug_value* index = aug_vm_pop(vm);
 
-                aug_value value;
+                aug_value value = aug_none();
                 if(!aug_get_element(container, index, &value))
                     aug_log_vm_error(vm, "Index out of range error"); // TODO: more descriptive
                 aug_decref(container);
@@ -4975,6 +5004,11 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
                 {
                     const aug_ir_operand operand = aug_ir_operand_from_bool(false);
                     aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_BOOL, operand);
+                    break;
+                }
+                case AUG_TOKEN_NONE:
+                {
+                    aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
                     break;
                 }
                 default:
