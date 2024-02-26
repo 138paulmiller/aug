@@ -1,34 +1,43 @@
+@echo off
 #/bin/sh
 clear 
 
-# Build the libs
+all=false;
+debug=false;
+tests=()
+for var in "$@"; do
+    if [ "$var" = "-all" ]; then   all=true;
+    elif [ "$var" = "-dbg" ]; then debug=true; 
+    else tests+=("--test ../examples/$var")
+    fi
+done
+
+echo Building libs...
 pushd .
 cd ../lib
 make clean 
 make
 popd
 
-# Build the test/dump
+echo Building tests...
 make clean 
-if [ "$1" == "-dbg" ]; then
+if ( $debug ); then
     make DEBUG=1
-    shift;
 else 
     make
 fi;
 
-# Copy libs to runtime dir
+# copy over libs
 yes | cp -rf ../lib/linux/. ../build
 cd ../build
 
-# exec
-if [ "$1" == "-all" ]; then
-
+if ( $all ); then
+    echo Running all tests
     valgrind  --main-stacksize=1048576 --tool=memcheck --leak-check=full --show-leak-kinds=all \
     ./aug_test --test_all $(ls ../examples/test_*)
 else 
+    echo Running test
     valgrind  --main-stacksize=1048576 --tool=memcheck --leak-check=full --show-leak-kinds=all \
-    ./aug_test --dump --verbose --test ../examples/$1
-
+    ./aug_test --dump --verbose $tests
 fi;
 

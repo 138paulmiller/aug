@@ -68,9 +68,6 @@ SOFTWARE. */
         - Also, to support this, external libs are loaded during IR generation pass to lookup function names
         - To avoid this, load libs in VM and use function names instead of index. 
         - Also, perhaps, use dot operator to check which library to search, or just have a single external func lookup? 
-
-    - Issues:
-        - Array literals returned from function are deref'd
 */
 #ifndef __AUG_HEADER__
 #define __AUG_HEADER__
@@ -3656,7 +3653,7 @@ void aug_decref(aug_value* value)
         break;
     }
 
-    value->type = AUG_NONE;
+    *value = aug_none();
 }
 
 void aug_incref(aug_value* value)
@@ -4730,7 +4727,7 @@ void aug_vm_execute(aug_vm* vm)
                 // push return value back onto stack, for callee
                 aug_value* top = aug_vm_push(vm);
                 if(ret_value != NULL && top != NULL)
-                    *top = *ret_value;
+                    aug_move(top, ret_value);
 
                 break;
             }

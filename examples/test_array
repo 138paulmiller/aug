@@ -50,7 +50,6 @@ var array2d = [
     [4, 40, 400, 4000, 40000],
 ];
 
-
 var total3 = 0;
 for row in array2d {
     for x in row {
