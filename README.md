@@ -12,7 +12,7 @@ Highly extendable scripting engine. Designed to augment existing applications.
 At least one source file must contain the implementation details for this project. 
 Meaning at least on c/cpp files must contain the following
 
-```
+```c
 #define AUG_IMPLEMENTATION
 #include "aug.h"
 ```
@@ -21,10 +21,13 @@ Meaning at least on c/cpp files must contain the following
 
 1. Initialize the Aug Virtual Machine (VM). To do this, first startup the VM
 
-`aug_vm* vm = aug_startup(NULL);`
+```c
+aug_vm* vm = aug_startup(NULL);
+```
 
 An optional error messaging handler can be provided as such
-```
+
+```c
 void on_error(const char* msg)
 {
     fprintf(stderr, "[ERROR]%s\t\n", msg);
@@ -34,8 +37,9 @@ aug_vm* vm = aug_startup(on_error);
 
 2. When finished using, cleanup the memory and state 
 
-`aug_shutdown(vm);`
-
+```c
+aug_shutdown(vm);
+```
 
 ### Executing script
 
@@ -43,7 +47,7 @@ aug_vm* vm = aug_startup(on_error);
 
 Here is an example of the minimal use case. Boot a VM instance, compiles, loads the script into the VM, executes, then shutsdown.
 
-```
+```c
 aug_vm* vm = aug_startup(NULL);
 aug_execute(vm, "path/to/file");
 aug_shutdown(vm);
@@ -59,7 +63,7 @@ To register these extensions, users must first define and implement a thin wrapp
 These external functions expect a function signature similar to the C **main** function signature (see code below).
 To bind your local function to a script function you must use the ***aug_register** function.
 
-```
+```c
 aug_value function(int argc, aug_value* args) { ... }
 aug_register(vm, "function", external_function);
 ```
@@ -80,7 +84,7 @@ Scripts retain their global state, and will keep references to any globals value
 
 Note: This example sssumes the VM has already been booted via **aug_startup**.
 
-```
+```c
 aug_script* script = aug_load(vm, "path/to/file.aug");
 ...
 aug_unload(script);
@@ -92,7 +96,8 @@ Note: This example assumes the VM has already been booted via **aug_startup**.
 Note: This example assumes that the *file.aug* contains function defintions for *Setup()* and *Update(delta)*
 
 Once you have a loaded script instance, you can call functions defined in the script using both **aug_call** and **aug_call_args**.
-```
+
+```c
 aug_script* script = aug_load(vm. "path/to/file.aug");
 
 aug_call(vm, script, "Setup");
@@ -110,63 +115,57 @@ A complete example for executing the first 30 integers of the fibonacci series
 This example makes use of most of the libraries FFI features, allowing users to define and call functions in both languages.
 
 **fib.aug**
-```
+
+```c
 func fibonacci(n) {
-    var a = 0;
-    var b = 1;
-    var c = 0;
-    var sum = 0;
-    var count = n;
+	var a = 0;
+	var b = 1;
+	var c = 0;
+	var sum = 0;
+	var count = n;
 	while count > 0 {
 		count = count - 1;
 		a = b;
 		b = sum;
-	 	sum = a + b;
-	  	print(sum);
-    }
+		sum = a + b;
+		print(sum);
+	}
 }
 ```
 
 **main.c**
-```
+
+```c
 aug_value print(int argc, aug_value* args)
 {
-    if(argc == 1)
-    {
+	if(argc == 1)
+	{
 		aug_value value = args[0];
 		if(value.type == AUG_INT)
 			printf("%d", value.i);
-    }                  
+	}                  
 }
 
 int main(int argc, char** argv)
 {
-	// Boot VM
 	aug_vm* vm = aug_startup(NULL);
-	// Register print extension
 	aug_register(vm, "print", print);
-	// Load the script
-	aug_script* script = aug_load(vn, "fib.aug");
-	// Call fib function
+	aug_script* script = aug_load(vm, "fib.aug");
 	aug_value args[] = { aug_create_int(30) };
 	aug_call_args(vm, script, "fib", args);
-	// Unload the script
 	aug_unload(script);
-	// Shutdown VM
 	aug_shutdown(vm);
-	return 0;
+ 	return 0;
 }
 ```
 
 Note: If these scripts are intended to have a long lifecycle, keeping a handle on the script and VM will allow users to contiuously update and execute the script. 
-Something like this
-```
-	// Boot VM
+Something like this:
+
+```c
 	aug_vm* vm = aug_startup(NULL);
-	// Register print extension
 	aug_register(vm, "print", print);
-	// Load the script
-	aug_script* script = aug_load(vn, "entity.aug");
+	aug_script* script = aug_load(vm, "entity.aug");
 	bool running = true;
 	while(running)
 	{
@@ -174,9 +173,7 @@ Something like this
 		aug_call_args(vm, script, "update", args);
 		...
 	}
-	// Unload the script
 	aug_unload(script);
-	// Shutdown VM
 	aug_shutdown(vm);
 ```
 
@@ -186,9 +183,9 @@ There is a special keyword, **use** that allows users to load precompiled librar
 In the script calling `use example;` will search for a dynamic library name example. As of now, it will look for the library in the applications working directory. 
 
 To create the example lib, users must include the aug header and define a function that registers all the lib extensions. 
-`AUG_LIBCALL void aug_register_lib(aug_vm* vm)` is the expected function signature that will be loaded by the **use** statement.
+AUG expect the library function entry point to be named aug_register_lib. Below is standard example of a library that will be loaded by the **use** statement.
 
-```
+```c
 #include "aug.h"
 AUG_LIBCALL void aug_register_lib(aug_vm* vm)
 {
@@ -200,8 +197,8 @@ Compiling this is OS specific, for an example library used by the test utility s
 
 ### Demo
 
-For examples of use cases see the test cases [here] https://github.com/138paulmiller/aug/test
-For a working demo of misc demos, see https://github.com/138paulmiller/aug_demo
+- For examples of use cases see the test cases [here] https://github.com/138paulmiller/aug/test
+- For a working demo of misc demos, see https://github.com/138paulmiller/aug_demo
 
 ### Syntax
 
