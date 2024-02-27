@@ -16,7 +16,7 @@ done
 
 echo Building libs...
 pushd .
-cd ../lib
+cd lib
 make clean 
 make
 popd
@@ -30,8 +30,8 @@ else
 fi;
 
 # copy over libs
-yes | cp -rf ../lib/linux/. ../build
-cd ../build
+yes | cp -rf lib/linux/. build
+cd build
 
 if ( $all ); then
     echo Running all tests
