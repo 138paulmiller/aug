@@ -4,13 +4,13 @@ clear
 
 script_path=$(pwd)/scripts
 
-all=false;
+all=true;
 debug=false;
 tests=()
+
 for var in "$@"; do
-    if [ "$var" = "-all" ]; then   all=true;
-    elif [ "$var" = "-dbg" ]; then debug=true; 
-    else tests+=("--test $script_path/$var")
+    if [ "$var" = "-dbg" ]; then debug=true; 
+    else all=false; tests+=("--test $script_path/$var");
     fi
 done
 
