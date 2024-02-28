@@ -261,7 +261,7 @@ void aug_test_native(aug_vm* vm)
 		args[0] = aug_create_int(5);
 
 		aug_value value = aug_call_args(vm, script, "fibonacci", 1, &args[0]);
-		
+
 		bool success = value.i == 5;
 		//bool success = value.i == 832040;
 		const std::string message = "fibonacci = " + to_string(value);

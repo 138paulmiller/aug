@@ -4781,7 +4781,7 @@ aug_value aug_vm_execute_from_frame(aug_vm* vm, int func_addr, int argc, aug_val
     aug_vm_execute(vm);
 
     aug_value ret_value = aug_none();
-    if(vm->stack_index > 1)
+    if(vm->stack_index >= 1)
     {
         // If stack is valid, get the pushed value
         aug_value* top = aug_vm_pop(vm);
