@@ -63,11 +63,6 @@ SOFTWARE. */
     Note:
     - Locally defined functions can be supported, but will require closures to be implemented. See the aug_parse_stmt(aug_lexer* lexer, bool is_block)
         - To define closures, pass all the reference variables on the stack and re-add to the functions local symtable. Adjust the decstack well
-    - As of now, external functions are referenced by their index. 
-        - So external functions must be registered when the script is compiled, and executing the compiled bytecode must be under the same environment.
-        - Also, to support this, external libs are loaded during IR generation pass to lookup function names
-        - To avoid this, load libs in VM and use function names instead of index. 
-        - Also, perhaps, use dot operator to check which library to search, or just have a single external func lookup? 
 */
 #ifndef __AUG_HEADER__
 #define __AUG_HEADER__
@@ -80,11 +75,6 @@ extern "C" {
 #ifndef AUG_STACK_SIZE
 #define AUG_STACK_SIZE (1024 * 16)
 #endif//AUG_STACK_SIZE
-
-// Max number of user-provided external functions
-#ifndef AUG_EXTENSION_SIZE
-#define AUG_EXTENSION_SIZE 64
-#endif//AUG_EXTENSION_SIZE
 
 // Threshold of the nearly equal operator
 #ifndef AUG_APPROX_THRESHOLD
@@ -110,7 +100,6 @@ extern "C" {
 #define AUG_LIBCALL
 #endif
 
-
 #endif//AUG_REGISTER_LIB_FUNC
 
 #include <stdlib.h>
@@ -124,6 +113,7 @@ extern "C" {
 #endif
 
 // Data structures
+typedef struct aug_vm aug_vm;
 typedef struct aug_value aug_value;
 typedef struct aug_hashtable aug_hashtable;
 typedef struct aug_container aug_container;
@@ -236,8 +226,13 @@ typedef aug_value /*return*/(aug_extension_func)(int argc, aug_value* /*args*/);
 typedef struct aug_extension
 {
     aug_extension_func* func;
-    aug_string* name;
 } aug_extension;
+
+// Handle to a loaded extension lib
+typedef void* aug_lib_handle;
+
+// Type signature for external library entry points
+typedef void (*aug_register_lib_func)(aug_vm* /*vm*/);
 
 // Running instance of the virtual machine
 typedef struct aug_vm
@@ -253,13 +248,15 @@ typedef struct aug_vm
     int base_index;  // Current frame stack offset (EBP)
     int arg_count;   // Current argument count expected when entering a call frame
 
-    // Extensions are external functions are native functions that can be called from scripts   
-    // This external function map contains the user's registered functions. 
+    // Extensions are extension functions are native functions that can be called from scripts   
+    // This extension function map contains the user's registered functions. 
     // Use aug_register/aug_unregister to modify these fields
-    aug_container* extensions;      // aug_extension
+    aug_hashtable* extensions;      // aug_extension
+    aug_container* libs;            // loaded library handles for the registered extensions
+
     aug_container* debug_symbols;   // weak pointer to script aug_debug_symbols
-    aug_container* libs;            // loaded library handles
 } aug_vm;
+
 
 // VM API ----------------------------------------- VM API ---------------------------------------------------- VM API//
 
@@ -267,9 +264,6 @@ typedef struct aug_vm
 aug_vm* aug_startup(aug_error_func* on_error);
 void aug_shutdown(aug_vm* vm);
 
-// Extend the script functions via external functions. 
-// NOTE: Changing the registered functions will require a script recompilation. 
-//       Can not guarantee the external function call will work, as bytecode uses function index. 
 void aug_register(aug_vm* vm, const char* func_name, aug_extension_func* func);
 void aug_unregister(aug_vm* vm, const char* func_name);
 
@@ -356,17 +350,6 @@ aug_iterator* aug_iterator_decref(aug_iterator* iterator);
 void aug_iterator_incref(aug_iterator* iterator);
 bool aug_iterator_next(aug_iterator* iterator);
 bool aug_iterator_get(aug_iterator* iterator, aug_value* out_element);
-
-
-// LIBCALL API ---------------------------------- LIBCALL API ------------------------------------------- LIBCALL API//
-
-typedef size_t aug_lib_handle;
-
-// Type signature for external library entry points
-typedef void (*aug_register_lib_func)(aug_vm* /*vm*/);
-
-void aug_lib_load(aug_vm* vm, const char* libname);
-void aug_lib_unload(aug_vm* vm, aug_lib_handle handle);
 
 #ifdef __cplusplus
 }
@@ -2770,8 +2753,7 @@ aug_ast* aug_parse(aug_input* input)
 	AUG_OPCODE(CALL_EXT)          \
 	AUG_OPCODE(ENTER_FUNC)        \
 	AUG_OPCODE(RETURN_FUNC)       \
-    AUG_OPCODE(DEC_STACK)         \
-
+    AUG_OPCODE(IMPORT_LIB)        
 
 enum aug_opcodes
 { 
@@ -3170,7 +3152,7 @@ static inline void aug_ir_push_scope(aug_ir* ir)
 static inline void aug_ir_pop_scope(aug_ir* ir)
 {
     const aug_ir_operand delta = aug_ir_operand_from_int(aug_ir_current_scope_local_offset(ir));
-    aug_ir_add_operation_arg(ir, AUG_OPCODE_DEC_STACK, delta);
+    aug_ir_add_operation_arg(ir, AUG_OPCODE_POP, delta);
 
     aug_ir_frame* frame = aug_ir_current_frame(ir);
     aug_ir_scope scope = aug_container_pop_type(aug_ir_scope, frame->scope_stack);
@@ -4273,6 +4255,45 @@ void aug_vm_save_script(aug_vm* vm, aug_script* script)
     }
 }
 
+void aug_vm_lib_load(aug_vm* vm, const char* libname)
+{
+#if _WIN32
+#elif __linux
+    char libpath[1024];
+    snprintf(libpath, sizeof(libpath), "./%s.so", libname); //seach locally
+
+    void* handle = dlopen (libpath, RTLD_LAZY | RTLD_GLOBAL);
+    if (handle == NULL) 
+    {
+        char* error = dlerror();
+        aug_log_error(vm->error_func, "Failed to open library %s. %s", libname, error);
+        return;
+    }
+
+    aug_register_lib_func register_lib = (aug_register_lib_func)dlsym(handle, AUG_REGISTER_LIB_FUNC);
+    char* error = dlerror();
+    if (error != NULL)
+    {
+        aug_log_error(vm->error_func, "Library %s failed to setup. %s", libname, error);
+        dlclose(handle);
+        return;
+    }
+
+    register_lib(vm);
+    aug_container_push_type(aug_lib_handle, vm->libs, (aug_lib_handle)handle);
+#endif  
+}
+
+void aug_vm_lib_unload(aug_vm* vm, aug_lib_handle handle)
+{
+    if(handle == 0)
+        return;
+#if _WIN32
+#elif __linux
+    dlclose((void*)handle);
+#endif
+}
+
 #define AUG_OPCODE_UNOP(opfunc, str)                                                \
 {                                                                                   \
     aug_value* arg = aug_vm_pop(vm);                                                \
@@ -4332,7 +4353,10 @@ void aug_vm_execute(aug_vm* vm)
             }
             case AUG_OPCODE_POP:
             {
-                aug_decref(aug_vm_pop(vm));
+                int delta = aug_vm_read_int(vm);
+                int i;
+                for(i = 0; i < delta; ++i)
+                    aug_decref(aug_vm_pop(vm));
                 break;
             }
             case AUG_OPCODE_PUSH_NONE:
@@ -4551,14 +4575,6 @@ void aug_vm_execute(aug_vm* vm)
                 aug_decref(cond);
                 break;
             }
-            case AUG_OPCODE_DEC_STACK:
-            {
-                int delta = aug_vm_read_int(vm);
-                int i;
-                for(i = 0; i < delta; ++i)
-                    aug_decref(aug_vm_pop(vm));
-                break;
-            }
             case AUG_OPCODE_CALL_FRAME:
             {
                 const int ret_addr = aug_vm_read_int(vm);
@@ -4623,21 +4639,23 @@ void aug_vm_execute(aug_vm* vm)
             }
             case AUG_OPCODE_CALL_EXT:
             {
-                aug_value* func_index_value = aug_vm_pop(vm);
-                if(func_index_value == NULL || func_index_value->type != AUG_INT)
+                aug_value* func_name_value = aug_vm_pop(vm);
+                if(func_name_value == NULL || func_name_value->type != AUG_STRING)
                 {
-                    aug_decref(func_index_value);
-                    aug_log_vm_error(vm, "External Function call expected function index to be pushed on stack");
+                    aug_decref(func_name_value);
+                    aug_log_vm_error(vm, "Extension function call expected function name to be pushed on stack");
                     break;
                 }
 
-                const int func_index = func_index_value->i;
-                // Check function call
-                aug_extension* extension = aug_container_ptr_type(aug_extension, vm->extensions, func_index);
-                if (extension == NULL || extension->func == NULL)
+                const char* func_name = func_name_value->str->buffer;
+
+                // TODO: room for optimization. Perhaps use a hashmap for quicker lookup if there are thousands of ext functions ?
+                // Check if the symbol is a registered extension function
+                aug_extension* extension = aug_hashtable_ptr_type(aug_extension, vm->extensions, func_name);
+                if(extension == NULL || extension->func == NULL)
                 {
-                    aug_decref(func_index_value);
-                    aug_log_vm_error(vm, "External Function at index %d not registered", func_index);
+                    aug_decref(func_name_value);
+                    aug_log_vm_error(vm, "Extension function %s not registered", func_name_value->str->buffer);
                     break;
                 }
 
@@ -4656,11 +4674,11 @@ void aug_vm_execute(aug_vm* vm)
                     }
                 }
 
-                // Call the external function. Move return value on to top of stack
+                // Call the function, Move return value on to top of stack
                 aug_value ret_value = extension->func(arg_count, args);
 
                 // Cleanup argumentsl
-                aug_decref(func_index_value);
+                aug_decref(func_name_value);
                 for (i = 0; i < arg_count; ++i)
                     aug_decref(&args[i]);
                 AUG_FREE(args);
@@ -4731,6 +4749,11 @@ void aug_vm_execute(aug_vm* vm)
 
                 break;
             }
+            case AUG_OPCODE_IMPORT_LIB:
+            {
+                aug_vm_lib_load(vm, aug_vm_read_bytes(vm));
+                break;
+            }
             default:
                 assert(0);
             break;
@@ -4745,11 +4768,11 @@ void aug_vm_execute(aug_vm* vm)
             printf("%s %d: %s ", (vm->stack_index-1) == i ? ">" : " ", i, aug_type_label(&val));
             switch(val.type)
             {
-                case AUG_INT: printf("%d", val.i); break;
-                case AUG_FLOAT: printf("%f", val.f); break;
-                case AUG_STRING: printf("%s", val.str->buffer); break;
-                case AUG_BOOL: printf("%s", val.b ? "true" : "false"); break;
-                case AUG_CHAR: printf("%c", val.c); break;
+                case AUG_INT:      printf("%d", val.i); break;
+                case AUG_FLOAT:    printf("%f", val.f); break;
+                case AUG_STRING:   printf("%s", val.str->buffer); break;
+                case AUG_BOOL:     printf("%s", val.b ? "true" : "false"); break;
+                case AUG_CHAR:     printf("%c", val.c); break;
                 default: break;
             }
             printf("\n");
@@ -4791,53 +4814,11 @@ aug_value aug_vm_execute_from_frame(aug_vm* vm, int func_addr, int argc, aug_val
     return ret_value;
 }
 
-// LIBCALL ============================================== LIBCALL ========================================== LIBCALL // 
-
-void aug_lib_load(aug_vm* vm, const char* libname)
-{
-#if _WIN32
-#elif __linux
-    char libpath[1024];
-    snprintf(libpath, sizeof(libpath), "./%s.so", libname); //seach local to exe
-
-    void* handle = dlopen (libpath, RTLD_LAZY | RTLD_GLOBAL);
-    if (handle == NULL) 
-    {
-        char* error = dlerror();
-        aug_log_error(vm->error_func, "Failed to open library %s. %s", libname, error);
-        return;
-    }
-
-    aug_register_lib_func register_lib = (aug_register_lib_func)dlsym(handle, AUG_REGISTER_LIB_FUNC);
-    char* error = dlerror();
-    if (error != NULL)
-    {
-        aug_log_error(vm->error_func, "Library %s failed to setup. %s", libname, error);
-        dlclose(handle);
-        return;
-    }
-
-    register_lib(vm);
-    aug_container_push_type(aug_lib_handle, vm->libs, (aug_lib_handle)handle);
-#endif  
-}
-
-void aug_lib_unload(aug_vm* vm, aug_lib_handle handle)
-{
-    if(handle == 0)
-        return;
-#if _WIN32
-#elif __linux
-    dlclose((void*)handle);
-#endif
-}
-
-
 // COMPILER ============================================== COMPILER ========================================== COMPILER // 
 
-void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir);
+void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir);
 
-void aug_generate_ir_prepass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
+void aug_generate_ir_prepass(const aug_ast* node, aug_ir* ir)
 {
     // This is a statement prepass. Will gather globals and handle use calls
     if(node == NULL || !ir->valid)
@@ -4855,7 +4836,7 @@ void aug_generate_ir_prepass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
         {
             int i;
             for(i = 0; i < children_size; ++ i)
-                aug_generate_ir_prepass(vm, children[i], ir);
+                aug_generate_ir_prepass(children[i], ir);
             break;
         }
         case AUG_AST_STMT_DEFINE_FUNC: 
@@ -4876,13 +4857,14 @@ void aug_generate_ir_prepass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
         }
         case AUG_AST_USE_LIB:
         {
-            aug_lib_load(vm, token_data->buffer);
+            const aug_ir_operand operand = aug_ir_operand_from_str(token_data->buffer);
+            aug_ir_add_operation_arg(ir, AUG_OPCODE_IMPORT_LIB, operand);
             break;  
         } 
         case AUG_AST_USE_SCRIPT:
         {
             // TODO: open and parse script. Add bytecode and globals.
-            aug_input* input = aug_input_open(token_data->buffer, vm->error_func);
+            aug_input* input = aug_input_open(token_data->buffer, ir->input->error_func);
             if (input == NULL)
                 break;
 
@@ -4897,7 +4879,8 @@ void aug_generate_ir_prepass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             aug_input* prev_input = ir->input;
             ir->input = input;
 
-            aug_generate_ir_pass(vm, root, ir);
+            // compile inline with current ir state
+            aug_generate_ir_pass(root, ir);
 
             aug_input_close(input);
             aug_ast_delete(root);
@@ -4911,7 +4894,7 @@ void aug_generate_ir_prepass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
     }
 }
 
-void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
+void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
 {
     if(node == NULL || !ir->valid)
         return;
@@ -4926,18 +4909,18 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
         case AUG_AST_ROOT:
         {
             // gather globals, uses etc..
-            aug_generate_ir_prepass(vm, node, ir);
+            aug_generate_ir_prepass(node, ir);
 
             int i;
             for(i = 0; i < children_size; ++ i)
-                aug_generate_ir_pass(vm, children[i], ir);
+                aug_generate_ir_pass(children[i], ir);
             break;
         }
         case AUG_AST_BLOCK: 
         {
             int i;
             for(i = 0; i < children_size; ++ i)
-                aug_generate_ir_pass(vm, children[i], ir);
+                aug_generate_ir_pass(children[i], ir);
 
             break;
         }
@@ -5048,7 +5031,7 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
         {
             assert(children_size == 1); // token [0]
 
-            aug_generate_ir_pass(vm, children[0], ir);
+            aug_generate_ir_pass(children[0], ir);
 
             switch (token.id)
             {
@@ -5065,8 +5048,8 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
 
             aug_token_id id = token.id;
             if(id != AUG_TOKEN_ASSIGN) // special condition, assignment handles lhs via the addr/element
-                aug_generate_ir_pass(vm, children[0], ir); // LHS
-            aug_generate_ir_pass(vm, children[1], ir); // RHS
+                aug_generate_ir_pass(children[0], ir); // LHS
+            aug_generate_ir_pass(children[1], ir); // RHS
 
             switch (token.id)
             {
@@ -5136,8 +5119,8 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
                 else if(var_node->id == AUG_AST_ELEMENT)
                 {
                     assert(var_node->children_size == 2); // 0[1]
-                    aug_generate_ir_pass(vm, var_node->children[0], ir); // push index expr
-                    aug_generate_ir_pass(vm, var_node->children[1], ir); // push container                    
+                    aug_generate_ir_pass(var_node->children[0], ir); // push index expr
+                    aug_generate_ir_pass(var_node->children[1], ir); // push container                    
                     aug_ir_add_operation(ir, AUG_OPCODE_LOAD_ELEMENT);
                 }
             }
@@ -5147,7 +5130,7 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
         {
             int i;
             for(i = children_size - 1; i >= 0; --i)
-                aug_generate_ir_pass(vm, children[i], ir);
+                aug_generate_ir_pass(children[i], ir);
 
             const aug_ir_operand count_operand = aug_ir_operand_from_int(children_size);
             aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_ARRAY, count_operand);
@@ -5157,7 +5140,7 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
         {
             int i;
             for (i = children_size - 1; i >= 0; --i)
-                aug_generate_ir_pass(vm, children[i], ir);
+                aug_generate_ir_pass(children[i], ir);
 
             const aug_ir_operand count_operand = aug_ir_operand_from_int(children_size);
             aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_MAP, count_operand);
@@ -5166,15 +5149,15 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
         case AUG_AST_MAP_PAIR:
         {
             assert(children_size == 2); // 0[1]
-            aug_generate_ir_pass(vm, children[0], ir); // push key
-            aug_generate_ir_pass(vm, children[1], ir); // push value
+            aug_generate_ir_pass(children[0], ir); // push key
+            aug_generate_ir_pass(children[1], ir); // push value
             break;
         }
         case AUG_AST_ELEMENT:
         {
             assert(children_size == 2); // 0[1]
-            aug_generate_ir_pass(vm, children[0], ir); // push index expr
-            aug_generate_ir_pass(vm, children[1], ir); // push container
+            aug_generate_ir_pass(children[0], ir); // push index expr
+            aug_generate_ir_pass(children[1], ir); // push container
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_ELEMENT);
             break;
         }
@@ -5182,12 +5165,12 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
         {
             int i;
             for( i = 0; i < children_size; ++i)
-                aug_generate_ir_pass(vm, children[i], ir);
+                aug_generate_ir_pass(children[i], ir);
             break;
         }
         case AUG_AST_DISCARD:
         {
-            aug_ir_add_operation(ir, AUG_OPCODE_POP);
+            aug_ir_add_operation_arg(ir, AUG_OPCODE_POP, aug_ir_operand_from_int(1));
             break;
         }
         case AUG_AST_STMT_DEFINE_VAR:
@@ -5195,7 +5178,7 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             assert(token_data != NULL);
 
             if(children_size == 1) // token = [0]
-                aug_generate_ir_pass(vm, children[0], ir);
+                aug_generate_ir_pass(children[0], ir);
             else
                 aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
 
@@ -5216,7 +5199,7 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             assert(children_size == 2); //if([0]) {[1]}
 
             // Evaluate expression. 
-            aug_generate_ir_pass(vm, children[0], ir);
+            aug_generate_ir_pass(children[0], ir);
 
             //Jump to end if false
             const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
@@ -5224,7 +5207,7 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
 
             // True block
             aug_ir_push_scope(ir);
-            aug_generate_ir_pass(vm, children[1], ir);
+            aug_generate_ir_pass(children[1], ir);
             aug_ir_pop_scope(ir);
 
             const size_t end_block_addr = ir->bytecode_offset;
@@ -5239,7 +5222,7 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             assert(children_size == 3); //if([0]) {[1]} else {[2]}
 
             // Evaluate expression. 
-            aug_generate_ir_pass(vm, children[0], ir);
+            aug_generate_ir_pass(children[0], ir);
 
             //Jump to else if false
             const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
@@ -5247,7 +5230,7 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
 
             // True block
             aug_ir_push_scope(ir);
-            aug_generate_ir_pass(vm, children[1], ir);
+            aug_generate_ir_pass(children[1], ir);
             aug_ir_pop_scope(ir);
 
             //Jump to end after true
@@ -5256,7 +5239,7 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
 
             // Else block
             aug_ir_push_scope(ir);
-            aug_generate_ir_pass(vm, children[2], ir);
+            aug_generate_ir_pass(children[2], ir);
             aug_ir_pop_scope(ir);
 
             // Tag end address
@@ -5275,12 +5258,12 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             aug_ir_begin_loop(ir);
 
             // Evaluate expression. 
-            aug_generate_ir_pass(vm, children[0], ir);
+            aug_generate_ir_pass(children[0], ir);
             aug_ir_check_loop(ir);
 
             // Loop block
             aug_ir_push_scope(ir);
-            aug_generate_ir_pass(vm, children[1], ir);
+            aug_generate_ir_pass(children[1], ir);
             aug_ir_pop_scope(ir);
 
             aug_ir_end_loop(ir);
@@ -5295,7 +5278,7 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             aug_ir_scope* scope = aug_ir_current_scope(ir);
             int it_offset = scope->stack_offset++;
             it_offset = aug_ir_current_frame_local_offset(ir, it_offset, 0);
-            aug_generate_ir_pass(vm, children[1], ir);
+            aug_generate_ir_pass(children[1], ir);
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_ITERATOR);
 
             // Top of the loop.
@@ -5318,15 +5301,14 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             aug_ir_add_operation_arg(ir, AUG_OPCODE_LOAD_LOCAL, aug_ir_operand_from_symbol(var_symbol));
 
             // Loop block
-            aug_generate_ir_pass(vm, children[2], ir);
+            aug_generate_ir_pass(children[2], ir);
 
             aug_ir_pop_scope(ir);
 
             aug_ir_end_loop(ir);
 
-            // pop the temporary iterator and iteration temp slot to restore stack
-            aug_ir_add_operation(ir, AUG_OPCODE_POP); 
-            aug_ir_add_operation(ir, AUG_OPCODE_POP); 
+            // pop the temporary iterator and iteration temp slot to restore stack (2)
+            aug_ir_add_operation_arg(ir, AUG_OPCODE_POP, aug_ir_operand_from_int(2));
 
             scope = aug_ir_current_scope(ir);
             scope->stack_offset--; // remove iterator from stack
@@ -5360,7 +5342,7 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
                     // Push arguments onto stack
                     int i;
                     for(i = 0; i < children_size; ++ i)
-                        aug_generate_ir_pass(vm, children[i], ir);
+                        aug_generate_ir_pass(children[i], ir);
 
                     // TODO: Push arg count, and have the function body check that arg count matches in the vm runtime
                     aug_ir_operand arg_count = aug_ir_operand_from_int(children_size);
@@ -5391,30 +5373,12 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
                 break;
             }
 
-            // Check if the symbol is a registered extension function
-            bool found = false;
-            size_t func_index;
-            for(func_index = 0; func_index < vm->extensions->length; ++func_index)
-            {
-                aug_extension* extension = aug_container_ptr_type(aug_extension, vm->extensions, func_index);
-                if(extension->func != NULL && aug_string_compare(extension->name, token_data))
-                {
-                    found = true;
-                    break;
-                }
-            }
-
-            if(!found)
-            {
-                ir->valid = false;
-                aug_log_input_error_at(ir->input, &token.pos, "Function %s not defined", token_data->buffer);
-                break;
-            }
-
             int i;
             for(i = arg_count - 1; i >= 0; --i)
-                aug_generate_ir_pass(vm, children[i], ir);
-            aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_INT, aug_ir_operand_from_int(func_index));
+                aug_generate_ir_pass(children[i], ir);
+
+            const char* func_name = token_data->buffer;
+            aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_STRING, aug_ir_operand_from_str(func_name));
             aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL_EXT, aug_ir_operand_from_int(arg_count));
             break;
         }
@@ -5429,10 +5393,10 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             // Push arguments onto stack
             int i;
             for(i = 1; i < children_size; ++i)
-                aug_generate_ir_pass(vm, children[i], ir);
+                aug_generate_ir_pass(children[i], ir);
 
             // First arg is the value of the function to call 
-            aug_generate_ir_pass(vm, children[0], ir);
+            aug_generate_ir_pass(children[0], ir);
 
             // TODO: Push arg count, and have the function body check that arg count matches in the vm runtime
             aug_ir_add_operation_arg(ir, AUG_OPCODE_ARG_COUNT, aug_ir_operand_from_int(arg_count));
@@ -5448,7 +5412,7 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
             const aug_ir_operand offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
             if(children_size == 1) //return [0];
             {
-                aug_generate_ir_pass(vm, children[0], ir);
+                aug_generate_ir_pass(children[0], ir);
                 aug_ir_add_operation_arg(ir, AUG_OPCODE_RETURN_FUNC, offset);
             }
             else
@@ -5468,7 +5432,7 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
         {
             int i;
             for(i = 0; i < children_size; ++ i)
-                aug_generate_ir_pass(vm, children[i], ir);
+                aug_generate_ir_pass(children[i], ir);
             break;
         }
         case AUG_AST_STMT_DEFINE_FUNC:
@@ -5496,7 +5460,7 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
 
             // Parameter frame
             aug_ir_push_scope(ir);
-            aug_generate_ir_pass(vm, children[0], ir);
+            aug_generate_ir_pass(children[0], ir);
 
             aug_ir_add_debug_symbol(ir, aug_ir_get_symbol(ir, token_data));
 
@@ -5506,7 +5470,7 @@ void aug_generate_ir_pass(aug_vm* vm, const aug_ast* node, aug_ir* ir)
 
             // Function block frame
             aug_ir_push_frame(ir, param_count);
-            aug_generate_ir_pass(vm, children[1], ir);
+            aug_generate_ir_pass(children[1], ir);
 
             // Ensure there is a return
             if(aug_ir_last_operation(ir)->opcode != AUG_OPCODE_RETURN_FUNC)
@@ -5539,7 +5503,7 @@ aug_ir* aug_generate_ir(aug_vm* vm, aug_input* input, aug_ast* root)
     aug_ir* ir = aug_ir_new(input);
 
     aug_ir_push_frame(ir, 0);  // push global frame
-    aug_generate_ir_pass(vm, root, ir);
+    aug_generate_ir_pass(root, ir);
     
     // Signal to VM to exit
     aug_ir_add_operation(ir, AUG_OPCODE_EXIT);
@@ -6297,7 +6261,7 @@ aug_vm* aug_startup(aug_error_func* error_func)
     aug_vm_startup(vm);
 
     // Initialize global vm state, non script context sensitive
-    vm->extensions = aug_container_new_type(aug_extension, 16);
+    vm->extensions = aug_hashtable_new_type(aug_extension);
     vm->libs = aug_container_new_type(aug_lib_handle, 1);
     vm->error_func = error_func;
     return vm;
@@ -6306,61 +6270,34 @@ aug_vm* aug_startup(aug_error_func* error_func)
 void aug_shutdown(aug_vm* vm)
 {
     // Deinitialize global vm state, non script context sensitive
-    
     // Unregister all extensions and lib extensions
 
     size_t i;
     for (i = 0; i < vm->libs->length; ++i)
     {
         aug_lib_handle handle = aug_container_at_type(aug_lib_handle, vm->libs, i);
-        aug_lib_unload(vm, handle);
+        aug_vm_lib_unload(vm, handle);
     }
     vm->libs = aug_container_decref(vm->libs);
-
-    for (i = 0; i < vm->extensions->length; ++i)
-    {
-        aug_extension* extension = aug_container_ptr_type(aug_extension, vm->extensions, i);
-        extension->name = aug_string_decref(extension->name);
-    }
-    vm->extensions = aug_container_decref(vm->extensions);
+    vm->extensions = aug_hashtable_decref(vm->extensions);
 
     aug_vm_shutdown(vm);
     AUG_FREE(vm);
 }
 
-void aug_register(aug_vm* vm, const char* name, aug_extension_func* func)
+void aug_register(aug_vm* vm, const char* func_name, aug_extension_func* extension_func)
 {
-    size_t i;
-    for (i = 0; i < vm->extensions->length; ++i)
-    {
-        aug_extension* extension = aug_container_ptr_type(aug_extension, vm->extensions, i);
-        if (extension->func == NULL)
-        {
-            extension->func = func;
-            extension->name = aug_string_create(name);
-            return;
-        }
-    }
-
-    aug_extension new_extension;
-    new_extension.func = func;
-    new_extension.name = aug_string_create(name);
-    aug_container_push_type(aug_extension, vm->extensions, new_extension);
+    if(aug_hashtable_get(vm->extensions, func_name) != 0)
+        aug_log_vm_error(vm, "Failed to register extension Function %s. Already registered!", func_name);
+    aug_extension* extension = aug_hashtable_insert_type(aug_extension, vm->extensions, func_name);
+    if(extension != NULL)
+        extension->func = extension_func;
 }
 
 void aug_unregister(aug_vm* vm, const char* func_name)
 {
-    size_t i;
-    for (i = 0; i < vm->extensions->length; ++i)
-    {
-        aug_extension* extension = aug_container_ptr_type(aug_extension, vm->extensions, i);
-        if (aug_string_compare_bytes(extension->name, func_name))
-        {
-            extension->func = NULL;
-            extension->name = aug_string_decref(extension->name);
-            break;
-        }
-    }
+    if(!aug_hashtable_remove(vm->extensions, func_name))
+        aug_log_vm_error(vm, "Failed to unregister extension Function %s. Not registered!", func_name);
 }
 
 aug_script* aug_compile(aug_vm* vm, const char* filename)
