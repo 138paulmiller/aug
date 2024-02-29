@@ -152,7 +152,7 @@ int main(int argc, char** argv)
 	aug_register(vm, "print", print);
 	aug_script* script = aug_load(vm, "fib.aug");
 	aug_value args[] = { aug_create_int(30) };
-	aug_call_args(vm, script, "fib", args);
+	aug_call_args(vm, script, "fib", 1, args);
 	aug_unload(script);
 	aug_shutdown(vm);
  	return 0;
@@ -170,7 +170,7 @@ Something like this:
 	while(running)
 	{
 		aug_value args[] = { aug_create_int(time(NULL)) };
-		aug_call_args(vm, script, "update", args);
+		aug_call_args(vm, script, "update", 1, args);
 		...
 	}
 	aug_unload(script);

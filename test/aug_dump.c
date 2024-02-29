@@ -2,7 +2,6 @@
 #define AUG_LOG_VERBOSE
 #define AUG_OPCODE_LABELS
 #include <aug.h>
-#include <string>
 
 void dump_token(aug_token* token)
 {
@@ -18,7 +17,7 @@ void dump_lexer(const char* filename)
 	return;
 	printf("Tokens \n");
 
-	aug_input* input = aug_input_open(filename, nullptr);
+	aug_input* input = aug_input_open(filename, NULL);
 
 	aug_lexer* lexer = aug_lexer_new(input);
 	while (lexer && aug_lexer_move(lexer) && aug_lexer_curr(lexer).id != AUG_TOKEN_END)
@@ -33,24 +32,27 @@ void dump_lexer(const char* filename)
 	printf("End Tokenizing File: %s\n", filename);
 }
 
-void dump_ast_tree(const aug_ast* node, std::string prefix, bool is_leaf)
+void dump_ast_tree(const aug_ast* node, aug_string* prev_prefix, bool is_leaf)
 {
 	static const char* space = "  ";// char(192);
 	static const char* pipe = "| ";// char(192);
 	static const char* pipe_junction = "|-";//char(195);
 	static const char* pipe_end = "\\-";//char(179);
 
-	printf("%s", prefix.c_str());
+	aug_string* prefix = aug_string_create(prev_prefix->buffer);
+	printf("%s", prefix->buffer);
 
 	if(is_leaf)
 	{
 		printf("%s", pipe_end);
-		prefix += space;
+		aug_string_append_bytes(prefix, space, strlen(pipe));
+		//prefix += space;
 	}
 	else 
 	{
 		printf("%s", pipe_junction);
-		prefix += pipe;
+		aug_string_append_bytes(prefix, pipe, strlen(pipe));
+		//prefix += pipe;
 	}
 
 	aug_token token = node->token;
@@ -183,15 +185,17 @@ void dump_ast_tree(const aug_ast* node, std::string prefix, bool is_leaf)
 			else
 				printf("%s\n", token.data->buffer);
 			break;
-
 	}
+	aug_string_decref(prefix);
 }
 
 void dump_ast(aug_ast* root)
 {
-	if (root == nullptr)
+	if (root == NULL)
 		return;
-	dump_ast_tree(root, "", false);
+	aug_string* prefix = aug_string_create("");
+	dump_ast_tree(root, prefix, false);
+	aug_string_decref(prefix);
 }
 
 void dump_ir(aug_ir* ir)

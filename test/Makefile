@@ -1,9 +1,9 @@
 OUT_DIR = build
 TARGET = $(OUT_DIR)/aug_test
-SRC = $(wildcard *.cpp)
-CC = g++
+SRC = $(wildcard *.c)
+CC = gcc
 CFLAGS = -Wall -O3
-LIBS = -I../ -std=c++11
+LIBS = -I../ -std=c99 -lm
 LINK = -rdynamic -Wl,-rpath,../build
 DEBUG=0
 
@@ -12,15 +12,6 @@ all: $(OUT_DIR) $(TARGET)
 
 clean: 
 	rm -r $(OUT_DIR)
-
-test: lib clean all
-	clear;
-	valgrind  --main-stacksize=1048576 --tool=memcheck --leak-check=full \
-	../build/aug_test --test_all $(shell ls ../examples/test_*)\
-	 --test_native ../examples/test_native 
-
-lib:
-	cp -rf ./libtest/lib/. ../build
 
 $(OUT_DIR):
 	mkdir $(OUT_DIR)

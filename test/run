@@ -1,24 +1,22 @@
-@echo off
 #/bin/sh
 clear 
-
 script_path=$(pwd)/scripts
-
 all=true;
 debug=false;
 tests=()
-
+perf=false
 for var in "$@"; do
     if [ "$var" = "-dbg" ]; then debug=true; 
+    elif [ "$var" = "-perf" ]; then perf=true; 
     else all=false; tests+=("--test $script_path/$var");
     fi
 done
 
 echo Building libs...
 pushd .
-cd lib
-make clean 
-make
+    cd lib
+    make clean 
+    make
 popd
 
 echo Building tests...
@@ -29,17 +27,18 @@ else
     make
 fi;
 
-# copy over libs
+echo Copying libs...
 yes | cp -rf lib/linux/. build
 cd build
 
+prelude_cmd="valgrind  --main-stacksize=1048576 --tool=memcheck --leak-check=full --show-leak-kinds=all"
+if ( $perf ); then prelude_cmd="time"; fi;
+
 if ( $all ); then
     echo Running all tests
-    valgrind  --main-stacksize=1048576 --tool=memcheck --leak-check=full --show-leak-kinds=all \
-    ./aug_test --test_native $script_path/test_native --test_all $(ls $script_path/test_*)
+    eval $prelude_cmd ./aug_test --test_native $script_path/test_native --test_all $(ls $script_path/test_*)
 else 
-    echo Running test
-    valgrind  --main-stacksize=1048576 --tool=memcheck --leak-check=full --show-leak-kinds=all \
-    ./aug_test --dump --verbose $tests
+    echo Running tests
+    eval $prelude_cmd ./aug_test --dump --verbose $tests
 fi;
 

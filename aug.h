@@ -60,6 +60,9 @@ SOFTWARE. */
                      in AST method def, load object, then the params. Find all vars that are fields to the object in prepass. Add to symtable under 
     - Short circuit evaluation with and/or statements. Push one on, check if true, then push next, check it true
    
+    - For using libs, create a new LIB symbol in the symtable. Have each call prefixed with the lib name, then in IR pass open lib and check if func exists ? 
+    = Allow importing compiled bytecode. Serialize symtable to bytecode, on use, deserialize the symtable and append the bytecode to the current IR.
+
     Note:
     - Locally defined functions can be supported, but will require closures to be implemented. See the aug_parse_stmt(aug_lexer* lexer, bool is_block)
         - To define closures, pass all the reference variables on the stack and re-add to the functions local symtable. Adjust the decstack well
@@ -256,7 +259,6 @@ typedef struct aug_vm
 
     aug_container* debug_symbols;   // weak pointer to script aug_debug_symbols
 } aug_vm;
-
 
 // VM API ----------------------------------------- VM API ---------------------------------------------------- VM API//
 
@@ -2764,7 +2766,6 @@ enum aug_opcodes
 };
 typedef uint8_t aug_opcode;
 
-static_assert(AUG_OPCODE_COUNT < 255, "Opcode count too large! This will affect bytecode instruction set");
 
 #ifdef AUG_OPCODE_LABELS
 static const char* aug_opcode_labels[] =
@@ -2848,7 +2849,6 @@ typedef struct aug_ir_operand
     aug_ir_operand_type type;
 } aug_ir_operand;
 
-static_assert(sizeof(float) >= sizeof(int), "Ensure enough bytes to contain both int and float data types");
 
 typedef struct aug_ir_operation
 {
@@ -4029,8 +4029,6 @@ typedef union aug_vm_bytecode_value
     float f;
     unsigned char bytes[sizeof(float)]; //Used to access raw byte data to bool, float and int types
 } aug_vm_bytecode_value;
-
-static_assert(sizeof(float) >= sizeof(int), "Ensure enough bytes to contain both int and float data types");
 
 void aug_log_vm_error(aug_vm* vm, const char* format, ...)
 {
@@ -6252,6 +6250,13 @@ void aug_script_delete(aug_script* script)
 
 aug_vm* aug_startup(aug_error_func* error_func)
 {
+    // If assert fails, Opcode count is too large. This will affect bytecode instruction set. If bumping aug_opcode type, ensure bytecode offsets are corrected
+    assert(AUG_OPCODE_COUNT < 255);
+
+    // If fails, Ensure enough bytes to contain both int and float data types when type punning
+    // Check in the aug_ir_operand's union byte array and the aug_vm_bytecode_value's union byte array
+    assert(sizeof(float) >= sizeof(int));
+
     aug_vm* vm = (aug_vm*)AUG_ALLOC(sizeof(aug_vm));
 
     size_t i;
