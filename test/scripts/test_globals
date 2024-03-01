@@ -1,3 +1,4 @@
+use std
 
 var global_a = 100;
 var global_b = 200;

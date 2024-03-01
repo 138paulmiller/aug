@@ -1,13 +1,38 @@
 
 # AUG
 
-Highly extendable scripting engine. Designed to augment existing applications.
+**Aug**ment your systems
 
-## Usage
+Simple and customizable scripting language.
 
-### Include
+# Features
 
-**aug.h** implementation is insipried by the [stb](https://github.com/nothings/stb) style libraries. 
+The Aug programming language supports:
+- Dynamic typing with built-in string, array, hashmap, and first-class function data types.
+- Basic code structure and control flow via if, for, while, and function blocks
+- Simple bidirectional interoperability mechanism that facilitates communication scripts with native code, and  
+
+# Language Embedding
+
+The primary focus of this language was to create a simple programming language that can be easily embedded into existing applications.
+To support this, **aug.h** provides an API that operates on the engine's virtual machine. This virtual machine contains some global script state, like registered extensions. 
+The API supports a few different use cases, primarily executing and loading scripts.
+
+### Executing scripts
+
+When executing a script, the script source will be compiled to bytecode. Then the virtual machine will boot into this bytecode, execute the instructions, return, and reset state.
+This is useful if users wish to fire-off one-shot script tasks or jobs.  
+
+### Load scripts
+
+When compiling a script, the script source will be compiled to bytecode. Then the virtual machine will boot into this bytecode, execute the instructions, return, and reset state.
+Or in other words, it will execute the script. However, the script will retain the global state of its variables, this will allows users to modify the state of the script by calling on it's functions.
+
+## Header Usage
+
+### Include Source
+
+**aug.h** implementation is insipired by the [stb](https://github.com/nothings/stb) style libraries. 
 
 At least one source file must contain the implementation details for this project. 
 Meaning at least on c/cpp files must contain the following
@@ -41,7 +66,7 @@ aug_vm* vm = aug_startup(on_error);
 aug_shutdown(vm);
 ```
 
-### Executing script
+### Executing scripts
 
 1. To execute an aug script, simply call **aug_execute**.
 
@@ -116,20 +141,17 @@ This example makes use of most of the libraries FFI features, allowing users to 
 
 **fib.aug**
 
-```c
+```go
 func fibonacci(n) {
-	var a = 0;
-	var b = 1;
-	var c = 0;
-	var sum = 0;
-	var count = n;
-	while count > 0 {
-		count = count - 1;
-		a = b;
-		b = sum;
-		sum = a + b;
-		print(sum);
-	}
+    var a = 0
+    var b = 1
+    var sum = 0
+    for i in 0:n {
+        a = b
+        b = sum 
+        sum = a + b
+    }
+    return sum
 }
 ```
 

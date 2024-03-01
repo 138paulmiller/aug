@@ -1,3 +1,5 @@
+use std
+
 func fibonacci(a) {
     if a < 2 { 
         return a; 

@@ -1,3 +1,5 @@
+use std
+
 func square(x){
     return x * x;
 }

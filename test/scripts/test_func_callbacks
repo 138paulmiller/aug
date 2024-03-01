@@ -1,3 +1,5 @@
+use std
+
 var global = 0;
 var a;
 var f;
