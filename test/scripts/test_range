@@ -1,4 +1,3 @@
-use std
 
 func fibonacci(n) {
     var a = 0;
