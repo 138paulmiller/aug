@@ -597,7 +597,6 @@ aug_hashtable* aug_hashtable_new(size_t size, size_t element_size, aug_hashtable
     return map;
 }
 
-
 void aug_hashtable_resize(aug_hashtable* map, size_t size)
 {
     size_t old_size = map->capacity;
