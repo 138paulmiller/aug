@@ -34,6 +34,9 @@ void dump_lexer(const char* filename)
 
 void dump_ast_tree(const aug_ast* node, aug_string* prev_prefix, bool is_leaf)
 {
+	if(node == NULL)
+		return;
+	
 	static const char* space = "  ";// char(192);
 	static const char* pipe = "| ";// char(192);
 	static const char* pipe_junction = "|-";//char(195);
@@ -46,13 +49,11 @@ void dump_ast_tree(const aug_ast* node, aug_string* prev_prefix, bool is_leaf)
 	{
 		printf("%s", pipe_end);
 		aug_string_append_bytes(prefix, space, strlen(pipe));
-		//prefix += space;
 	}
 	else 
 	{
 		printf("%s", pipe_junction);
 		aug_string_append_bytes(prefix, pipe, strlen(pipe));
-		//prefix += pipe;
 	}
 
 	aug_token token = node->token;

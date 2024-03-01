@@ -63,7 +63,11 @@ SOFTWARE. */
     - For using libs, create a new LIB symbol in the symtable. Have each call prefixed with the lib name, then in IR pass open lib and check if func exists ? 
     = Allow importing compiled bytecode. Serialize symtable to bytecode, on use, deserialize the symtable and append the bytecode to the current IR.
 
+    Issue:
+    - Create an array for lib_extensions. Have the script load/unload extension to/from VM on startup/shutdown 
+
     Note:
+
     - Locally defined functions can be supported, but will require closures to be implemented. See the aug_parse_stmt(aug_lexer* lexer, bool is_block)
         - To define closures, pass all the reference variables on the stack and re-add to the functions local symtable. Adjust the decstack well
 */
@@ -84,8 +88,18 @@ extern "C" {
 #define AUG_APPROX_THRESHOLD 0.0000001
 #endif//AUG_APPROX_THRESHOLD 
 
+
 #ifndef AUG_REGISTER_LIB_FUNC
 #define AUG_REGISTER_LIB_FUNC "aug_register_lib"
+
+#ifndef AUG_ALLOW_NO_SEMICOLON
+#define AUG_ALLOW_NO_SEMICOLON true
+#endif//AUG_ALLOW_NO_SEMICOLON
+
+#ifndef AUG_ALLOW_SINGLE_STMT_BLOCK
+#define AUG_ALLOW_SINGLE_STMT_BLOCK true
+#endif//AUG_ALLOW_SINGLE_STMT_BLOCK
+
 
 //#if defined(_MSC_VER)
 //    #define AUG_LIBCALL __declspec(dllexport)
@@ -101,7 +115,7 @@ extern "C" {
 #define AUG_LIBCALL extern "C" 
 #else 
 #define AUG_LIBCALL
-#endif
+#endif //AUG_REGISTER_LIB_FUNC
 
 #endif//AUG_REGISTER_LIB_FUNC
 
@@ -204,9 +218,10 @@ typedef struct aug_value
 // Represents a "compiled" script
 typedef struct aug_script
 {
-    aug_hashtable* globals;
-    char* bytecode;
-    aug_array* stack_state;
+    aug_hashtable* globals;         // global defined symbols
+    char* bytecode;                 // raw pointer to instruction set
+    aug_array* stack_state;         // current state of the stack before and after execution 
+    aug_hashtable* lib_extensions;  // lib loaded extensions
 
     aug_container* debug_symbols;
 } aug_script;
@@ -240,24 +255,28 @@ typedef void (*aug_register_lib_func)(aug_vm* /*vm*/);
 // Running instance of the virtual machine
 typedef struct aug_vm
 {
+    // Global VM state
+
     aug_error_func* error_func;
     bool valid;
-
-    const char* instruction; // Weak pointer to bytecode
-    const char* bytecode;    // Weak pointer to script bytecode
- 
-    aug_value stack[AUG_STACK_SIZE];
-    int stack_index; // Current position on stack (ESP)
-    int base_index;  // Current frame stack offset (EBP)
-    int arg_count;   // Current argument count expected when entering a call frame
+    bool running;
 
     // Extensions are extension functions are native functions that can be called from scripts   
     // This extension function map contains the user's registered functions. 
     // Use aug_register/aug_unregister to modify these fields
-    aug_hashtable* extensions;      // aug_extension
+    aug_hashtable* extensions;      // aug_extension all globally registered extensions. available to all scripts
     aug_container* libs;            // loaded library handles for the registered extensions
-
     aug_container* debug_symbols;   // weak pointer to script aug_debug_symbols
+
+    // Script runtime context state
+
+    const char* instruction; // Weak pointer to bytecode
+    const char* bytecode;    // Weak pointer to script bytecode 
+    aug_value stack[AUG_STACK_SIZE];
+    int stack_index; // Current position on stack (ESP)
+    int base_index;  // Current frame stack offset (EBP)
+    int arg_count;   // Current argument count expected when entering a call frame
+    aug_hashtable* lib_extensions;  // weak pointer to script loaded libs
 } aug_vm;
 
 // VM API ----------------------------------------- VM API ---------------------------------------------------- VM API//
@@ -1728,12 +1747,12 @@ static inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_container* op_stack,
 
     if(expr_stack->length < (size_t)op_argc)
     {
+        aug_log_input_error(lexer->input, "Invalid number of arguments to operator %s. Expected %ld, received %d", next_op.detail->label, op_argc, expr_stack->length);
         while(expr_stack->length > 0)
         {
             aug_ast* expr = aug_container_pop_type(aug_ast*, expr_stack);
             aug_ast_delete(expr);
         }
-        aug_log_input_error(lexer->input, "Invalid number of arguments to operator %s", next_op.detail->label);
         return false;
     }
 
@@ -1772,7 +1791,7 @@ aug_ast* aug_parse_expr(aug_lexer* lexer)
     aug_container* expr_stack = aug_container_new_type(aug_ast*, 1); 
 
     bool expect_value = true;
-    while(aug_lexer_curr(lexer).id != AUG_TOKEN_SEMICOLON)
+    while(aug_lexer_curr(lexer).detail->prec > 0 || expect_value)
     {
         aug_token op = aug_lexer_curr(lexer);
         if(op.detail->prec > 0)
@@ -1792,11 +1811,7 @@ aug_ast* aug_parse_expr(aug_lexer* lexer)
             aug_lexer_move(lexer);
         }
         else 
-        {
-            // Disallow two values from being pushed in succesion with an operator
-            if (!expect_value)
-                break;
-            
+        {            
             expect_value = false;
             aug_ast* value = aug_parse_value(lexer);
             if(value == NULL)
@@ -2158,20 +2173,25 @@ aug_ast* aug_parse_value(aug_lexer* lexer)
     return value;
 }
 
+bool aug_parse_stmt_semicolon(aug_lexer* lexer)
+{
+    if(aug_lexer_curr(lexer).id == AUG_TOKEN_SEMICOLON)
+    {
+        aug_lexer_move(lexer); // eat SEMICOLON
+        return true;
+    }
+#if AUG_ALLOW_NO_SEMICOLON
+    return true;
+#else
+    return false;
+#endif //AUG_ALLOW_NO_SEMICOLON
+}
+
 aug_ast* aug_parse_stmt_expr(aug_lexer* lexer)
 {
     aug_ast* expr = aug_parse_expr(lexer);
     if(expr == NULL)
         return NULL;
-    
-    if(aug_lexer_curr(lexer).id != AUG_TOKEN_SEMICOLON)
-    {
-        aug_ast_delete(expr);
-        aug_log_input_error(lexer->input,  "Missing semicolon at end of expression");
-        return NULL;
-    }
-
-    aug_lexer_move(lexer); // eat SEMICOLON
     
     aug_ast* stmt_expr = aug_ast_new(AUG_AST_STMT_EXPR, aug_token_new());
     aug_ast_add(stmt_expr, expr);
@@ -2199,6 +2219,12 @@ aug_ast* aug_parse_stmt_expr(aug_lexer* lexer)
     if(discard)
         aug_ast_add(stmt_expr, aug_ast_new(AUG_AST_DISCARD, aug_token_new()));
 
+    if(!aug_parse_stmt_semicolon(lexer))
+    {
+        aug_ast_delete(expr);
+        aug_log_input_error(lexer->input,  "Missing semicolon at end of expression");
+        return NULL;
+    }
     return stmt_expr;
 }
 
@@ -2218,21 +2244,18 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
     aug_token name_token = aug_token_copy(aug_lexer_curr(lexer));
     aug_lexer_move(lexer); // eat NAME
 
-    if(aug_lexer_curr(lexer).id == AUG_TOKEN_SEMICOLON)
-    {
-        aug_lexer_move(lexer); // eat SEMICOLON
-
-        aug_ast* stmt_define = aug_ast_new(AUG_AST_STMT_DEFINE_VAR, name_token);
-        return stmt_define;
-    }
-
     if(aug_lexer_curr(lexer).id != AUG_TOKEN_ASSIGN)
     {
+        if(aug_parse_stmt_semicolon(lexer))
+        {
+            aug_ast* stmt_define = aug_ast_new(AUG_AST_STMT_DEFINE_VAR, name_token);
+            return stmt_define;
+        }
+
         aug_token_reset(&name_token);
         aug_log_input_error(lexer->input,  "Variable assignment expected \"=\" or ;");
         return NULL;
     }
-
     aug_lexer_move(lexer); // eat ASSIGN
 
     aug_ast* expr = aug_parse_expr(lexer);
@@ -2242,15 +2265,14 @@ aug_ast* aug_parse_stmt_define_var(aug_lexer* lexer)
         aug_log_input_error(lexer->input,  "Variable assignment expected expression after \"=\"");
         return NULL;
     }
-    if(aug_lexer_curr(lexer).id != AUG_TOKEN_SEMICOLON)
+
+    if(!aug_parse_stmt_semicolon(lexer))
     {
         aug_token_reset(&name_token);
         aug_ast_delete(expr);
         aug_log_input_error(lexer->input,  "Variable assignment missing semicolon at end of expression");
         return NULL;
     }
-
-    aug_lexer_move(lexer); // eat SEMICOLON
 
     aug_ast* stmt_define = aug_ast_new(AUG_AST_STMT_DEFINE_VAR, name_token);
     aug_ast_add(stmt_define, expr);
@@ -2507,14 +2529,12 @@ aug_ast* aug_parse_stmt_return(aug_lexer* lexer)
     if(expr != NULL)
         aug_ast_add(return_stmt, expr);
 
-    if(aug_lexer_curr(lexer).id != AUG_TOKEN_SEMICOLON)
+    if(!aug_parse_stmt_semicolon(lexer))
     {
         aug_ast_delete(return_stmt);
         aug_log_input_error(lexer->input,  "Missing semicolon at end of return statement");
         return NULL;
     }
-
-    aug_lexer_move(lexer); // eat SEMICOLON
 
     return return_stmt;
 }
@@ -2528,14 +2548,12 @@ aug_ast* aug_parse_stmt_continue(aug_lexer* lexer)
 
     aug_ast* cont_stmt = aug_ast_new(AUG_AST_CONTINUE, aug_token_new());
 
-    if(aug_lexer_curr(lexer).id != AUG_TOKEN_SEMICOLON)
+    if(!aug_parse_stmt_semicolon(lexer))
     {
         aug_ast_delete(cont_stmt);
         aug_log_input_error(lexer->input,  "Missing semicolon at end of continue statement");
         return NULL;
     }
-
-    aug_lexer_move(lexer); // eat SEMICOLON
 
     return cont_stmt;
 }
@@ -2569,13 +2587,12 @@ aug_ast* aug_parse_stmt_use(aug_lexer* lexer)
     if(use_stmt == NULL)
         return NULL;
 
-    if(aug_lexer_curr(lexer).id != AUG_TOKEN_SEMICOLON)
+    if(!aug_parse_stmt_semicolon(lexer))
     {
         aug_ast_delete(use_stmt);
         aug_log_input_error(lexer->input,  "Missing semicolon at end of use statement");
         return NULL;
     }
-    aug_lexer_move(lexer); // eat SEMICOLON
 
     return use_stmt;
 }
@@ -2632,8 +2649,16 @@ aug_ast* aug_parse_block(aug_lexer* lexer)
 {
     if(aug_lexer_curr(lexer).id != AUG_TOKEN_LBRACE)
     {
+#if AUG_ALLOW_SINGLE_STMT_BLOCK
+        aug_ast* block = aug_ast_new(AUG_AST_BLOCK, aug_token_new());    
+        aug_ast* stmt = aug_parse_stmt(lexer, true);
+        aug_ast_add(block, stmt);
+        return block;
+#else 
+        // if no brace, parse single block
         aug_log_input_error(lexer->input,  "Block missing opening \"{\"");
         return NULL;
+#endif // AUG_ALLOW_SINGLE_STMT_BLOCK
     }
     aug_lexer_move(lexer); // eat LBRACE
 
@@ -4169,10 +4194,13 @@ void aug_vm_startup(aug_vm* vm)
     vm->base_index = 0;
     vm->arg_count = 0;
     vm->valid = false; 
+    vm->running = false; 
 }
 
 void aug_vm_shutdown(aug_vm* vm)
 {
+    vm->running = false; 
+
     //Cleanup stack values. Free any outstanding values
     while(vm->stack_index > 0)
         aug_decref(aug_vm_pop(vm));
@@ -4195,6 +4223,7 @@ void aug_vm_load_script(aug_vm* vm, const aug_script* script)
     vm->instruction = vm->bytecode;
     vm->valid = (vm->bytecode != NULL);
     vm->debug_symbols = script->debug_symbols; //NOTE weak ref
+    vm->lib_extensions = script->lib_extensions;
 
     if(script->stack_state != NULL)
     {
@@ -4227,6 +4256,7 @@ void aug_vm_unload_script(aug_vm* vm, aug_script* script)
             aug_value* value = aug_array_at(script->stack_state, i);
             aug_decref(value);
         }
+        script->stack_state = aug_array_decref(script->stack_state);
     }
 }
 
@@ -4235,6 +4265,12 @@ void aug_vm_save_script(aug_vm* vm, aug_script* script)
     if(vm == NULL || script == NULL)
         return;
 
+    // Move ownership
+    script->lib_extensions = vm->lib_extensions;
+    // remove from extensions
+    vm->lib_extensions = NULL;
+
+    // reset script stack state to match vm
     script->stack_state = aug_array_decref(script->stack_state);
     if (vm->stack_index > 0)
     {
@@ -4321,6 +4357,7 @@ void aug_vm_execute(aug_vm* vm)
     if(vm == NULL)
         return;
 
+    vm->running = true; 
     while(vm->instruction)
     {
         aug_opcode opcode = (aug_opcode)(*vm->instruction++);
@@ -4649,12 +4686,16 @@ void aug_vm_execute(aug_vm* vm)
 
                 // TODO: room for optimization. Perhaps use a hashmap for quicker lookup if there are thousands of ext functions ?
                 // Check if the symbol is a registered extension function
-                aug_extension* extension = aug_hashtable_ptr_type(aug_extension, vm->extensions, func_name);
-                if(extension == NULL || extension->func == NULL)
-                {
-                    aug_decref(func_name_value);
-                    aug_log_vm_error(vm, "Extension function %s not registered", func_name_value->str->buffer);
-                    break;
+                aug_extension* extension = aug_hashtable_ptr_type(aug_extension, vm->lib_extensions, func_name);
+                if(extension == NULL )
+                {                    
+                    extension = aug_hashtable_ptr_type(aug_extension, vm->extensions, func_name);
+                    if(extension == NULL || extension->func == NULL)
+                    {
+                        aug_log_vm_error(vm, "Extension function %s not registered", func_name_value->str->buffer);
+                        aug_decref(func_name_value);
+                        break;
+                    }
                 }
 
                 // Gather arguments
@@ -4778,6 +4819,8 @@ void aug_vm_execute(aug_vm* vm)
         getchar();
 #endif // AUG_DEBUG
     }
+
+    vm->running = false; 
 }
 
 aug_value aug_vm_execute_from_frame(aug_vm* vm, int func_addr, int argc, aug_value* args)
@@ -6221,6 +6264,9 @@ aug_script* aug_script_new(aug_hashtable* globals, char* bytecode, aug_container
 
     script->debug_symbols = debug_symbols;
     aug_container_incref(script->debug_symbols);
+
+    script->lib_extensions = aug_hashtable_new_type(aug_extension);
+
     return script;
 }
 
@@ -6239,6 +6285,7 @@ void aug_script_delete(aug_script* script)
     }
     script->globals = aug_hashtable_decref(script->globals);
     script->stack_state = aug_array_decref(script->stack_state);
+    script->lib_extensions = aug_hashtable_decref(script->lib_extensions);
     script->debug_symbols = aug_container_decref(script->debug_symbols);
 
     if (script->bytecode != NULL)
@@ -6283,6 +6330,7 @@ void aug_shutdown(aug_vm* vm)
         aug_lib_handle handle = aug_container_at_type(aug_lib_handle, vm->libs, i);
         aug_vm_lib_unload(vm, handle);
     }
+
     vm->libs = aug_container_decref(vm->libs);
     vm->extensions = aug_hashtable_decref(vm->extensions);
 
@@ -6292,6 +6340,16 @@ void aug_shutdown(aug_vm* vm)
 
 void aug_register(aug_vm* vm, const char* func_name, aug_extension_func* extension_func)
 {
+    if(vm->running && vm->lib_extensions != NULL)
+    {
+        if(aug_hashtable_get(vm->lib_extensions, func_name) != 0)
+            aug_log_vm_error(vm, "Failed to register library extension Function %s. Already registered!", func_name);
+        aug_extension* extension = aug_hashtable_insert_type(aug_extension, vm->lib_extensions, func_name);
+        if(extension != NULL)
+            extension->func = extension_func;
+        return;
+    }
+
     if(aug_hashtable_get(vm->extensions, func_name) != 0)
         aug_log_vm_error(vm, "Failed to register extension Function %s. Already registered!", func_name);
     aug_extension* extension = aug_hashtable_insert_type(aug_extension, vm->extensions, func_name);
@@ -6301,6 +6359,13 @@ void aug_register(aug_vm* vm, const char* func_name, aug_extension_func* extensi
 
 void aug_unregister(aug_vm* vm, const char* func_name)
 {
+    if(vm->running && vm->lib_extensions != NULL)
+    {        
+        if(!aug_hashtable_remove(vm->lib_extensions, func_name))
+            aug_log_vm_error(vm, "Failed to unregister library extension Function %s. Not registered!", func_name);
+        return;
+    }
+
     if(!aug_hashtable_remove(vm->extensions, func_name))
         aug_log_vm_error(vm, "Failed to unregister extension Function %s. Not registered!", func_name);
 }

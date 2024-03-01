@@ -1,3 +1,5 @@
+use std
+
 var a = 0;
 if (1) { a = a + 1;
 	if (1) { a = a + 1;
