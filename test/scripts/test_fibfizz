@@ -1,3 +1,5 @@
+use std
+
 func fizzbuzz(i){
     var a = i % 3 == 0;
     var b = i % 5 == 0;

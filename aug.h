@@ -35,7 +35,6 @@ SOFTWARE. */
     - Create Programs for loading/unloading compiled code. 
         - This will compile script code to a string literal and create a standalone c/c++ app that boots vm and executes bytecode 
         - The compiled scripts will also dump symtables to allow aug_call*s
-
     - Implement value references to allow iterators to modify the element
     - Implement match statements, like switch statements that ease "if else if" chains 
     - Implement wildcard, glob matching for strings
@@ -50,8 +49,7 @@ SOFTWARE. */
         - add source file and line to debug symbols
     - File, Directory, Vector, Matrix primitive types 
         - create default language bindings to sdl, fileio, win32 etc...
-    - Operator overloading?
-    
+    - Operator overloading? 
     - Built-in math and utility functions. Perhaps registered as the default ? For math, directly use opcodes
     - Syntax to allow multiple var defines in aug_parse_stmt_define_var. Create a Define_Var_List AST node, seperate by comma
     - Implement method calls. 
@@ -59,15 +57,14 @@ SOFTWARE. */
         - Semantics, in AST method call push the object, then the params, then call func
                      in AST method def, load object, then the params. Find all vars that are fields to the object in prepass. Add to symtable under 
     - Short circuit evaluation with and/or statements. Push one on, check if true, then push next, check it true
-   
     - For using libs, create a new LIB symbol in the symtable. Have each call prefixed with the lib name, then in IR pass open lib and check if func exists ? 
-    = Allow importing compiled bytecode. Serialize symtable to bytecode, on use, deserialize the symtable and append the bytecode to the current IR.
+    - Allow importing compiled bytecode. Serialize symtable to bytecode, on use, deserialize the symtable and append the bytecode to the current IR.
 
     Issue:
-    - Create an array for lib_extensions. Have the script load/unload extension to/from VM on startup/shutdown 
+    - Retaining script lib state via lib_extensions map is a bit hacky. 
+        - Perhaps create an array for lib_extensions. Have the script load/unload extension to/from VM on startup/shutdown 
 
     Note:
-
     - Locally defined functions can be supported, but will require closures to be implemented. See the aug_parse_stmt(aug_lexer* lexer, bool is_block)
         - To define closures, pass all the reference variables on the stack and re-add to the functions local symtable. Adjust the decstack well
 */
@@ -164,6 +161,13 @@ typedef struct aug_map
     size_t ref_count;
 } aug_map;
 
+// Range is a tuple [x,y) 
+typedef struct aug_range
+{
+    int x, y;
+    size_t ref_count;
+} aug_range;
+
 // TODO: Class data types value
 typedef struct aug_object
 {
@@ -182,6 +186,7 @@ typedef enum aug_type
     AUG_STRING, 
     AUG_ARRAY,
     AUG_MAP,
+    AUG_RANGE,
     AUG_OBJECT,
     AUG_FUNCTION,
     AUG_ITERATOR,
@@ -210,6 +215,7 @@ typedef struct aug_value
         aug_array* array;   // AUG_ARRAY
         aug_map* map;       // AUG_MAP
         aug_iterator* it;   // AUG_ITERATOR
+        aug_range* range;   // AUG_RANGE
         aug_object* obj;    // AUG_OBJECT
         void* userdata;     // AUG_USERDATA (custom data type for users)
     };
@@ -372,6 +378,10 @@ void aug_iterator_incref(aug_iterator* iterator);
 bool aug_iterator_next(aug_iterator* iterator);
 bool aug_iterator_get(aug_iterator* iterator, aug_value* out_element);
 
+// Range API ----------------------------------------- Range API --------------------------------------------- Range API//
+aug_range* aug_range_new(int x, int y);
+aug_range* aug_range_decref(aug_range* range);
+void aug_range_incref(aug_range* range);
 #ifdef __cplusplus
 }
 #endif
@@ -1020,7 +1030,7 @@ typedef struct aug_token_detail
 
 #define AUG_TOKEN_LIST                             \
     /* State */                                    \
-     AUG_TOKEN(INVALID,        0, 0, 0, NULL)       \
+    AUG_TOKEN(INVALID,        0, 0, 0, NULL)       \
     AUG_TOKEN(END,            0, 0, 0, NULL)       \
     /* Symbols */		                           \
     AUG_TOKEN(DOT,            0, 0, 0, NULL)       \
@@ -1666,6 +1676,7 @@ typedef enum aug_ast_id
     AUG_AST_MAP,
     AUG_AST_MAP_PAIR,
     AUG_AST_ELEMENT,
+    AUG_AST_RANGE,
     AUG_AST_UNARY_OP, 
     AUG_AST_BINARY_OP, 
     AUG_AST_DISCARD,
@@ -2377,6 +2388,34 @@ aug_ast* aug_parse_stmt_while(aug_lexer* lexer)
     return while_stmt;
 }
 
+aug_ast* aug_parse_for_range(aug_lexer* lexer)
+{
+    aug_ast* from_expr = aug_parse_expr(lexer);
+    if(from_expr == NULL)
+        return NULL;
+
+    // if not a range object, return just iterable expr
+    if(aug_lexer_curr(lexer).id != AUG_TOKEN_COLON)
+        return from_expr;
+
+    aug_lexer_move(lexer); // eat COLON
+
+    aug_ast* to_expr = aug_parse_expr(lexer);
+    if(to_expr == NULL)
+    {
+        aug_ast_delete(from_expr);
+        aug_log_input_error(lexer->input, "Range missing from from value");
+        return NULL;
+    }
+
+    aug_ast* range = aug_ast_new(AUG_AST_RANGE, aug_token_new());
+
+    aug_ast_resize(range, 2);
+    range->children[0] = from_expr;
+    range->children[1] = to_expr;
+    return range;
+}
+
 aug_ast* aug_parse_stmt_for(aug_lexer* lexer)
 {
     if(aug_lexer_curr(lexer).id != AUG_TOKEN_FOR)
@@ -2403,7 +2442,7 @@ aug_ast* aug_parse_stmt_for(aug_lexer* lexer)
     }
     aug_lexer_move(lexer); // eat IN
 
-    aug_ast* expr = aug_parse_expr(lexer);
+    aug_ast* expr = aug_parse_for_range(lexer);
     if(expr == NULL)
     {
         aug_ast_delete(var);
@@ -2736,6 +2775,7 @@ aug_ast* aug_parse(aug_input* input)
 	AUG_OPCODE(PUSH_GLOBAL)       \
 	AUG_OPCODE(PUSH_ELEMENT)      \
 	AUG_OPCODE(PUSH_ITERATOR)     \
+    AUG_OPCODE(PUSH_RANGE)        \
     AUG_OPCODE(LOAD_LOCAL)        \
 	AUG_OPCODE(LOAD_GLOBAL)       \
 	AUG_OPCODE(LOAD_ELEMENT)      \
@@ -3467,6 +3507,20 @@ static inline bool aug_set_iterator(aug_value* value, aug_value* iterable)
     return value->it != NULL;
 }
 
+static inline bool aug_set_range(aug_value* value, aug_value* from, aug_value* to)
+{
+    if(value == NULL)
+        return false;
+
+    if(to == NULL || to->type != AUG_INT || from == NULL || from->type != AUG_INT)
+        return false;
+
+
+    value->type = AUG_RANGE;
+    value->range = aug_range_new(from->i, to->i);
+    return value->range != NULL;
+}
+
 static inline bool aug_iterate(aug_value* value, aug_value* out_element)
 {
     if(value == NULL || value->type != AUG_ITERATOR)
@@ -3524,7 +3578,9 @@ bool aug_to_bool(const aug_value* value)
     case AUG_FUNCTION:
         return value->i != 0;
     case AUG_ITERATOR:
-        return value->it != NULL && value->it->index != NULL;       
+        return value->it != NULL && value->it->index != NULL;
+    case AUG_RANGE:
+        return value->range != NULL;
     case AUG_USERDATA:
         return value->userdata != NULL; 
     }
@@ -3582,19 +3638,6 @@ bool aug_compare(aug_value* a, aug_value* b)
     {
     case AUG_NONE:
         return true;
-    case AUG_STRING:
-        return aug_string_compare(a->str, b->str);
-    case AUG_ARRAY:
-        return aug_array_compare(a->array, b->array);
-    case AUG_MAP:
-        assert(0); //TODO
-        return false;
-    case AUG_OBJECT:
-        assert(0); //TODO
-        return false;
-    case AUG_ITERATOR:
-        assert(0); //TODO
-        return false;
     case AUG_FUNCTION:
         return a->i == b->i;
     case AUG_BOOL:
@@ -3605,6 +3648,20 @@ bool aug_compare(aug_value* a, aug_value* b)
         return a->c == b->c;
     case AUG_FLOAT:
         return (float)fabs(a->f - b->f) < AUG_APPROX_THRESHOLD;
+    case AUG_STRING:
+        return aug_string_compare(a->str, b->str);
+    case AUG_ARRAY:
+        return aug_array_compare(a->array, b->array);
+    case AUG_RANGE:
+        return false; //should not be user accesible to compare
+    case AUG_MAP:
+        assert(0); //TODO
+        return false;
+    case AUG_OBJECT:
+        assert(0); //TODO
+        return false;
+    case AUG_ITERATOR:
+        return false; //should not be user accesible to compare
     case AUG_USERDATA:
         return a->userdata == b->userdata;
     }
@@ -3626,8 +3683,9 @@ const char* aug_type_label(const aug_value* value)
     case AUG_OBJECT:    return "object";
     case AUG_MAP:       return "map";
     case AUG_FUNCTION:  return "function";
+    case AUG_RANGE:     return "range";
     case AUG_ITERATOR:  return "iterator";
-    case AUG_USERDATA:    return "custom";
+    case AUG_USERDATA:  return "custom";
     }
     return NULL;
 }
@@ -3650,6 +3708,9 @@ void aug_decref(aug_value* value)
         break;
     case AUG_ITERATOR:
         value->it = aug_iterator_decref(value->it);
+        break;
+    case AUG_RANGE:
+        value->range = aug_range_decref(value->range);
         break;
     case AUG_OBJECT:
         if(value->obj && --value->obj->ref_count <= 0)
@@ -3680,6 +3741,9 @@ void aug_incref(aug_value* value)
         break;
     case AUG_ITERATOR:
         aug_iterator_incref(value->it);
+        break;
+    case AUG_RANGE:
+        aug_range_incref(value->range);
         break;
     case AUG_OBJECT:
         assert(value->obj);
@@ -3745,6 +3809,18 @@ static inline bool aug_get_element(aug_value* value, aug_value* index, aug_value
             return false;
 
         *element_out = *element;
+        return true;
+    }
+    case AUG_RANGE:
+    {
+        if(index->type != AUG_INT)
+            return false;
+
+        size_t i = (size_t)aug_to_int(index);
+        if(i < value->range->x || i >= value->range->y)
+            return false;
+
+        *element_out = aug_create_int(i);
         return true;
     }
     default:
@@ -4266,7 +4342,6 @@ void aug_vm_save_script(aug_vm* vm, aug_script* script)
 
     // Move ownership
     script->lib_extensions = vm->lib_extensions;
-    // remove from extensions
     vm->lib_extensions = NULL;
 
     // reset script stack state to match vm
@@ -4524,6 +4599,21 @@ void aug_vm_execute(aug_vm* vm)
                 aug_assign(top, &value);
                 break;
             }
+            case AUG_OPCODE_PUSH_RANGE:
+            {
+                aug_value* to = aug_vm_pop(vm);
+                aug_value* from = aug_vm_pop(vm);
+
+                aug_value value;
+                if(!aug_set_range(&value, from, to))    
+                    aug_log_vm_error(vm, "Could not create a range from type %s to %s", aug_type_label(from), aug_type_label(to)); // TODO: more descriptive
+                aug_decref(to);
+                aug_decref(from);
+
+                aug_value* top = aug_vm_push(vm);
+                aug_move(top, &value);
+                break;
+            }
             case AUG_OPCODE_PUSH_ITERATOR:
             {
                 aug_value* iterable = aug_vm_pop(vm);
@@ -4683,8 +4773,7 @@ void aug_vm_execute(aug_vm* vm)
 
                 const char* func_name = func_name_value->str->buffer;
 
-                // TODO: room for optimization. Perhaps use a hashmap for quicker lookup if there are thousands of ext functions ?
-                // Check if the symbol is a registered extension function
+                // TODO: room for optimization. use a single extension map ? Load/Unload lib extensions on script load/unload may have better amortized runtime
                 aug_extension* extension = aug_hashtable_ptr_type(aug_extension, vm->lib_extensions, func_name);
                 if(extension == NULL )
                 {                    
@@ -5199,6 +5288,14 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
             aug_generate_ir_pass(children[0], ir); // push index expr
             aug_generate_ir_pass(children[1], ir); // push container
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_ELEMENT);
+            break;
+        }
+        case AUG_AST_RANGE:
+        {
+            assert(children_size == 2); // 0[1]
+            aug_generate_ir_pass(children[0], ir); // push from 
+            aug_generate_ir_pass(children[1], ir); // push to
+            aug_ir_add_operation(ir, AUG_OPCODE_PUSH_RANGE);
             break;
         }
         case AUG_AST_STMT_EXPR:
@@ -6169,6 +6266,7 @@ aug_iterator* aug_iterator_new(aug_value* iterable)
         case AUG_INT:
         case AUG_STRING:
         case AUG_ARRAY:
+        case AUG_RANGE:
             break;
         default:
             return NULL;
@@ -6214,6 +6312,7 @@ bool aug_iterator_next(aug_iterator* iterator)
         case AUG_INT:
         case AUG_STRING:
         case AUG_ARRAY:
+        case AUG_RANGE:
             // grab initial index
             if(iterator->index == NULL)
             {
@@ -6248,6 +6347,31 @@ bool aug_iterator_get(aug_iterator* iterator, aug_value* out_element)
         return false;
     }
     return true;
+}
+
+aug_range* aug_range_new(int x, int y)
+{
+    aug_range* range = (aug_range*)AUG_ALLOC(sizeof(aug_range));
+    range->ref_count = 1;
+    range->x = x;
+    range->y = y;
+    return range;
+}
+
+aug_range* aug_range_decref(aug_range* range)
+{
+    if(range != NULL && --range->ref_count == 0)
+    {
+        AUG_FREE(range);
+        return NULL;    
+    }
+    return range;
+}
+
+void aug_range_incref(aug_range* range)
+{
+    if(range != NULL)
+        ++range->ref_count;
 }
 
 // SCRIPT ================================================= SCRIPT ============================================= SCRIPT // 

@@ -36,7 +36,7 @@ void dump_ast_tree(const aug_ast* node, aug_string* prev_prefix, bool is_leaf)
 {
 	if(node == NULL)
 		return;
-	
+
 	static const char* space = "  ";// char(192);
 	static const char* pipe = "| ";// char(192);
 	static const char* pipe_junction = "|-";//char(195);
@@ -162,6 +162,11 @@ void dump_ast_tree(const aug_ast* node, aug_string* prev_prefix, bool is_leaf)
 			printf("ELEMENT\n");
 			for (int i = 0; i < children_size; ++i)
 				dump_ast_tree(children[i], prefix, i == children_size - 1);
+			break;
+		case AUG_AST_RANGE:
+			printf("RANGE\n");
+			dump_ast_tree(children[0], prefix, false);
+			dump_ast_tree(children[1], prefix, true);
 			break;
 		case AUG_AST_FUNC_CALL_UNNAMED:
 			printf("FUNC CALL UNNAMED\n");

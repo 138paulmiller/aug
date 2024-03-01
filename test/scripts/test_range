@@ -1,0 +1,51 @@
+use std
+
+func fibonacci(n) {
+    var a = 0;
+    var b = 1;
+    var sum = 0;
+    for i in 0:n {
+        a = b;
+        b = sum; 
+        sum = a + b;
+    }
+    return sum;
+}
+
+var res = fibonacci(30);
+expect(res == 832040, "fibonacci(30) = ", res);
+
+# explicit fib impl
+var n = 30;
+var a = 0;
+var b = 1;
+var sum = 0;
+for i in 0:n {
+    a = b;
+    b = sum; 
+    sum = a + b;
+}
+expect(sum == 832040, "fib range 0:n = ", a);
+
+
+# explicit fib impl
+b = 1;
+sum = 0;
+for i in 0:30 {
+    a = b;
+    b = sum; 
+    sum = a + b;
+}
+expect(sum == 832040, "fib range 0:30 = ", a);
+
+func get_n() { return 30; }
+
+# explicit fib impl
+b = 1;
+sum = 0;
+for i in 0:get_n() {
+    a = b;
+    b = sum; 
+    sum = a + b;
+}
+expect(sum == 832040, "fib range 0:get_n() = ", a);
