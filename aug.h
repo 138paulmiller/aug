@@ -2584,9 +2584,9 @@ aug_ast* aug_parse_stmt_break(aug_lexer* lexer)
     if(aug_lexer_curr(lexer).id != AUG_TOKEN_BREAK)
         return NULL;
 
-    aug_lexer_move(lexer); // eat CONTINUE
-
-    aug_ast* break_stmt = aug_ast_new(AUG_AST_BREAK, aug_token_new());
+    // copy over token to allow error details
+    aug_ast* break_stmt = aug_ast_new(AUG_AST_BREAK, aug_token_copy(aug_lexer_curr(lexer)));
+    aug_lexer_move(lexer); // eat BREAK
 
     if(!aug_parse_stmt_semicolon(lexer))
     {
@@ -2603,18 +2603,18 @@ aug_ast* aug_parse_stmt_continue(aug_lexer* lexer)
     if(aug_lexer_curr(lexer).id != AUG_TOKEN_CONTINUE)
         return NULL;
 
+    // copy over token to allow error details
+    aug_ast* continue_stmt = aug_ast_new(AUG_AST_CONTINUE, aug_token_copy(aug_lexer_curr(lexer)));
     aug_lexer_move(lexer); // eat CONTINUE
-
-    aug_ast* cont_stmt = aug_ast_new(AUG_AST_CONTINUE, aug_token_new());
 
     if(!aug_parse_stmt_semicolon(lexer))
     {
-        aug_ast_delete(cont_stmt);
+        aug_ast_delete(continue_stmt);
         aug_log_input_error(lexer->input,  "Missing semicolon at end of continue statement");
         return NULL;
     }
 
-    return cont_stmt;
+    return continue_stmt;
 }
 
 aug_ast* aug_parse_stmt_use(aug_lexer* lexer)
@@ -3266,21 +3266,29 @@ static inline void aug_ir_check_loop(aug_ir* ir)
     loop->end_jump_operation = aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP_ZERO, stub_operand);
 }
 
-static inline void aug_ir_continue_loop(aug_ir* ir)
-{
-    const aug_ir_loop loop = aug_container_back_type(aug_ir_loop, ir->loop_stack);
-    const aug_ir_operand begin_addr_operand = aug_ir_operand_from_int(loop.bytecode_begin);
-    aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP, begin_addr_operand);
-}
-
-static inline void aug_ir_break_loop(aug_ir* ir)
+static inline bool aug_ir_continue_loop(aug_ir* ir)
 {
     aug_container* loop_stack = ir->loop_stack;
     aug_ir_loop* loop = aug_container_ptr_type(aug_ir_loop, loop_stack, loop_stack->length-1);
+    if(loop == NULL)
+        return false;
+
+    const aug_ir_operand begin_addr_operand = aug_ir_operand_from_int(loop->bytecode_begin);
+    aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP, begin_addr_operand);
+    return true;
+}
+
+static inline bool aug_ir_break_loop(aug_ir* ir)
+{
+    aug_container* loop_stack = ir->loop_stack;
+    aug_ir_loop* loop = aug_container_ptr_type(aug_ir_loop, loop_stack, loop_stack->length-1);
+    if(loop == NULL)
+        return false;
 
     const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
     size_t break_operation = aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP, stub_operand);
     aug_container_push_type(size_t, loop->break_operations, break_operation);
+    return true;
 }
 
 static inline void aug_ir_end_loop(aug_ir* ir)
@@ -5500,12 +5508,20 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
         }
         case AUG_AST_BREAK:
         {
-            aug_ir_break_loop(ir);
+            if(aug_ir_break_loop(ir))
+            {
+                ir->valid = false;
+                aug_log_input_error_at(ir->input, &token.pos, "Break statement must be inside loop");
+            }
             break;
         }
         case AUG_AST_CONTINUE:
         {
-            aug_ir_continue_loop(ir);
+            if(!aug_ir_continue_loop(ir))
+            {
+                ir->valid = false;
+                aug_log_input_error_at(ir->input, &token.pos, "Continue statement must be inside loop");
+            }
             break;
         }
         case AUG_AST_FUNC_CALL:

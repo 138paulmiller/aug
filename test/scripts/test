@@ -3,6 +3,9 @@ use std
 var a = [ ]
 var b = 10
 
+continue;
+break;
+
 var i = 0 
 for i in 0:b
     append(a, i % 2);
