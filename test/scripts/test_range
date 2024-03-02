@@ -48,3 +48,12 @@ for i in 0:get_n() {
     sum = a + b;
 }
 expect(sum == 832040, "fib range 0:get_n() = ", a);
+
+
+var x = -10
+var y = 10
+var s = 0
+for i in x:y+1 {
+    s += i
+}
+expect(s == 0, "sum(-10:11)=", s)

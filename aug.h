@@ -161,10 +161,10 @@ typedef struct aug_map
     size_t ref_count;
 } aug_map;
 
-// Range is a tuple [x,y) 
+// Range is a tuple [from,to) 
 typedef struct aug_range
 {
-    int x, y;
+    int from, to;
     size_t ref_count;
 } aug_range;
 
@@ -379,7 +379,7 @@ bool aug_iterator_next(aug_iterator* iterator);
 bool aug_iterator_get(aug_iterator* iterator, aug_value* out_element);
 
 // Range API ----------------------------------------- Range API --------------------------------------------- Range API//
-aug_range* aug_range_new(int x, int y);
+aug_range* aug_range_new(int from, int to);
 aug_range* aug_range_decref(aug_range* range);
 void aug_range_incref(aug_range* range);
 #ifdef __cplusplus
@@ -3816,8 +3816,8 @@ static inline bool aug_get_element(aug_value* value, aug_value* index, aug_value
         if(index->type != AUG_INT)
             return false;
 
-        size_t i = (size_t)aug_to_int(index);
-        if(i < value->range->x || i >= value->range->y)
+        int i = (size_t)aug_to_int(index);
+        if(i < value->range->from || i >= value->range->to)
             return false;
 
         *element_out = aug_create_int(i);
@@ -6307,28 +6307,36 @@ bool aug_iterator_next(aug_iterator* iterator)
     if(iterator == NULL || iterator->iterable == NULL)
         return false;
 
-    switch(iterator->iterable->type)
+    int initial_index = 0;
+    aug_value* index = iterator->index;
+    aug_value* iterable = iterator->iterable;
+    switch(iterable->type)
     {
         case AUG_INT:
         case AUG_STRING:
         case AUG_ARRAY:
+            initial_index = 0;
+            break;
         case AUG_RANGE:
-            // grab initial index
-            if(iterator->index == NULL)
-            {
-                iterator->index = (aug_value*)AUG_ALLOC(sizeof(aug_value));
-                *iterator->index = aug_create_int(0);
-            }
-            else 
-            {
-                assert(iterator->index->type == AUG_INT);
-                iterator->index->i += 1;
-            }
+            initial_index = iterable->range->from;
             break;
         default:
             return false;
     }
 
+    // grab initial index
+    if(iterator->index == NULL)
+    {
+        index = (aug_value*)AUG_ALLOC(sizeof(aug_value));
+        *index = aug_create_int(initial_index);
+    }
+    else 
+    {
+        assert(index->type == AUG_INT);
+        index->i += 1;
+    }
+    
+    iterator->index = index;
     return true;
 }
 
@@ -6349,12 +6357,12 @@ bool aug_iterator_get(aug_iterator* iterator, aug_value* out_element)
     return true;
 }
 
-aug_range* aug_range_new(int x, int y)
+aug_range* aug_range_new(int from, int to)
 {
     aug_range* range = (aug_range*)AUG_ALLOC(sizeof(aug_range));
     range->ref_count = 1;
-    range->x = x;
-    range->y = y;
+    range->from = from;
+    range->to = to;
     return range;
 }
 
