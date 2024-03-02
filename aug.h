@@ -432,12 +432,12 @@ typedef struct aug_container
     size_t element_size;
 } aug_container;
 
-aug_container* aug_container_new(size_t size, size_t element_size)    
+aug_container* aug_container_new(size_t capacity, size_t element_size)    
 {
     aug_container* container = (aug_container*)AUG_ALLOC(sizeof(aug_container));   
     container->length = 0;    
     container->ref_count = 1;   
-    container->capacity = size;   
+    container->capacity = capacity;   
     container->element_size = element_size; 
     container->buffer = (char*)AUG_ALLOC(element_size * container->capacity);
     return container;   
@@ -1087,6 +1087,7 @@ typedef struct aug_token_detail
     AUG_TOKEN(VAR,            0, 0, 0, "var")      \
     AUG_TOKEN(FUNC,           0, 0, 0, "func")     \
     AUG_TOKEN(RETURN,         0, 0, 0, "return")   \
+    AUG_TOKEN(BREAK,          0, 0, 0, "break")    \
     AUG_TOKEN(CONTINUE,       0, 0, 0, "continue") \
     AUG_TOKEN(TRUE,           0, 0, 0, "true")     \
     AUG_TOKEN(FALSE,          0, 0, 0, "false")    \
@@ -1686,6 +1687,7 @@ typedef enum aug_ast_id
     AUG_AST_PARAM_LIST,
     AUG_AST_PARAM,
     AUG_AST_RETURN,
+    AUG_AST_BREAK,
     AUG_AST_CONTINUE,
     AUG_AST_USE_SCRIPT,
     AUG_AST_USE_LIB,
@@ -2577,6 +2579,25 @@ aug_ast* aug_parse_stmt_return(aug_lexer* lexer)
     return return_stmt;
 }
 
+aug_ast* aug_parse_stmt_break(aug_lexer* lexer)
+{
+    if(aug_lexer_curr(lexer).id != AUG_TOKEN_BREAK)
+        return NULL;
+
+    aug_lexer_move(lexer); // eat CONTINUE
+
+    aug_ast* break_stmt = aug_ast_new(AUG_AST_BREAK, aug_token_new());
+
+    if(!aug_parse_stmt_semicolon(lexer))
+    {
+        aug_ast_delete(break_stmt);
+        aug_log_input_error(lexer->input,  "Missing semicolon at end of break statement");
+        return NULL;
+    }
+
+    return break_stmt;
+}
+
 aug_ast* aug_parse_stmt_continue(aug_lexer* lexer)
 {
     if(aug_lexer_curr(lexer).id != AUG_TOKEN_CONTINUE)
@@ -2662,6 +2683,9 @@ aug_ast* aug_parse_stmt(aug_lexer* lexer, bool is_block)
         break;
     case AUG_TOKEN_RETURN:
         stmt = aug_parse_stmt_return(lexer);
+        break;
+    case AUG_TOKEN_BREAK:
+        stmt = aug_parse_stmt_break(lexer);
         break;
     case AUG_TOKEN_CONTINUE:
         stmt = aug_parse_stmt_continue(lexer);
@@ -2941,6 +2965,7 @@ typedef struct aug_ir_loop
 {
     int bytecode_begin;     // the beginning of the loop
     size_t end_jump_operation; // used to jump over block on end condition
+    aug_container* break_operations; // size_t use to cache break operations for later fixup
 } aug_ir_loop;
 
 // All the blocks within a compilation/translation unit (i.e. file, code literal)
@@ -3228,6 +3253,7 @@ static inline void aug_ir_begin_loop(aug_ir* ir)
     aug_ir_loop loop;
     loop.bytecode_begin = ir->bytecode_offset;
     loop.end_jump_operation = 0;
+    loop.break_operations = aug_container_new_type(size_t, 1);
     aug_container_push_type(aug_ir_loop, ir->loop_stack, loop);
 }
 
@@ -3247,20 +3273,40 @@ static inline void aug_ir_continue_loop(aug_ir* ir)
     aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP, begin_addr_operand);
 }
 
+static inline void aug_ir_break_loop(aug_ir* ir)
+{
+    aug_container* loop_stack = ir->loop_stack;
+    aug_ir_loop* loop = aug_container_ptr_type(aug_ir_loop, loop_stack, loop_stack->length-1);
+
+    const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
+    size_t break_operation = aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP, stub_operand);
+    aug_container_push_type(size_t, loop->break_operations, break_operation);
+}
+
 static inline void aug_ir_end_loop(aug_ir* ir)
 {
-    const aug_ir_loop loop = aug_container_pop_type(aug_ir_loop, ir->loop_stack);
+    aug_ir_loop loop = aug_container_pop_type(aug_ir_loop, ir->loop_stack);
     
     // Close the loop, jump back to beginning
     const aug_ir_operand begin_addr_operand = aug_ir_operand_from_int(loop.bytecode_begin);
     aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP, begin_addr_operand);
 
     // Fixup stubbed block offsets
+    const size_t end_block_addr = ir->bytecode_offset;
+
     aug_ir_operation* operation = aug_ir_get_operation(ir, loop.end_jump_operation);
     assert(operation != NULL);
-
-    const size_t end_block_addr = ir->bytecode_offset;
     operation->operand = aug_ir_operand_from_int(end_block_addr);
+
+    size_t i;
+    for(i = 0; i < loop.break_operations->length; ++i)
+    {
+        aug_ir_operation* operation = aug_ir_get_operation(ir, aug_container_at_type(size_t, loop.break_operations, i));
+        assert(operation != NULL);
+        operation->operand = aug_ir_operand_from_int(end_block_addr);
+    }
+
+    loop.break_operations = aug_container_decref(loop.break_operations);
 }
 
 static inline void aug_ir_add_debug_symbol(aug_ir* ir, aug_symbol symbol)
@@ -3858,6 +3904,7 @@ static inline bool aug_set_element(aug_value* value, aug_value* index, aug_value
     return false;
 }
 
+// TODO: Function table?
 // Define a plain-old-data binary operation
 #define AUG_DEFINE_BINOP_POD(result, lhs, rhs,                  \
     int_int_case,                                               \
@@ -5449,6 +5496,11 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
 
             scope = aug_ir_current_scope(ir);
             scope->stack_offset--; // remove iterator from stack
+            break;
+        }
+        case AUG_AST_BREAK:
+        {
+            aug_ir_break_loop(ir);
             break;
         }
         case AUG_AST_CONTINUE:

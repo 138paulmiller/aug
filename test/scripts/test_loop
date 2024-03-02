@@ -9,4 +9,27 @@ while i < 10 {
 	}
 	even_total += i;
 }
-expect(even_total == 2 + 4 + 6 + 8 + 10);
+expect(even_total == 2 + 4 + 6 + 8 + 10, "even_total ==", even_total);
+
+even_total = 0;
+i = 0;
+while i < 20 {
+	i+=1;
+	if i > 10 		
+		break;
+	if i % 2 == 1 	
+		continue; 
+	even_total += i;
+}
+expect(even_total == 2 + 4 + 6 + 8 + 10, "even_total ==", even_total);
+
+even_total = 0;
+i = 0;
+for i in 0:20 {
+	if i > 10 		
+		break;
+	if i % 2 == 1 	
+		continue; 
+	even_total += i;
+}
+expect(even_total == 2 + 4 + 6 + 8 + 10, "even_total ==", even_total);
