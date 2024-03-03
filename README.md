@@ -201,8 +201,8 @@ Something like this:
 
 ## Libraries
 
-There is a special keyword, **use** that allows users to load precompiled libraries into the aug runtime. 
-In the script calling `use example;` will search for a dynamic library name example. As of now, it will look for the library in the applications working directory. 
+There is a special keyword, **import** that allows users to load precompiled libraries into the aug runtime. 
+In the script calling `import example;` will search for a dynamic library name example. As of now, it will look for the library in the applications working directory. 
 
 To create the example lib, users must include the aug header and define a function that registers all the lib extensions. 
 AUG expect the library function entry point to be named aug_register_lib. Below is standard example of a library that will be loaded by the **use** statement.
@@ -215,14 +215,23 @@ AUG_LIBCALL void aug_register_lib(aug_vm* vm)
 	...
 }
 ```
-Compiling this is OS specific, for an example library used by the test utility see https://github.com/138paulmiller/aug/test/lib
+For example, if this is compiled to a dynamic shared library on a linux platform, named **example.so**, and this is placed under the working directory of the executable, the it can be imported via 
+
+```go
+import example;
+```
+
+Compiling this is OS specific, for an example library used by the test utility see [here](https://github.com/138paulmiller/aug/tree/master/test/lib)
 
 ### Demo
 
-- For examples of use cases see the test cases [here] https://github.com/138paulmiller/aug/test
-- For a working demo of misc demos, see https://github.com/138paulmiller/aug_demo
+- For examples of use cases see the test cases [here](https://github.com/138paulmiller/aug/tree/master/test/scripts)
+- For a working demo of misc demos, see [here](https://github.com/138paulmiller/aug_demo)
 
 ### Syntax
+
+- NOTE: As of now, optional semicolons are enabled by default. This feature can be toggled on-off via the `AUG_ALLOW_NO_SEMICOLON` macro. 
+- NOTE: As of now, single line blocks are enabled by default. This feature can be toggled on-off via the `AUG_ALLOW_SINGLE_STMT_BLOCK` macro.   
 
 ```
 NAME    : \w+[\w\d_]+
