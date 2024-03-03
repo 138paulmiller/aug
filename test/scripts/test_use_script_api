@@ -2,4 +2,5 @@ func muladd(x,y, z){
 	return x * y + z;
 }
 
-expect(muladd(2,3,4) == 10);
+var mulladd_234 = muladd(2,3,4);
+expect(mulladd_234 == 10);

@@ -1,3 +1,5 @@
 use "test_use_script_api"
 
 expect(muladd(2,3,4) == 10);
+
+expect(muladd(2,3,4) == mulladd_234);
