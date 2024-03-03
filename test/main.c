@@ -1,9 +1,9 @@
+#define AUG_IMPLEMENTATION
 #define AUG_LOG_VERBOSE
 #include <aug.h>
+#include "dump.inl"
 
 #include <string.h>
-
-void aug_dump_file(aug_vm* vm, const char* filename);
 
 struct aug_tester;
 typedef void(aug_tester_func)(aug_vm*);
@@ -50,9 +50,11 @@ void test_run(const char* filename, aug_vm* vm, aug_tester_func* func)
     if (s_tester.verbose)
         printf("%s%s%s\n", STDOUT_YELLOW, s_tester.filename, STDOUT_CLEAR);
 
+#if AUG_DEBUG
     if (s_tester.dump)
         aug_dump_file(vm, s_tester.filename);
-
+#endif 
+    
     // Run test
     if (func != NULL)
         func(vm);
@@ -305,14 +307,43 @@ void aug_test_gameloop(aug_vm* vm)
     aug_unload(vm, script);
 }
 
-void aug_error(const char* msg)
+void on_aug_error(const char* msg)
 {
     fprintf(stderr, "[%sERROR%s]\t%s\t\n", STDOUT_RED, STDOUT_CLEAR, msg);
 }
 
+#if AUG_DEBUG && defined(TEST_DEBUG_STACK) && TEST_DEBUG_STACK
+void on_aug_post_instruction_debug(aug_vm* vm, int opcode)
+{
+    printf("%ld:   %s\n", vm->instruction - vm->bytecode, aug_opcode_label(opcode));
+    int i;
+    for(i = 0; i < 10; ++i)
+    {
+        aug_value val = vm->stack[i];
+        printf("%s %d: %s ", (vm->stack_index-1) == i ? ">" : " ", i, aug_type_label(&val));
+        switch(val.type)
+        {
+            case AUG_INT:      printf("%d", val.i); break;
+            case AUG_FLOAT:    printf("%f", val.f); break;
+            case AUG_STRING:   printf("%s", val.str->buffer); break;
+            case AUG_BOOL:     printf("%s", val.b ? "true" : "false"); break;
+            case AUG_CHAR:     printf("%c", val.c); break;
+            default: break;
+        }
+        printf("\n");
+    }
+    getchar();
+}
+#endif
+
 int main(int argc, char**argv)
 {
-    aug_vm* vm = aug_startup(aug_error);
+    aug_vm* vm = aug_startup(on_aug_error);
+
+#if AUG_DEBUG && defined(TEST_DEBUG_STACK) && TEST_DEBUG_STACK
+    vm->debug_post_instruction = on_aug_post_instruction_debug;
+#endif
+
     aug_register(vm, "expect", expect);
     aug_register(vm, "sum", sum);
     test_startup();

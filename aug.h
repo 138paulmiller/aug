@@ -31,6 +31,7 @@ SOFTWARE. */
     -  API to set/get values from script instance, like aug_call
     -  Better runtime error handling!
         - Create a map from bytecode addr to source code position. In aug_vm log error, add this. 
+        - Must support multiple intput sources. MOdify the raw input reference, use file index values for mapping to the source file
         - Create an error type to allow extensions for forward errors to VM
     - Create Programs for loading/unloading compiled code. 
         - This will compile script code to a string literal and create a standalone c/c++ app that boots vm and executes bytecode 
@@ -74,6 +75,10 @@ SOFTWARE. */
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#ifndef AUG_DEBUG
+#define AUG_DEBUG 0
+#endif//AUG_DEBUG
 
 // Size of the virtual machine's value stack 
 #ifndef AUG_STACK_SIZE
@@ -229,7 +234,7 @@ typedef struct aug_script
     aug_array* stack_state;         // current state of the stack before and after execution 
     aug_hashtable* lib_extensions;  // lib loaded extensions
 
-    aug_container* debug_symbols;
+    aug_container* debug_symbols;   // aug_debug_symbol info for error handling
 } aug_script;
 
 // Calling frames are used to access parameters and local variables from the stack within a calling context
@@ -272,7 +277,7 @@ typedef struct aug_vm
     // Use aug_register/aug_unregister to modify these fields
     aug_hashtable* extensions;      // aug_extension all globally registered extensions. available to all scripts
     aug_container* libs;            // loaded library handles for the registered extensions
-    aug_container* debug_symbols;   // weak pointer to script aug_debug_symbols
+    aug_container* debug_symbols;   // weak pointer to script's aug_debug_symbols
 
     // Script runtime context state
 
@@ -283,6 +288,11 @@ typedef struct aug_vm
     int base_index;  // Current frame stack offset (EBP)
     int arg_count;   // Current argument count expected when entering a call frame
     aug_hashtable* lib_extensions;  // weak pointer to script loaded libs
+
+#if AUG_DEBUG
+    void (*debug_post_instruction)(aug_vm* /*vm*/, int /*opcode*/);
+#endif
+
 } aug_vm;
 
 // VM API ----------------------------------------- VM API ---------------------------------------------------- VM API//
@@ -306,6 +316,11 @@ void aug_unload(aug_vm* vm, aug_script* script);
 // Used to call global functions within the script
 aug_value aug_call(aug_vm* vm, aug_script* script, const char* func_name);
 aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, int argc, aug_value* args);
+
+#if AUG_DEBUG
+const char* aug_opcode_label(uint8_t opcode);
+const char* aug_ast_type_label(uint8_t ast_type);
+#endif 
 
 // Value API ------------------------------------- Value API ------------------------------------------------ Value API//
 aug_value aug_none();
@@ -1097,16 +1112,16 @@ typedef struct aug_token_detail
 // Token identifier. 
 typedef enum aug_token_id
 {
-#define AUG_TOKEN(id, ...) AUG_TOKEN_##id,
+#define AUG_TOKEN(type, ...) AUG_TOKEN_##type,
     AUG_TOKEN_LIST
 #undef AUG_TOKEN
     AUG_TOKEN_COUNT
 } aug_token_id;
 
-// All token type info. Types map from id to type info
+// All token type info. Types map from type to type info
 aug_token_detail aug_token_details[(int)AUG_TOKEN_COUNT] = 
 {
-#define AUG_TOKEN(id, ...) { #id, __VA_ARGS__},
+#define AUG_TOKEN(type, ...) { #type, __VA_ARGS__},
     AUG_TOKEN_LIST
 #undef AUG_TOKEN
 };
@@ -1114,7 +1129,7 @@ aug_token_detail aug_token_details[(int)AUG_TOKEN_COUNT] =
 #undef AUG_TOKEN_LIST
 
 // Token instance
-typedef struct  aug_token
+typedef struct aug_token
 {
     aug_token_id id;
     const aug_token_detail* detail; 
@@ -1661,51 +1676,76 @@ bool aug_lexer_undo(aug_lexer* lexer)
 
 // AST ================================================   AST   =================================================== AST // 
 
-typedef enum aug_ast_id
+typedef uint8_t aug_ast_type;
+
+#define AUG_AST_TYPE_LIST            \
+    AUG_AST_TYPE(ROOT)               \
+    AUG_AST_TYPE(BLOCK)              \
+    AUG_AST_TYPE(STMT_EXPR)          \
+    AUG_AST_TYPE(STMT_DEFINE_VAR)    \
+    AUG_AST_TYPE(STMT_IF)            \
+    AUG_AST_TYPE(STMT_IF_ELSE)       \
+    AUG_AST_TYPE(STMT_WHILE)         \
+    AUG_AST_TYPE(STMT_FOR)           \
+    AUG_AST_TYPE(LITERAL)            \
+    AUG_AST_TYPE(VARIABLE)           \
+    AUG_AST_TYPE(ARRAY)              \
+    AUG_AST_TYPE(MAP)                \
+    AUG_AST_TYPE(MAP_PAIR)           \
+    AUG_AST_TYPE(ELEMENT)            \
+    AUG_AST_TYPE(RANGE)              \
+    AUG_AST_TYPE(UNARY_OP)           \
+    AUG_AST_TYPE(BINARY_OP)          \
+    AUG_AST_TYPE(DISCARD)            \
+    AUG_AST_TYPE(FUNC_CALL)          \
+    AUG_AST_TYPE(FUNC_CALL_UNNAMED)  \
+    AUG_AST_TYPE(STMT_DEFINE_FUNC)   \
+    AUG_AST_TYPE(PARAM_LIST)         \
+    AUG_AST_TYPE(PARAM)              \
+    AUG_AST_TYPE(RETURN)             \
+    AUG_AST_TYPE(BREAK)              \
+    AUG_AST_TYPE(CONTINUE)           \
+    AUG_AST_TYPE(USE_SCRIPT)         \
+    AUG_AST_TYPE(USE_LIB)
+
+enum aug_ast_types
+{ 
+#define AUG_AST_TYPE(type) AUG_AST_##type,
+    AUG_AST_TYPE_LIST
+#undef AUG_AST_TYPE
+    AUG_AST_COUNT
+};
+
+#if AUG_DEBUG
+
+const char* aug_ast_type_labels[] =
 {
-    AUG_AST_ROOT = 0,
-    AUG_AST_BLOCK, 
-    AUG_AST_STMT_EXPR,
-    AUG_AST_STMT_DEFINE_VAR,
-    AUG_AST_STMT_IF,
-    AUG_AST_STMT_IF_ELSE,
-    AUG_AST_STMT_WHILE,
-    AUG_AST_STMT_FOR,
-    AUG_AST_LITERAL, 
-    AUG_AST_VARIABLE, 
-    AUG_AST_ARRAY,
-    AUG_AST_MAP,
-    AUG_AST_MAP_PAIR,
-    AUG_AST_ELEMENT,
-    AUG_AST_RANGE,
-    AUG_AST_UNARY_OP, 
-    AUG_AST_BINARY_OP, 
-    AUG_AST_DISCARD,
-    AUG_AST_FUNC_CALL, 
-    AUG_AST_FUNC_CALL_UNNAMED,
-    AUG_AST_STMT_DEFINE_FUNC, 
-    AUG_AST_PARAM_LIST,
-    AUG_AST_PARAM,
-    AUG_AST_RETURN,
-    AUG_AST_BREAK,
-    AUG_AST_CONTINUE,
-    AUG_AST_USE_SCRIPT,
-    AUG_AST_USE_LIB,
-} aug_ast_id;
+#define AUG_AST_TYPE(opcode) #opcode,
+    AUG_AST_TYPE_LIST
+#undef AUG_AST_TYPE
+}; 
+
+const char* aug_ast_type_label(uint8_t type)
+{
+    return aug_ast_type_labels[(int)type];
+}
+
+#endif //AUG_DEBUG
+#undef AUG_AST_TYPE_LIST
 
 typedef struct aug_ast
 {
-    aug_ast_id id;
+    aug_ast_type type;
     aug_token token;
     struct aug_ast** children;
     int children_size;
     int children_capacity;
 } aug_ast;
 
-aug_ast* aug_ast_new(aug_ast_id id, aug_token token)
+aug_ast* aug_ast_new(aug_ast_type type, aug_token token)
 {
     aug_ast* node = (aug_ast*)AUG_ALLOC(sizeof(aug_ast));
-    node->id = id;
+    node->type = type;
     node->token = token;
     node->children = NULL;
     node->children_size = 0;
@@ -1769,7 +1809,7 @@ static inline bool aug_parse_expr_pop(aug_lexer* lexer, aug_container* op_stack,
     }
 
     // Push binary op onto stack
-    aug_ast_id id = (op_argc == 2) ? AUG_AST_BINARY_OP : AUG_AST_UNARY_OP;
+    aug_ast_type id = (op_argc == 2) ? AUG_AST_BINARY_OP : AUG_AST_UNARY_OP;
     aug_ast* binaryop = aug_ast_new(id, next_op);
     aug_ast_resize(binaryop, op_argc);
     
@@ -1874,7 +1914,7 @@ aug_ast* aug_parse_funccall(aug_lexer* lexer, aug_ast* value)
     // TODO: If value is a variable, then have this be a standard function call. Otherwise, will be a call from stack
     // This will allow func calls from elements, and returns values
     aug_ast* funccall = NULL;
-    if(value->id == AUG_AST_VARIABLE)
+    if(value->type == AUG_AST_VARIABLE)
     {
         // pass token to func call
         funccall = aug_ast_new(AUG_AST_FUNC_CALL, value->token);
@@ -2210,7 +2250,7 @@ aug_ast* aug_parse_stmt_expr(aug_lexer* lexer)
 
     // If expression is a non-assignment, discard from the stack
     bool discard = true;
-    if(expr->id == AUG_AST_BINARY_OP)
+    if(expr->type == AUG_AST_BINARY_OP)
     {
         switch(expr->token.id)
         {
@@ -2781,6 +2821,7 @@ aug_ast* aug_parse(aug_input* input)
 }
 
 // OPCODE =============================================   OPCODE   ============================================= OPCODE // 
+typedef uint8_t aug_opcode;
 
 #define AUG_OPCODE_LIST           \
 	AUG_OPCODE(EXIT)              \
@@ -2852,18 +2893,21 @@ enum aug_opcodes
 #undef AUG_OPCODE
     AUG_OPCODE_COUNT
 };
-typedef uint8_t aug_opcode;
 
-
-#ifdef AUG_OPCODE_LABELS
-static const char* aug_opcode_labels[] =
+#if AUG_DEBUG
+const char* aug_opcode_labels[] =
 {
 #define AUG_OPCODE(opcode) #opcode,
 	AUG_OPCODE_LIST
 #undef AUG_OPCODE
 }; 
-#endif //AUG_OPCODE_LABELS
 
+const char* aug_opcode_label(uint8_t opcode)
+{
+    return aug_opcode_labels[(int)opcode];
+}
+
+#endif //AUG_DEBUG
 #undef AUG_OPCODE_LIST
 
 // Special value used in bytecode to denote an invalid vm offset
@@ -4941,25 +4985,9 @@ void aug_vm_execute(aug_vm* vm)
             break;
         }
 
-#if defined(AUG_DEBUG) && AUG_DEBUG
-        printf("%ld:   %s\n", vm->instruction - vm->bytecode, aug_opcode_labels[(int)opcode]);
-        int i;
-        for(i = 0; i < 10; ++i)
-        {
-            aug_value val = vm->stack[i];
-            printf("%s %d: %s ", (vm->stack_index-1) == i ? ">" : " ", i, aug_type_label(&val));
-            switch(val.type)
-            {
-                case AUG_INT:      printf("%d", val.i); break;
-                case AUG_FLOAT:    printf("%f", val.f); break;
-                case AUG_STRING:   printf("%s", val.str->buffer); break;
-                case AUG_BOOL:     printf("%s", val.b ? "true" : "false"); break;
-                case AUG_CHAR:     printf("%c", val.c); break;
-                default: break;
-            }
-            printf("\n");
-        }
-        getchar();
+#if AUG_DEBUG
+        if(vm->debug_post_instruction)
+            vm->debug_post_instruction(vm, opcode);
 #endif // AUG_DEBUG
     }
 
@@ -5013,7 +5041,7 @@ void aug_generate_ir_prepass(const aug_ast* node, aug_ir* ir)
     aug_ast** children = node->children;
     const int children_size = node->children_size;
 
-    switch(node->id)
+    switch(node->type)
     {
         case AUG_AST_ROOT:
         case AUG_AST_BLOCK: 
@@ -5028,7 +5056,7 @@ void aug_generate_ir_prepass(const aug_ast* node, aug_ir* ir)
             assert(token_data != NULL && children_size == 2); //func token [0] {[1]};
 
             aug_ast* params = children[0];
-            assert(params && params->id == AUG_AST_PARAM_LIST);
+            assert(params && params->type == AUG_AST_PARAM_LIST);
             const int param_count = params->children_size;
 
             if(!aug_ir_set_func(ir, token_data, param_count, false))
@@ -5088,7 +5116,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
     aug_ast** children = node->children;
     const int children_size = node->children_size;
 
-    switch(node->id)
+    switch(node->type)
     {
         case AUG_AST_ROOT:
         {
@@ -5266,14 +5294,14 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
                 aug_ast* var_node = children[0];
 
                 // LHS must be an element of variable
-                if(var_node->id != AUG_AST_VARIABLE && var_node->id != AUG_AST_ELEMENT)
+                if(var_node->type != AUG_AST_VARIABLE && var_node->type != AUG_AST_ELEMENT)
                 {
                     ir->valid = false;
                     aug_log_input_error_at(ir->input, &token.pos, "Left hand of assignment must be a variable or element");
                     break;
                 }
 
-                if(var_node->id == AUG_AST_VARIABLE)
+                if(var_node->type == AUG_AST_VARIABLE)
                 {
                     aug_string* var_token_data = var_node->token.data;
                     assert(var_token_data);
@@ -5300,7 +5328,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
                     else // if local or param
                         aug_ir_add_operation_arg(ir, AUG_OPCODE_LOAD_LOCAL, address_operand);
                 }
-                else if(var_node->id == AUG_AST_ELEMENT)
+                else if(var_node->type == AUG_AST_ELEMENT)
                 {
                     assert(var_node->children_size == 2); // 0[1]
                     aug_generate_ir_pass(var_node->children[0], ir); // push index expr
@@ -5464,7 +5492,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
         case AUG_AST_STMT_FOR:
         {
             assert(children_size == 3); //for [0] in [1] {[2]}
-            assert(children[0] && children[0]->id == AUG_AST_VARIABLE);
+            assert(children[0] && children[0]->type == AUG_AST_VARIABLE);
 
             // Evaluate and initialize iterable expression. 
             aug_ir_scope* scope = aug_ir_current_scope(ir);
@@ -5508,7 +5536,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
         }
         case AUG_AST_BREAK:
         {
-            if(aug_ir_break_loop(ir))
+            if(!aug_ir_break_loop(ir))
             {
                 ir->valid = false;
                 aug_log_input_error_at(ir->input, &token.pos, "Break statement must be inside loop");
@@ -5649,7 +5677,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
             const size_t end_block_jmp = aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP, stub_operand);
 
             aug_ast* params = children[0];
-            assert(params && params->id == AUG_AST_PARAM_LIST);
+            assert(params && params->type == AUG_AST_PARAM_LIST);
             const int param_count = params->children_size;
 
             // Gather global pass handles global symbol table. The offset however is incorrect, this pass will fixup the function offset  
@@ -6515,6 +6543,9 @@ aug_vm* aug_startup(aug_error_func* error_func)
     vm->extensions = aug_hashtable_new_type(aug_extension);
     vm->libs = aug_container_new_type(aug_lib_handle, 1);
     vm->error_func = error_func;
+#if AUG_DEBUG
+    vm->debug_post_instruction = NULL;
+#endif// AUG_DEBUG
     return vm;
 }
 

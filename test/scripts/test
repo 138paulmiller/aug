@@ -1,14 +1,6 @@
-# test single blocks an no semicolons
-use std
-var a = [ ]
-var b = 10
-
-continue;
-break;
-
-var i = 0 
-for i in 0:b
-    append(a, i % 2);
-
-for e in a 
-    expect(e == 0 or e == 1, "e == 0 or e == 1")
+var i = 0;
+while i < 20 {
+    if i > 10       
+        break;
+    i+=1;
+}

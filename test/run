@@ -31,7 +31,7 @@ echo Copying libs...
 yes | cp -rf lib/linux/. build
 cd build
 
-prelude_cmd="valgrind  --main-stacksize=1048576 --tool=memcheck --leak-check=full --show-leak-kinds=all"
+prelude_cmd="valgrind  --main-stacksize=1048576 --tool=memcheck --leak-check=full --show-leak-kinds=all --track-origins=yes"
 if ( $perf ); then prelude_cmd="time"; fi;
 
 if ( $all ); then
