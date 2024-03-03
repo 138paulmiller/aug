@@ -12,3 +12,12 @@ while i < b
 
 for e in a 
     expect(e == 0 or e == 1, "e == 0 or e == 1")
+
+func inc(i) 
+    return i + 1
+
+var x = 0;
+for y in 0,10 {
+    expect(x == y)
+    x = inc(x)
+}

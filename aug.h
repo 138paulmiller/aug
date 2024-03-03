@@ -30,9 +30,11 @@ SOFTWARE. */
     Todo: 
     -  API to set/get values from script instance, like aug_call
     -  Better runtime error handling!
+        - Create a map from vm operation to source line. have ast keep file line info 
         - Create a map from bytecode addr to source code position. In aug_vm log error, add this. 
         - Must support multiple intput sources. MOdify the raw input reference, use file index values for mapping to the source file
         - Create an error type to allow extensions for forward errors to VM
+        - Create a symtable datatype. Create uniform API for IR and VM to compile in IR pass and as well as serialize/deserialize from debug file
     - Create Programs for loading/unloading compiled code. 
         - This will compile script code to a string literal and create a standalone c/c++ app that boots vm and executes bytecode 
         - The compiled scripts will also dump symtables to allow aug_call*s
@@ -384,7 +386,7 @@ bool aug_map_remove(aug_map* map, aug_value* key);
 aug_value* aug_map_get(aug_map* map, aug_value* key);
 
 typedef void(aug_map_iterator)(const aug_value* /*key*/, aug_value* /*value*/, void* /*user_data*/);
-void aug_map_foreach(aug_map* map, aug_map_iterator* iterator, void* user_data);
+void aug_map_foreach(aug_map* /*map*/, aug_map_iterator* /*iterator*/, void* /*user_data*/);
 
 // Iterator API ------------------------------------- Iterator API ----------------------------------------- Iterator API//
 aug_iterator* aug_iterator_new(aug_value* iterable);
@@ -533,7 +535,7 @@ char* aug_container_back(const aug_container* container)
 
 typedef size_t(aug_hashtable_hash)(const char* /*str*/);
 typedef void(aug_hashtable_free)(uint8_t* /*data*/);
-typedef void(aug_hashtable_iterator)(uint8_t* /*data*/);
+typedef void(aug_hashtable_iterator)(uint8_t* /*data*/, void* /*user_data*/);
 
 typedef struct aug_hashtable_bucket
 {
@@ -682,7 +684,7 @@ aug_hashtable* aug_hashtable_decref(aug_hashtable* map)
             {
                 if (bucket->key_buffer[j] != NULL)
                 {
-                    if (map->free_func)
+                    if (map->free_func != NULL)
                         map->free_func(&bucket->data_buffer[j * map->element_size]);
                     AUG_FREE(bucket->key_buffer[j]);
                 }
@@ -748,7 +750,7 @@ uint8_t* aug_hashtable_get(aug_hashtable* map, const char* key)
     return NULL;
 }
 
-void aug_hashtable_foreach(aug_hashtable* map, aug_hashtable_iterator* iterator)
+void aug_hashtable_foreach(aug_hashtable* map, aug_hashtable_iterator* iterator, void* user_data)
 {
     size_t i, j;
     for(i = 0; i < map->capacity; ++i)
@@ -757,7 +759,7 @@ void aug_hashtable_foreach(aug_hashtable* map, aug_hashtable_iterator* iterator)
         for(j = 0; j < bucket->capacity; ++j)
         {        
             if(bucket->key_buffer[j] != NULL)
-                iterator(&bucket->data_buffer[j * map->element_size]);
+                iterator(&bucket->data_buffer[j * map->element_size], user_data);
         }
     }
 }
@@ -1764,6 +1766,7 @@ static inline void aug_ast_delete(aug_ast* node)
             aug_ast_delete(node->children[i]);
         AUG_FREE(node->children);
     }
+    if(node->token.data)
     aug_token_reset(&node->token);
     AUG_FREE(node);
 }
@@ -2949,7 +2952,7 @@ typedef struct aug_symbol
 typedef struct aug_debug_symbol
 {
     int bytecode_addr;
-    aug_symbol symbol;
+    aug_string* symbol_name;
 } aug_debug_symbol;
 
 // IR ===================================================   IR   ======================================================= IR // 
@@ -2975,7 +2978,7 @@ typedef struct aug_ir_operand
         float f;
         char bytes[sizeof(float)]; //Used to access raw byte data to bool, float and int types
 
-        const char* str; // NOTE: weak pointer to token data
+        char* str; // NOTE: copied from token data, released in generate bytecode pass
     } data;
 
     aug_ir_operand_type type;
@@ -3015,8 +3018,6 @@ typedef struct aug_ir_loop
 // All the blocks within a compilation/translation unit (i.e. file, code literal)
 typedef struct aug_ir
 {		
-    aug_input* input; // weak ref to source file/code
-
     // Top is the current frame.
     aug_container* frame_stack; // type aug_ir_frame
 
@@ -3037,11 +3038,10 @@ typedef struct aug_ir
 
 } aug_ir;
 
-static inline aug_ir* aug_ir_new(aug_input* input)
+static inline aug_ir* aug_ir_new()
 {
     aug_ir* ir = (aug_ir*)AUG_ALLOC(sizeof(aug_ir));
     ir->valid = true;
-    ir->input = input;
     ir->bytecode_offset = 0;
     ir->frame_stack =  aug_container_new_type(aug_ir_frame, 1);
     ir->loop_stack =  aug_container_new_type(aug_ir_loop, 1);
@@ -3157,11 +3157,16 @@ static inline aug_ir_operand aug_ir_operand_from_float(float data)
     return operand;
 }
 
-static inline aug_ir_operand aug_ir_operand_from_str(const char* data)
+static inline aug_ir_operand aug_ir_operand_from_str(const aug_string* data)
 {
     aug_ir_operand operand;
     operand.type = AUG_IR_OPERAND_BYTES;
-    operand.data.str = data;
+    operand.data.str = (char*)AUG_ALLOC(sizeof(char)*data->length+1);
+#ifdef AUG_SECURE
+    strcpy_s(operand.data.str, string->capacity, data->buffer);
+#else
+    strcpy(operand.data.str, data->buffer);
+#endif
     return operand;
 }
 
@@ -3225,6 +3230,15 @@ static inline int aug_ir_current_frame_local_offset(aug_ir* ir, int offset, int 
     return offset - local_frame->base_index - frame_delta * AUG_CALL_FRAME_STACK_SIZE;
 }
 
+static inline void aug_ir_symtable_free(uint8_t* data)
+{
+    aug_symbol* symbol_ptr = (aug_symbol*)data;
+    if(symbol_ptr != NULL)
+    {
+        aug_string_decref(symbol_ptr->name);
+    }
+}
+
 static inline void aug_ir_push_frame(aug_ir* ir, int arg_count)
 {
     aug_ir_frame frame;
@@ -3244,7 +3258,8 @@ static inline void aug_ir_push_frame(aug_ir* ir, int arg_count)
     scope.base_index = frame.base_index;
     scope.stack_offset = frame.base_index;
     scope.symtable = aug_hashtable_new_type(aug_symbol);
-    
+    scope.symtable->free_func = aug_ir_symtable_free;
+
     frame.scope_stack = aug_container_new_type(aug_ir_scope, 1);
     aug_container_push_type(aug_ir_scope, frame.scope_stack, scope);
     aug_container_push_type(aug_ir_frame, ir->frame_stack, frame);
@@ -3279,6 +3294,7 @@ static inline void aug_ir_push_scope(aug_ir* ir)
     scope.base_index = current_scope->stack_offset;
     scope.stack_offset = current_scope->stack_offset;
     scope.symtable = aug_hashtable_new_type(aug_symbol);
+    scope.symtable->free_func = aug_ir_symtable_free;
     aug_container_push_type(aug_ir_scope, frame->scope_stack, scope);
 }
 
@@ -3364,9 +3380,11 @@ static inline void aug_ir_end_loop(aug_ir* ir)
 static inline void aug_ir_add_debug_symbol(aug_ir* ir, aug_symbol symbol)
 {
     aug_debug_symbol debug_symbol;
-    debug_symbol.symbol = symbol;
+    debug_symbol.symbol_name = symbol.name;
     debug_symbol.bytecode_addr = ir->bytecode_offset;
     aug_container_push_type(aug_debug_symbol, ir->debug_symbols, debug_symbol);
+
+    aug_string_incref(debug_symbol.symbol_name);
 }
 
 static inline bool aug_ir_set_var(aug_ir* ir, aug_string* var_name)
@@ -3385,11 +3403,12 @@ static inline bool aug_ir_set_var(aug_ir* ir, aug_string* var_name)
     else
         symbol.scope = AUG_SYM_SCOPE_LOCAL;
 
-    aug_symbol* symbol_ptr = aug_hashtable_insert_type(aug_symbol, scope->symtable, var_name->buffer);
+    aug_symbol* symbol_ptr = aug_hashtable_insert_type(aug_symbol, scope->symtable, symbol.name->buffer);
     if(symbol_ptr == NULL)
         return false;
 
     *symbol_ptr = symbol;
+    aug_string_incref(symbol_ptr->name);
     return true;
 }
 
@@ -3409,11 +3428,13 @@ static inline bool aug_ir_set_param(aug_ir* ir, aug_string* param_name)
     else
         symbol.scope = AUG_SYM_SCOPE_PARAM;
 
-    aug_symbol* symbol_ptr = aug_hashtable_insert_type(aug_symbol, scope->symtable, param_name->buffer);
+    aug_symbol* symbol_ptr = aug_hashtable_insert_type(aug_symbol, scope->symtable, symbol.name->buffer);
     if(symbol_ptr == NULL)
         return false;
 
     *symbol_ptr = symbol;
+
+    aug_string_incref(symbol_ptr->name);
     return true;
 }
 
@@ -3433,7 +3454,7 @@ static inline bool aug_ir_set_func(aug_ir* ir, aug_string* func_name, int param_
     else
         symbol.scope = AUG_SYM_SCOPE_LOCAL;
 
-    aug_symbol* symbol_ptr = aug_hashtable_insert_type(aug_symbol, scope->symtable, func_name->buffer);
+    aug_symbol* symbol_ptr = aug_hashtable_insert_type(aug_symbol, scope->symtable, symbol.name->buffer);
     if(symbol_ptr == NULL)
     {
         if(update)
@@ -3443,6 +3464,8 @@ static inline bool aug_ir_set_func(aug_ir* ir, aug_string* func_name, int param_
     }
 
     *symbol_ptr = symbol;
+    if(!update)
+        aug_string_incref(symbol_ptr->name);
     return true;
 }
 
@@ -4355,7 +4378,7 @@ aug_string* aug_vm_get_debug_symbol_name(aug_vm* vm, size_t operand_size)
     {
         aug_debug_symbol debug_symbol = aug_container_at_type(aug_debug_symbol, vm->debug_symbols, i);
         if(debug_symbol.bytecode_addr == addr)
-            return debug_symbol.symbol.name;
+            return debug_symbol.symbol_name;
     }
     return NULL;
 }
@@ -5028,12 +5051,12 @@ aug_value aug_vm_execute_from_frame(aug_vm* vm, int func_addr, int argc, aug_val
 
 // COMPILER ============================================== COMPILER ========================================== COMPILER // 
 
-void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir);
+void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input);
 
-void aug_generate_ir_prepass(const aug_ast* node, aug_ir* ir)
+void aug_generate_ir_prepass(const aug_ast* node, aug_ir* ir, aug_input* input)
 {
     // This is a statement prepass. Will gather globals and handle use calls
-    if(node == NULL || !ir->valid)
+    if(node == NULL || !ir->valid || input == NULL)
         return;
 
     const aug_token token = node->token;
@@ -5048,7 +5071,7 @@ void aug_generate_ir_prepass(const aug_ast* node, aug_ir* ir)
         {
             int i;
             for(i = 0; i < children_size; ++ i)
-                aug_generate_ir_prepass(children[i], ir);
+                aug_generate_ir_prepass(children[i], ir, input);
             break;
         }
         case AUG_AST_STMT_DEFINE_FUNC: 
@@ -5062,43 +5085,58 @@ void aug_generate_ir_prepass(const aug_ast* node, aug_ir* ir)
             if(!aug_ir_set_func(ir, token_data, param_count, false))
             {
                 ir->valid = false;
-                aug_log_input_error_at(ir->input, &token.pos, "Global %s already defined", token_data->buffer);
+                aug_log_input_error_at(input, &token.pos, "Global %s already defined", token_data->buffer);
                 break;
             }
             break;
         }
         case AUG_AST_USE_LIB:
         {
-            const aug_ir_operand operand = aug_ir_operand_from_str(token_data->buffer);
+            const aug_ir_operand operand = aug_ir_operand_from_str(token_data);
             aug_ir_add_operation_arg(ir, AUG_OPCODE_IMPORT_LIB, operand);
-            break;  
+            break;
         } 
         case AUG_AST_USE_SCRIPT:
         {
-            // TODO: open and parse script. Add bytecode and globals.
-            aug_input* input = aug_input_open(token_data->buffer, ir->input->error_func);
-            if (input == NULL)
-                break;
+            // TODO: open and parse script, should be relative to the current input. (i.e. trunk filename, add relative path and get absolute?) 
+            aug_string* imported_filename = aug_string_create(input->filename->buffer);
+            size_t dir_pos = imported_filename->length;
+            while(--dir_pos >= 0)
+            {
+                if(imported_filename->buffer[dir_pos] == '/' || imported_filename->buffer[dir_pos] == '\\')
+                {
+                    ++dir_pos;
+                    break;
+                }
+            }
+
+            size_t i;
+            for(i = 0; i <= token_data->length; ++i) // <= note include null term
+            {
+                if(i+dir_pos >= imported_filename->length)
+                    aug_string_push(imported_filename, token_data->buffer[i]);
+                else
+                    aug_string_set(imported_filename, i+dir_pos, token_data->buffer[i]);
+            }
 
             // Parse file
-            aug_ast* root = aug_parse(input);
+            aug_input* imported_input = aug_input_open(imported_filename->buffer, input->error_func);
+            aug_ast* root = aug_parse(imported_input);
             if (root == NULL)
             {
-                aug_input_close(input);
+                aug_string_decref(imported_filename);
+                aug_input_close(imported_input);
+                aug_log_input_error_at(input, &token.pos, "Failed to use script %s", token_data->buffer);
                 break;
             }
 
-            aug_input* prev_input = ir->input;
-            ir->input = input;
+            // Generate IR / 
+            // TODO: fix memory leak error with symbols being improperly tracked when freed from ast and held by the user IR
+            aug_generate_ir_pass(root, ir, imported_input);
 
-            // compile inline with current ir state
-            aug_generate_ir_pass(root, ir);
-
-            aug_input_close(input);
+            aug_string_decref(imported_filename);
+            aug_input_close(imported_input);
             aug_ast_delete(root);
-
-            // restore input
-            ir->input = prev_input;
             break;  
         } 
         default: 
@@ -5106,7 +5144,7 @@ void aug_generate_ir_prepass(const aug_ast* node, aug_ir* ir)
     }
 }
 
-void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
+void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
 {
     if(node == NULL || !ir->valid)
         return;
@@ -5121,18 +5159,18 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
         case AUG_AST_ROOT:
         {
             // gather globals, uses etc..
-            aug_generate_ir_prepass(node, ir);
+            aug_generate_ir_prepass(node, ir, input);
 
             int i;
             for(i = 0; i < children_size; ++ i)
-                aug_generate_ir_pass(children[i], ir);
+                aug_generate_ir_pass(children[i], ir, input);
             break;
         }
         case AUG_AST_BLOCK: 
         {
             int i;
             for(i = 0; i < children_size; ++ i)
-                aug_generate_ir_pass(children[i], ir);
+                aug_generate_ir_pass(children[i], ir, input);
 
             break;
         }
@@ -5182,7 +5220,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
                 }
                 case AUG_TOKEN_STRING:
                 {
-                    const aug_ir_operand operand = aug_ir_operand_from_str(token_data->buffer);
+                    const aug_ir_operand operand = aug_ir_operand_from_str(token_data);
                     aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_STRING, operand);
                     break;
                 }
@@ -5217,7 +5255,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
             if(symbol.type == AUG_SYM_NONE)
             {
                 ir->valid = false;
-                aug_log_input_error_at(ir->input, &token.pos, "Variable %s not defined in current block", 
+                aug_log_input_error_at(input, &token.pos, "Variable %s not defined in current block", 
                     token_data->buffer);
                 return;
             }
@@ -5243,7 +5281,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
         {
             assert(children_size == 1); // token [0]
 
-            aug_generate_ir_pass(children[0], ir);
+            aug_generate_ir_pass(children[0], ir, input);
 
             switch (token.id)
             {
@@ -5260,8 +5298,8 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
 
             aug_token_id id = token.id;
             if(id != AUG_TOKEN_ASSIGN) // special condition, assignment handles lhs via the addr/element
-                aug_generate_ir_pass(children[0], ir); // LHS
-            aug_generate_ir_pass(children[1], ir); // RHS
+                aug_generate_ir_pass(children[0], ir, input); // LHS
+            aug_generate_ir_pass(children[1], ir, input); // RHS
 
             switch (token.id)
             {
@@ -5297,7 +5335,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
                 if(var_node->type != AUG_AST_VARIABLE && var_node->type != AUG_AST_ELEMENT)
                 {
                     ir->valid = false;
-                    aug_log_input_error_at(ir->input, &token.pos, "Left hand of assignment must be a variable or element");
+                    aug_log_input_error_at(input, &token.pos, "Left hand of assignment must be a variable or element");
                     break;
                 }
 
@@ -5310,13 +5348,13 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
                     if(symbol.type == AUG_SYM_NONE)
                     {
                         ir->valid = false;
-                        aug_log_input_error_at(ir->input, &token.pos, "Variable %s not defined", var_token_data->buffer);
+                        aug_log_input_error_at(input, &token.pos, "Variable %s not defined", var_token_data->buffer);
                         break;
                     }
                     if(symbol.type == AUG_SYM_FUNC)
                     {
                         ir->valid = false;
-                        aug_log_input_error_at(ir->input, &token.pos, "Can not assign function %s to a value", var_token_data->buffer);
+                        aug_log_input_error_at(input, &token.pos, "Can not assign function %s to a value", var_token_data->buffer);
                         break;
                     }
 
@@ -5331,8 +5369,8 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
                 else if(var_node->type == AUG_AST_ELEMENT)
                 {
                     assert(var_node->children_size == 2); // 0[1]
-                    aug_generate_ir_pass(var_node->children[0], ir); // push index expr
-                    aug_generate_ir_pass(var_node->children[1], ir); // push container                    
+                    aug_generate_ir_pass(var_node->children[0], ir, input); // push index expr
+                    aug_generate_ir_pass(var_node->children[1], ir, input); // push container                    
                     aug_ir_add_operation(ir, AUG_OPCODE_LOAD_ELEMENT);
                 }
             }
@@ -5342,7 +5380,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
         {
             int i;
             for(i = children_size - 1; i >= 0; --i)
-                aug_generate_ir_pass(children[i], ir);
+                aug_generate_ir_pass(children[i], ir, input);
 
             const aug_ir_operand count_operand = aug_ir_operand_from_int(children_size);
             aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_ARRAY, count_operand);
@@ -5352,7 +5390,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
         {
             int i;
             for (i = children_size - 1; i >= 0; --i)
-                aug_generate_ir_pass(children[i], ir);
+                aug_generate_ir_pass(children[i], ir, input);
 
             const aug_ir_operand count_operand = aug_ir_operand_from_int(children_size);
             aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_MAP, count_operand);
@@ -5361,23 +5399,23 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
         case AUG_AST_MAP_PAIR:
         {
             assert(children_size == 2); // 0[1]
-            aug_generate_ir_pass(children[0], ir); // push key
-            aug_generate_ir_pass(children[1], ir); // push value
+            aug_generate_ir_pass(children[0], ir, input); // push key
+            aug_generate_ir_pass(children[1], ir, input); // push value
             break;
         }
         case AUG_AST_ELEMENT:
         {
             assert(children_size == 2); // 0[1]
-            aug_generate_ir_pass(children[0], ir); // push index expr
-            aug_generate_ir_pass(children[1], ir); // push container
+            aug_generate_ir_pass(children[0], ir, input); // push index expr
+            aug_generate_ir_pass(children[1], ir, input); // push container
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_ELEMENT);
             break;
         }
         case AUG_AST_RANGE:
         {
             assert(children_size == 2); // 0[1]
-            aug_generate_ir_pass(children[0], ir); // push from 
-            aug_generate_ir_pass(children[1], ir); // push to
+            aug_generate_ir_pass(children[0], ir, input); // push from 
+            aug_generate_ir_pass(children[1], ir, input); // push to
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_RANGE);
             break;
         }
@@ -5385,7 +5423,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
         {
             int i;
             for( i = 0; i < children_size; ++i)
-                aug_generate_ir_pass(children[i], ir);
+                aug_generate_ir_pass(children[i], ir, input);
             break;
         }
         case AUG_AST_DISCARD:
@@ -5398,7 +5436,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
             assert(token_data != NULL);
 
             if(children_size == 1) // token = [0]
-                aug_generate_ir_pass(children[0], ir);
+                aug_generate_ir_pass(children[0], ir, input);
             else
                 aug_ir_add_operation(ir, AUG_OPCODE_PUSH_NONE);
 
@@ -5407,7 +5445,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
             if(symbol.type != AUG_SYM_NONE)
             {
                 ir->valid = false;
-                aug_log_input_error_at(ir->input, &token.pos, "Variable %s already defined in block", token_data->buffer);
+                aug_log_input_error_at(input, &token.pos, "Variable %s already defined in block", token_data->buffer);
                 break;
             }
 
@@ -5419,7 +5457,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
             assert(children_size == 2); //if([0]) {[1]}
 
             // Evaluate expression. 
-            aug_generate_ir_pass(children[0], ir);
+            aug_generate_ir_pass(children[0], ir, input);
 
             //Jump to end if false
             const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
@@ -5427,7 +5465,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
 
             // True block
             aug_ir_push_scope(ir);
-            aug_generate_ir_pass(children[1], ir);
+            aug_generate_ir_pass(children[1], ir, input);
             aug_ir_pop_scope(ir);
 
             const size_t end_block_addr = ir->bytecode_offset;
@@ -5442,7 +5480,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
             assert(children_size == 3); //if([0]) {[1]} else {[2]}
 
             // Evaluate expression. 
-            aug_generate_ir_pass(children[0], ir);
+            aug_generate_ir_pass(children[0], ir, input);
 
             //Jump to else if false
             const aug_ir_operand stub_operand = aug_ir_operand_from_int(0);
@@ -5450,7 +5488,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
 
             // True block
             aug_ir_push_scope(ir);
-            aug_generate_ir_pass(children[1], ir);
+            aug_generate_ir_pass(children[1], ir, input);
             aug_ir_pop_scope(ir);
 
             //Jump to end after true
@@ -5459,7 +5497,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
 
             // Else block
             aug_ir_push_scope(ir);
-            aug_generate_ir_pass(children[2], ir);
+            aug_generate_ir_pass(children[2], ir, input);
             aug_ir_pop_scope(ir);
 
             // Tag end address
@@ -5478,12 +5516,12 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
             aug_ir_begin_loop(ir);
 
             // Evaluate expression. 
-            aug_generate_ir_pass(children[0], ir);
+            aug_generate_ir_pass(children[0], ir, input);
             aug_ir_check_loop(ir);
 
             // Loop block
             aug_ir_push_scope(ir);
-            aug_generate_ir_pass(children[1], ir);
+            aug_generate_ir_pass(children[1], ir, input);
             aug_ir_pop_scope(ir);
 
             aug_ir_end_loop(ir);
@@ -5498,7 +5536,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
             aug_ir_scope* scope = aug_ir_current_scope(ir);
             int it_offset = scope->stack_offset++;
             it_offset = aug_ir_current_frame_local_offset(ir, it_offset, 0);
-            aug_generate_ir_pass(children[1], ir);
+            aug_generate_ir_pass(children[1], ir, input);
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_ITERATOR);
 
             // Top of the loop.
@@ -5521,7 +5559,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
             aug_ir_add_operation_arg(ir, AUG_OPCODE_LOAD_LOCAL, aug_ir_operand_from_symbol(var_symbol));
 
             // Loop block
-            aug_generate_ir_pass(children[2], ir);
+            aug_generate_ir_pass(children[2], ir, input);
 
             aug_ir_pop_scope(ir);
 
@@ -5539,7 +5577,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
             if(!aug_ir_break_loop(ir))
             {
                 ir->valid = false;
-                aug_log_input_error_at(ir->input, &token.pos, "Break statement must be inside loop");
+                aug_log_input_error_at(input, &token.pos, "Break statement must be inside loop");
             }
             break;
         }
@@ -5548,7 +5586,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
             if(!aug_ir_continue_loop(ir))
             {
                 ir->valid = false;
-                aug_log_input_error_at(ir->input, &token.pos, "Continue statement must be inside loop");
+                aug_log_input_error_at(input, &token.pos, "Continue statement must be inside loop");
             }
             break;
         }
@@ -5564,7 +5602,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
                 if(symbol.type == AUG_SYM_FUNC && symbol.argc != arg_count)
                 {
                     ir->valid = false;
-                    aug_log_input_error_at(ir->input, &token.pos, "Function Call %s passed %d arguments, expected %d", 
+                    aug_log_input_error_at(input, &token.pos, "Function Call %s passed %d arguments, expected %d", 
                         token_data->buffer, arg_count, symbol.argc);
                 }
                 else
@@ -5575,7 +5613,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
                     // Push arguments onto stack
                     int i;
                     for(i = 0; i < children_size; ++ i)
-                        aug_generate_ir_pass(children[i], ir);
+                        aug_generate_ir_pass(children[i], ir, input);
 
                     // TODO: Push arg count, and have the function body check that arg count matches in the vm runtime
                     aug_ir_operand arg_count = aug_ir_operand_from_int(children_size);
@@ -5608,10 +5646,10 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
 
             int i;
             for(i = arg_count - 1; i >= 0; --i)
-                aug_generate_ir_pass(children[i], ir);
+                aug_generate_ir_pass(children[i], ir, input);
 
-            const char* func_name = token_data->buffer;
-            aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_STRING, aug_ir_operand_from_str(func_name));
+            // push func name then call ext
+            aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_STRING, aug_ir_operand_from_str(token_data));
             aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL_EXT, aug_ir_operand_from_int(arg_count));
             break;
         }
@@ -5626,10 +5664,10 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
             // Push arguments onto stack
             int i;
             for(i = 1; i < children_size; ++i)
-                aug_generate_ir_pass(children[i], ir);
+                aug_generate_ir_pass(children[i], ir, input);
 
             // First arg is the value of the function to call 
-            aug_generate_ir_pass(children[0], ir);
+            aug_generate_ir_pass(children[0], ir, input);
 
             // TODO: Push arg count, and have the function body check that arg count matches in the vm runtime
             aug_ir_add_operation_arg(ir, AUG_OPCODE_ARG_COUNT, aug_ir_operand_from_int(arg_count));
@@ -5645,7 +5683,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
             const aug_ir_operand offset = aug_ir_operand_from_int(aug_ir_calling_offset(ir));
             if(children_size == 1) //return [0];
             {
-                aug_generate_ir_pass(children[0], ir);
+                aug_generate_ir_pass(children[0], ir, input);
                 aug_ir_add_operation_arg(ir, AUG_OPCODE_RETURN_FUNC, offset);
             }
             else
@@ -5665,7 +5703,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
         {
             int i;
             for(i = 0; i < children_size; ++ i)
-                aug_generate_ir_pass(children[i], ir);
+                aug_generate_ir_pass(children[i], ir, input);
             break;
         }
         case AUG_AST_STMT_DEFINE_FUNC:
@@ -5687,13 +5725,13 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
             if(!aug_ir_set_func(ir, token_data, param_count, update))
             {
                 ir->valid = false;
-                aug_log_input_error_at(ir->input, &token.pos, "Function %s already defined", token_data->buffer);
+                aug_log_input_error_at(input, &token.pos, "Function %s already defined", token_data->buffer);
                 break;
             }
 
             // Parameter frame
             aug_ir_push_scope(ir);
-            aug_generate_ir_pass(children[0], ir);
+            aug_generate_ir_pass(children[0], ir, input);
 
             aug_ir_add_debug_symbol(ir, aug_ir_get_symbol(ir, token_data));
 
@@ -5703,7 +5741,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
 
             // Function block frame
             aug_ir_push_frame(ir, param_count);
-            aug_generate_ir_pass(children[1], ir);
+            aug_generate_ir_pass(children[1], ir, input);
 
             // Ensure there is a return
             if(aug_ir_last_operation(ir)->opcode != AUG_OPCODE_RETURN_FUNC)
@@ -5727,16 +5765,16 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir)
     }
 }
 
-aug_ir* aug_generate_ir(aug_vm* vm, aug_input* input, aug_ast* root)
+aug_ir* aug_generate_ir(aug_vm* vm, aug_ast* root, aug_input* input)
 {
     if(root == NULL || input == NULL)
         return NULL;
 
     // Generate IR
-    aug_ir* ir = aug_ir_new(input);
+    aug_ir* ir = aug_ir_new();
 
     aug_ir_push_frame(ir, 0);  // push global frame
-    aug_generate_ir_pass(root, ir);
+    aug_generate_ir_pass(root, ir, input);
     
     // Signal to VM to exit
     aug_ir_add_operation(ir, AUG_OPCODE_EXIT);
@@ -5776,9 +5814,10 @@ char* aug_generate_bytecode(aug_ir* ir)
                 *(instruction++) = operand.data.bytes[i];
             break;
         case AUG_IR_OPERAND_BYTES:
-            for(size_t i = 0; i < strlen(operand.data.str); ++i)
+            for(size_t i = 0; operand.data.str[i] != '\0'; ++i)
                 *(instruction++) = operand.data.str[i];
             *(instruction++) = 0; // null terminate
+            AUG_FREE(operand.data.str);
             break;
         case AUG_IR_OPERAND_SYMBOL:
             aug_symbol* symbol = aug_hashtable_ptr_type(aug_symbol, ir->globals, operand.data.str);
@@ -6513,6 +6552,12 @@ void aug_script_delete(aug_script* script)
     script->globals = aug_hashtable_decref(script->globals);
     script->stack_state = aug_array_decref(script->stack_state);
     script->lib_extensions = aug_hashtable_decref(script->lib_extensions);
+
+    for(size_t i = 0; i < script->debug_symbols->length; ++i)
+    {
+        aug_debug_symbol* debug_symbol = aug_container_ptr_type(aug_debug_symbol, script->debug_symbols, i);
+        aug_string_decref(debug_symbol->symbol_name);
+    }
     script->debug_symbols = aug_container_decref(script->debug_symbols);
 
     if (script->bytecode != NULL)
@@ -6606,9 +6651,6 @@ aug_script* aug_compile(aug_vm* vm, const char* filename)
         return NULL;
 
     aug_input* input = aug_input_open(filename, vm->error_func);
-    if (input == NULL)
-        return NULL;
-
     aug_ast* root = aug_parse(input);
     if (root == NULL)
     {
@@ -6616,7 +6658,7 @@ aug_script* aug_compile(aug_vm* vm, const char* filename)
         return NULL;
     }
 
-    aug_ir* ir = aug_generate_ir(vm, input, root);
+    aug_ir* ir = aug_generate_ir(vm, root, input);
     if(ir == NULL)
     {
         aug_ast_delete(root);
