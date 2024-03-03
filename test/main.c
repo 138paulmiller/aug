@@ -54,7 +54,7 @@ void test_run(const char* filename, aug_vm* vm, aug_tester_func* func)
     if (s_tester.dump)
         aug_dump_file(vm, s_tester.filename);
 #endif 
-    
+
     // Run test
     if (func != NULL)
         func(vm);
@@ -312,7 +312,7 @@ void on_aug_error(const char* msg)
     fprintf(stderr, "[%sERROR%s]\t%s\t\n", STDOUT_RED, STDOUT_CLEAR, msg);
 }
 
-#if AUG_DEBUG && defined(TEST_DEBUG_STACK) && TEST_DEBUG_STACK
+#if AUG_DEBUG
 void on_aug_post_instruction_debug(aug_vm* vm, int opcode)
 {
     printf("%ld:   %s\n", vm->instruction - vm->bytecode, aug_opcode_label(opcode));
@@ -340,7 +340,7 @@ int main(int argc, char**argv)
 {
     aug_vm* vm = aug_startup(on_aug_error);
 
-#if AUG_DEBUG && defined(TEST_DEBUG_STACK) && TEST_DEBUG_STACK
+#if AUG_DEBUG
     vm->debug_post_instruction = on_aug_post_instruction_debug;
 #endif
 
