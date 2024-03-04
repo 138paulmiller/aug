@@ -92,10 +92,6 @@ extern "C" {
 #define AUG_APPROX_THRESHOLD 0.0000001
 #endif//AUG_APPROX_THRESHOLD 
 
-
-#ifndef AUG_REGISTER_LIB_FUNC
-#define AUG_REGISTER_LIB_FUNC "aug_register_lib"
-
 #ifndef AUG_ALLOW_NO_SEMICOLON
 #define AUG_ALLOW_NO_SEMICOLON true
 #endif//AUG_ALLOW_NO_SEMICOLON
@@ -104,24 +100,26 @@ extern "C" {
 #define AUG_ALLOW_SINGLE_STMT_BLOCK true
 #endif//AUG_ALLOW_SINGLE_STMT_BLOCK
 
-
-//#if defined(_MSC_VER)
-//    #define AUG_LIBCALL __declspec(dllexport)
-//#elif defined(__GNUC__)
-//    #define AUG_LIBCALL __attribute__((visibility("default")))
-//    #define IMPORT
-//#else
-//    #define AUG_LIBCALL
-//    #pragma warning unknown dynamic link import/export semantics.
-//#endif
-
-#ifdef __cplusplus
-#define AUG_LIBCALL extern "C" 
-#else 
-#define AUG_LIBCALL
-#endif //AUG_REGISTER_LIB_FUNC
-
+#ifndef AUG_REGISTER_LIB_FUNC
+#define AUG_REGISTER_LIB_FUNC "aug_register_lib"
 #endif//AUG_REGISTER_LIB_FUNC
+
+#if defined(__cplusplus) && defined(_MSC_VER)
+#define AUG_STDCALL __stdcall
+#elif defined(__cplusplus) && defined(__GNUC__)
+#define AUG_STDCALL extern "C" //__attribute__((visibility("default")))
+#else 
+#define AUG_STDCALL
+#endif 
+
+#if defined(_MSC_VER)
+#define AUG_LIB void __declspec(dllexport) AUG_STDCALL
+#elif defined(__GNUC__)
+#define AUG_LIB void AUG_STDCALL
+#else
+#define AUG_LIB
+#pragma warning Potentially Unsupported compiler. Unknown dynamic link import/export semantics.
+#endif
 
 #include <stdlib.h>
 #include <stdbool.h>
@@ -129,6 +127,7 @@ extern "C" {
 #include <stdio.h>
 
 #if _WIN32
+#include <Windows.h>
 #elif __linux
 #include <dlfcn.h>
 #endif
@@ -597,8 +596,8 @@ uint8_t* aug_hashtable_bucket_insert(aug_hashtable* map, aug_hashtable_bucket* b
         AUG_FREE(bucket->key_buffer[i]);
 
     ++map->count;
-    const int len = strlen(key);
-    const int buff_size = sizeof(char) * len + 1;
+
+    const int buff_size = strlen(key) + 1;
     bucket->key_buffer[i] = (char*)AUG_ALLOC(buff_size);
 #ifdef AUG_SECURE
     strcpy_s(bucket->key_buffer[i], buff_size, key);
@@ -633,7 +632,6 @@ void aug_hashtable_resize(aug_hashtable* map, size_t size)
     map->buckets = (aug_hashtable_bucket*)AUG_ALLOC(sizeof(aug_hashtable_bucket) * map->capacity);
     aug_hashtable_bucket_init(map, AUG_HASHTABLE_BUCKET_SIZE_DEFAULT);
 
-
     // reindex all values, copy over raw data 
     size_t i, j;
     for (i = 0; i < old_size; ++i)
@@ -659,7 +657,9 @@ void aug_hashtable_resize(aug_hashtable* map, size_t size)
         }
 
         AUG_FREE(old_bucket->data_buffer);
+        old_bucket->data_buffer = NULL;
         AUG_FREE(old_bucket->key_buffer);
+        old_bucket->key_buffer = NULL;
     }
 
     AUG_FREE(old_buckets);
@@ -985,10 +985,9 @@ static inline void aug_log_input_error_hint(aug_input* input, const aug_pos* pos
         input->filename->buffer, pos->line + 1, pos->col + 1);
 
     // Draw line
-    const int buff_size = 4096;
-    char buffer[buff_size];
+    char buffer[4096];
     size_t n = 0;
-    while (c != EOF && c != '\n' && n < (buff_size - 1))
+    while (c != EOF && c != '\n' && n < (sizeof(buffer) - 1))
     {
         buffer[n++] = c;
         c = fgetc(input->file);
@@ -3055,19 +3054,19 @@ static inline aug_ir* aug_ir_new()
 
 static inline void aug_ir_delete(aug_ir* ir)
 {
-    aug_hashtable_decref(ir->globals);
-    aug_container_decref(ir->frame_stack);
-    aug_container_decref(ir->loop_stack);
+    ir->globals = aug_hashtable_decref(ir->globals);
+    ir->frame_stack = aug_container_decref(ir->frame_stack);
+    ir->loop_stack = aug_container_decref(ir->loop_stack);
 
     if(ir->debug_symbols->ref_count == 1)
     {
         for(size_t i = 0; i < ir->debug_symbols->length; ++i)
         {
             aug_debug_symbol* debug_symbol = aug_container_ptr_type(aug_debug_symbol, ir->debug_symbols, i);
-            aug_string_decref(debug_symbol->symbol_name);
+            debug_symbol->symbol_name = aug_string_decref(debug_symbol->symbol_name);
         }
     }
-    aug_container_decref(ir->debug_symbols);
+    ir->debug_symbols = aug_container_decref(ir->debug_symbols);
  
     for(size_t i = 0; i < ir->operations->length; ++i)
     {
@@ -3083,7 +3082,8 @@ static inline void aug_ir_delete(aug_ir* ir)
             break;
         }
     }
-    aug_container_decref(ir->operations);
+
+    ir->operations = aug_container_decref(ir->operations);
 
     AUG_FREE(ir);
 }
@@ -3188,7 +3188,7 @@ static inline aug_ir_operand aug_ir_operand_from_str(const aug_string* data)
     operand.type = AUG_IR_OPERAND_BYTES;
     operand.data.str = (char*)AUG_ALLOC(sizeof(char)*data->length+1);
 #ifdef AUG_SECURE
-    strcpy_s(operand.data.str, string->capacity, data->buffer);
+    strcpy_s(operand.data.str, data->length+1, data->buffer);
 #else
     strcpy(operand.data.str, data->buffer);
 #endif
@@ -3259,9 +3259,7 @@ static inline void aug_ir_symtable_free(uint8_t* data)
 {
     aug_symbol* symbol_ptr = (aug_symbol*)data;
     if(symbol_ptr != NULL)
-    {
         aug_string_decref(symbol_ptr->name);
-    }
 }
 
 static inline void aug_ir_push_frame(aug_ir* ir, int arg_count)
@@ -3304,9 +3302,9 @@ static inline void aug_ir_pop_frame(aug_ir* ir)
     for(size_t i = 0; i < frame.scope_stack->length; ++i)
     {
         aug_ir_scope scope = aug_container_at_type(aug_ir_scope, frame.scope_stack, i);
-        aug_hashtable_decref(scope.symtable);
+        scope.symtable = aug_hashtable_decref(scope.symtable);
     }
-    aug_container_decref(frame.scope_stack);
+    frame.scope_stack = aug_container_decref(frame.scope_stack);
 }
 
 static inline void aug_ir_push_scope(aug_ir* ir)
@@ -3329,7 +3327,7 @@ static inline void aug_ir_pop_scope(aug_ir* ir)
 
     aug_ir_frame* frame = aug_ir_current_frame(ir);
     aug_ir_scope scope = aug_container_pop_type(aug_ir_scope, frame->scope_stack);
-    aug_hashtable_decref(scope.symtable);
+    scope.symtable = aug_hashtable_decref(scope.symtable);
 }
 
 static inline void aug_ir_begin_loop(aug_ir* ir)
@@ -4508,6 +4506,24 @@ void aug_vm_save_script(aug_vm* vm, aug_script* script)
 void aug_vm_lib_load(aug_vm* vm, const char* libname)
 {
 #if _WIN32
+    char libpath[1024];
+    snprintf(libpath, sizeof(libpath), "%s.dll", libname); //seach locally
+
+    HINSTANCE handle = LoadLibraryA(libpath);
+    if (handle == NULL)
+    {
+        aug_log_error(vm->error_func, "Failed to open library %s", libname);
+        return;
+    }
+
+    // resolve function address here
+    aug_register_lib_func register_lib = (aug_register_lib_func)GetProcAddress(handle, AUG_REGISTER_LIB_FUNC);
+    if (register_lib == NULL)
+    {
+        aug_log_error(vm->error_func, "Library %s failed to setup", libname);
+        FreeLibrary(handle);
+        return;
+    }
 #elif __linux
     char libpath[1024];
     snprintf(libpath, sizeof(libpath), "./%s.so", libname); //seach locally
@@ -4528,10 +4544,10 @@ void aug_vm_lib_load(aug_vm* vm, const char* libname)
         dlclose(handle);
         return;
     }
+#endif
 
     register_lib(vm);
     aug_container_push_type(aug_lib_handle, vm->libs, (aug_lib_handle)handle);
-#endif  
 }
 
 void aug_vm_lib_unload(aug_vm* vm, aug_lib_handle handle)
@@ -4539,6 +4555,7 @@ void aug_vm_lib_unload(aug_vm* vm, aug_lib_handle handle)
     if(handle == 0)
         return;
 #if _WIN32
+    FreeLibrary((HINSTANCE)handle);
 #elif __linux
     dlclose((void*)handle);
 #endif
@@ -5859,7 +5876,7 @@ aug_string* aug_string_create(const char* bytes)
 	string->buffer = (char*)AUG_ALLOC(sizeof(char)*string->capacity);
 
 #ifdef AUG_SECURE
-    strcpy_s(string->buffer, string->capacity, bytes);
+    strcpy_s(string->buffer, string->length+1, bytes);
 #else
     strcpy(string->buffer, bytes);
 #endif

@@ -1,5 +1,6 @@
-#include <math.h>
+#define AUG_IMPLEMENTATION
 #include <aug.h>
+#include <math.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -333,7 +334,7 @@ aug_value aug_std_to_string(int argc, aug_value* args)
 	return aug_create_string(out);
 }
 
-AUG_LIBCALL void aug_register_lib(aug_vm* vm)
+AUG_LIB aug_register_lib(aug_vm* vm)
 {
 	aug_register(vm, "snap",      aug_std_snap      );
 	aug_register(vm, "random",    aug_std_random    );
