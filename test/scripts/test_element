@@ -1,4 +1,4 @@
-use std
+import std
 
 var map = { 
     "a" : 1, 

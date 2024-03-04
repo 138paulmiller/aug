@@ -1,4 +1,4 @@
-use std
+import std
 
 func fib_recursive(a) {
     if a == 0 { 

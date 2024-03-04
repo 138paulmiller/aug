@@ -322,7 +322,7 @@ aug_value aug_std_to_string(int argc, aug_value* args)
         snprintf(out, sizeof(out), "%d", value.i);
         break;
     case AUG_FLOAT:
-        snprintf(out, sizeof(out), "%f", value.f);
+        snprintf(out, sizeof(out), "%0.3f", value.f);
         break;
     case AUG_STRING:
         snprintf(out, sizeof(out), "%s", value.str->buffer);

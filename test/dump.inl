@@ -123,7 +123,7 @@ void dump_ir(aug_ir* ir)
             aug_debug_symbol debug_symbol = aug_container_at_type(aug_debug_symbol, ir->debug_symbols, i);
             if (debug_symbol.bytecode_addr == addr)
             {
-                if (debug_symbol.symbol.name) printf("(%s)", debug_symbol.symbol.name->buffer);
+                if (debug_symbol.symbol_name) printf("(%s)", debug_symbol.symbol_name->buffer);
                 break;
             };
         }
@@ -149,7 +149,7 @@ void aug_dump_file(aug_vm* vm, const char* filename)
     // Generate IR
 
        // Generate IR
-    aug_ir* ir = aug_generate_ir(vm, input, root);
+    aug_ir* ir = aug_generate_ir(vm, root, input);
     dump_ir(ir);
 
     aug_ast_delete(root);

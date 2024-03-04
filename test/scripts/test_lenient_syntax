@@ -1,5 +1,5 @@
 # test single blocks an no semicolons
-use std
+import std
 var a = [ ]
 var b = 10
 

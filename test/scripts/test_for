@@ -1,4 +1,4 @@
-use std
+import std
 
 var a = [1, 10, 100, 1000, 10000];
 var total1 = 0;

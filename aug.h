@@ -1108,8 +1108,9 @@ typedef struct aug_token_detail
     AUG_TOKEN(CONTINUE,       0, 0, 0, "continue") \
     AUG_TOKEN(TRUE,           0, 0, 0, "true")     \
     AUG_TOKEN(FALSE,          0, 0, 0, "false")    \
-    AUG_TOKEN(NONE,           0, 0, 0, "none")    \
-    AUG_TOKEN(USE,            0, 0, 0, "use")
+    AUG_TOKEN(NONE,           0, 0, 0, "none")     \
+    AUG_TOKEN(IMPORT,         0, 0, 0, "import")   \
+    AUG_TOKEN(EXPORT,         0, 0, 0, "export")
 
 // Token identifier. 
 typedef enum aug_token_id
@@ -1707,8 +1708,8 @@ typedef uint8_t aug_ast_type;
     AUG_AST_TYPE(RETURN)             \
     AUG_AST_TYPE(BREAK)              \
     AUG_AST_TYPE(CONTINUE)           \
-    AUG_AST_TYPE(USE_SCRIPT)         \
-    AUG_AST_TYPE(USE_LIB)
+    AUG_AST_TYPE(IMPORT_SCRIPT)         \
+    AUG_AST_TYPE(IMPORT_LIB)
 
 enum aug_ast_types
 { 
@@ -2660,43 +2661,43 @@ aug_ast* aug_parse_stmt_continue(aug_lexer* lexer)
     return continue_stmt;
 }
 
-aug_ast* aug_parse_stmt_use(aug_lexer* lexer)
+aug_ast* aug_parse_stmt_import(aug_lexer* lexer)
 {
-    if(aug_lexer_curr(lexer).id != AUG_TOKEN_USE)
+    if(aug_lexer_curr(lexer).id != AUG_TOKEN_IMPORT)
         return NULL;
 
-    aug_lexer_move(lexer); // eat USE
+    aug_lexer_move(lexer); // eat IMPORT
 
-    aug_ast* use_stmt = NULL;
+    aug_ast* import_stmt = NULL;
 
     aug_token token = aug_lexer_curr(lexer);
     switch(token.id)
     {
         case AUG_TOKEN_STRING:
-            use_stmt = aug_ast_new(AUG_AST_USE_SCRIPT, aug_token_copy(token));
+            import_stmt = aug_ast_new(AUG_AST_IMPORT_SCRIPT, aug_token_copy(token));
             aug_lexer_move(lexer); // eat TOKEN 
             break;   
         case AUG_TOKEN_NAME:
-            use_stmt = aug_ast_new(AUG_AST_USE_LIB, aug_token_copy(token));
+            import_stmt = aug_ast_new(AUG_AST_IMPORT_LIB, aug_token_copy(token));
             aug_lexer_move(lexer); // eat TOKEN 
             break;
         default: 
-            aug_ast_delete(use_stmt);
+            aug_ast_delete(import_stmt);
             aug_log_input_error(lexer->input,  "Use statement expected library name or script path");
             break;
     }
 
-    if(use_stmt == NULL)
+    if(import_stmt == NULL)
         return NULL;
 
     if(!aug_parse_stmt_semicolon(lexer))
     {
-        aug_ast_delete(use_stmt);
+        aug_ast_delete(import_stmt);
         aug_log_input_error(lexer->input,  "Missing semicolon at end of use statement");
         return NULL;
     }
 
-    return use_stmt;
+    return import_stmt;
 }
 
 
@@ -2733,9 +2734,9 @@ aug_ast* aug_parse_stmt(aug_lexer* lexer, bool is_block)
     case AUG_TOKEN_CONTINUE:
         stmt = aug_parse_stmt_continue(lexer);
         break;
-    case AUG_TOKEN_USE:
+    case AUG_TOKEN_IMPORT:
         if(!is_block)
-            stmt = aug_parse_stmt_use(lexer);
+            stmt = aug_parse_stmt_import(lexer);
         break;
     case AUG_TOKEN_FUNC:
         if(!is_block)
@@ -3055,11 +3056,35 @@ static inline aug_ir* aug_ir_new()
 static inline void aug_ir_delete(aug_ir* ir)
 {
     aug_hashtable_decref(ir->globals);
-    aug_container_decref(ir->operations);
     aug_container_decref(ir->frame_stack);
     aug_container_decref(ir->loop_stack);
+
+    if(ir->debug_symbols->ref_count == 1)
+    {
+        for(size_t i = 0; i < ir->debug_symbols->length; ++i)
+        {
+            aug_debug_symbol* debug_symbol = aug_container_ptr_type(aug_debug_symbol, ir->debug_symbols, i);
+            aug_string_decref(debug_symbol->symbol_name);
+        }
+    }
     aug_container_decref(ir->debug_symbols);
  
+    for(size_t i = 0; i < ir->operations->length; ++i)
+    {
+        aug_ir_operation operation = aug_container_at_type(aug_ir_operation, ir->operations, i);
+        aug_ir_operand operand = operation.operand;
+        // free any allocated operand data
+        switch (operand.type)
+        {
+        case AUG_IR_OPERAND_BYTES:
+            AUG_FREE(operand.data.str);
+            break;
+        default:
+            break;
+        }
+    }
+    aug_container_decref(ir->operations);
+
     AUG_FREE(ir);
 }
 
@@ -3276,8 +3301,7 @@ static inline void aug_ir_pop_frame(aug_ir* ir)
     
     aug_ir_frame frame = aug_container_pop_type(aug_ir_frame, ir->frame_stack);
 
-    size_t i;
-    for(i = 0; i < frame.scope_stack->length; ++i)
+    for(size_t i = 0; i < frame.scope_stack->length; ++i)
     {
         aug_ir_scope scope = aug_container_at_type(aug_ir_scope, frame.scope_stack, i);
         aug_hashtable_decref(scope.symtable);
@@ -3366,8 +3390,7 @@ static inline void aug_ir_end_loop(aug_ir* ir)
     assert(operation != NULL);
     operation->operand = aug_ir_operand_from_int(end_block_addr);
 
-    size_t i;
-    for(i = 0; i < loop.break_operations->length; ++i)
+    for(size_t i = 0; i < loop.break_operations->length; ++i)
     {
         aug_ir_operation* operation = aug_ir_get_operation(ir, aug_container_at_type(size_t, loop.break_operations, i));
         assert(operation != NULL);
@@ -3471,11 +3494,10 @@ static inline bool aug_ir_set_func(aug_ir* ir, aug_string* func_name, int param_
 
 static inline aug_symbol aug_ir_get_symbol(aug_ir* ir, aug_string* name)
 {
-    int i,j;
-    for(i = ir->frame_stack->length - 1; i >= 0; --i)
+    for(int i = ir->frame_stack->length - 1; i >= 0; --i)
     {
         aug_ir_frame frame = aug_container_at_type(aug_ir_frame, ir->frame_stack, i);
-        for(j = frame.scope_stack->length - 1; j >= 0; --j)
+        for(int j = frame.scope_stack->length - 1; j >= 0; --j)
         {
             aug_ir_scope scope = aug_container_at_type(aug_ir_scope, frame.scope_stack, j);
             aug_symbol* symbol_ptr = aug_hashtable_ptr_type(aug_symbol, scope.symtable, name->buffer);
@@ -3491,11 +3513,10 @@ static inline aug_symbol aug_ir_get_symbol(aug_ir* ir, aug_string* name)
 
 static inline aug_symbol aug_ir_get_symbol_relative(aug_ir* ir, aug_string* name)
 {
-    int i,j;
-    for(i = ir->frame_stack->length - 1; i >= 0; --i)
+    for(int i = ir->frame_stack->length - 1; i >= 0; --i)
     {
         aug_ir_frame frame = aug_container_at_type(aug_ir_frame, ir->frame_stack, i);
-        for(j = frame.scope_stack->length - 1; j >= 0; --j)
+        for(int j = frame.scope_stack->length - 1; j >= 0; --j)
         {
             aug_ir_scope scope = aug_container_at_type(aug_ir_scope, frame.scope_stack, j);
             aug_symbol* symbol_ptr = aug_hashtable_ptr_type(aug_symbol, scope.symtable, name->buffer);
@@ -4372,9 +4393,8 @@ aug_string* aug_vm_get_debug_symbol_name(aug_vm* vm, size_t operand_size)
 {
     // not the -1 is to account for the immediate instruction advance befreo switch statement
     const int addr = (vm->instruction-1) - operand_size - vm->bytecode;
-    size_t i;
     // TODO: index by address for faster lookup. Not priority as this will only occur on VM error 
-    for(i = 0; i < vm->debug_symbols->length; ++i)
+    for(size_t i = 0; i < vm->debug_symbols->length; ++i)
     {
         aug_debug_symbol debug_symbol = aug_container_at_type(aug_debug_symbol, vm->debug_symbols, i);
         if(debug_symbol.bytecode_addr == addr)
@@ -4585,8 +4605,7 @@ void aug_vm_execute(aug_vm* vm)
             case AUG_OPCODE_POP:
             {
                 int delta = aug_vm_read_int(vm);
-                int i;
-                for(i = 0; i < delta; ++i)
+                while(--delta >= 0)
                     aug_decref(aug_vm_pop(vm));
                 break;
             }
@@ -4645,7 +4664,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_set_array(&value);
 
                 int count = aug_vm_read_int(vm);
-                while(count-- > 0)
+                while(--count >= 0)
                 {
                     aug_value* arg = aug_vm_pop(vm);
                     aug_value* element = aug_array_push(value.array);
@@ -4666,7 +4685,7 @@ void aug_vm_execute(aug_vm* vm)
                aug_set_map(&value);
 
                int count = aug_vm_read_int(vm);
-               while (count-- > 0)
+               while (--count >= 0)
                {
                    aug_value* arg_value = aug_vm_pop(vm);
                    aug_value* arg_key = aug_vm_pop(vm);
@@ -4911,8 +4930,7 @@ void aug_vm_execute(aug_vm* vm)
                 // Gather arguments
                 const int arg_count = aug_vm_read_int(vm);
                 aug_value* args = (aug_value*)AUG_ALLOC(sizeof(aug_value) * arg_count);
-                int i;
-                for(i = arg_count - 1; i >= 0; --i)
+                for(int i = arg_count - 1; i >= 0; --i)
                 {
                     aug_value* arg = aug_vm_pop(vm);
                     if(arg != NULL)
@@ -4928,7 +4946,7 @@ void aug_vm_execute(aug_vm* vm)
 
                 // Cleanup argumentsl
                 aug_decref(func_name_value);
-                for (i = 0; i < arg_count; ++i)
+                for (int i = 0; i < arg_count; ++i)
                     aug_decref(&args[i]);
                 AUG_FREE(args);
                 
@@ -4962,8 +4980,7 @@ void aug_vm_execute(aug_vm* vm)
                 
                 // Free locals
                 const int delta = aug_vm_read_int(vm);
-                int i;
-                for(i = 0; i < delta; ++i)
+                for(int i = 0; i < delta; ++i)
                     aug_decref(aug_vm_pop(vm));
                 
                 // Restore base index
@@ -5027,8 +5044,7 @@ aug_value aug_vm_execute_from_frame(aug_vm* vm, int func_addr, int argc, aug_val
     // Jump to function call
     vm->instruction = vm->bytecode + func_addr;
 
-    int i;
-    for(i = 0; i < argc; ++i)
+    for(int i = 0; i < argc; ++i)
     {
         aug_value* value = aug_vm_push(vm);
         if(value)
@@ -5069,8 +5085,7 @@ void aug_generate_ir_prepass(const aug_ast* node, aug_ir* ir, aug_input* input)
         case AUG_AST_ROOT:
         case AUG_AST_BLOCK: 
         {
-            int i;
-            for(i = 0; i < children_size; ++ i)
+            for(int i = 0; i < children_size; ++ i)
                 aug_generate_ir_prepass(children[i], ir, input);
             break;
         }
@@ -5090,13 +5105,13 @@ void aug_generate_ir_prepass(const aug_ast* node, aug_ir* ir, aug_input* input)
             }
             break;
         }
-        case AUG_AST_USE_LIB:
+        case AUG_AST_IMPORT_LIB:
         {
             const aug_ir_operand operand = aug_ir_operand_from_str(token_data);
             aug_ir_add_operation_arg(ir, AUG_OPCODE_IMPORT_LIB, operand);
             break;
         } 
-        case AUG_AST_USE_SCRIPT:
+        case AUG_AST_IMPORT_SCRIPT:
         {
             // TODO: open and parse script, should be relative to the current input. (i.e. trunk filename, add relative path and get absolute?) 
             aug_string* imported_filename = aug_string_create(input->filename->buffer);
@@ -5110,8 +5125,7 @@ void aug_generate_ir_prepass(const aug_ast* node, aug_ir* ir, aug_input* input)
                 }
             }
 
-            size_t i;
-            for(i = 0; i <= token_data->length; ++i) // <= note include null term
+            for(size_t i = 0; i <= token_data->length; ++i) // <= note include null term
             {
                 if(i+dir_pos >= imported_filename->length)
                     aug_string_push(imported_filename, token_data->buffer[i]);
@@ -5161,15 +5175,13 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
             // gather globals, uses etc..
             aug_generate_ir_prepass(node, ir, input);
 
-            int i;
-            for(i = 0; i < children_size; ++ i)
+            for(int i = 0; i < children_size; ++ i)
                 aug_generate_ir_pass(children[i], ir, input);
             break;
         }
         case AUG_AST_BLOCK: 
         {
-            int i;
-            for(i = 0; i < children_size; ++ i)
+            for(int i = 0; i < children_size; ++ i)
                 aug_generate_ir_pass(children[i], ir, input);
 
             break;
@@ -5378,8 +5390,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
         }
         case AUG_AST_ARRAY:
         {
-            int i;
-            for(i = children_size - 1; i >= 0; --i)
+            for(int i = children_size - 1; i >= 0; --i)
                 aug_generate_ir_pass(children[i], ir, input);
 
             const aug_ir_operand count_operand = aug_ir_operand_from_int(children_size);
@@ -5644,8 +5655,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
                 break;
             }
 
-            int i;
-            for(i = arg_count - 1; i >= 0; --i)
+            for(int i = arg_count - 1; i >= 0; --i)
                 aug_generate_ir_pass(children[i], ir, input);
 
             // push func name then call ext
@@ -5662,8 +5672,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
             size_t push_frame = aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL_FRAME, aug_ir_operand_from_int(0));
 
             // Push arguments onto stack
-            int i;
-            for(i = 1; i < children_size; ++i)
+            for(int i = 1; i < children_size; ++i)
                 aug_generate_ir_pass(children[i], ir, input);
 
             // First arg is the value of the function to call 
@@ -5701,8 +5710,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
         }
         case AUG_AST_PARAM_LIST:
         {
-            int i;
-            for(i = 0; i < children_size; ++ i)
+            for(int i = 0; i < children_size; ++ i)
                 aug_generate_ir_pass(children[i], ir, input);
             break;
         }
@@ -5792,8 +5800,7 @@ char* aug_generate_bytecode(aug_ir* ir)
     char* bytecode = (char*)AUG_ALLOC(sizeof(char)*ir->bytecode_offset);
     char* instruction = bytecode;
 
-    size_t i;
-    for(i = 0; i < ir->operations->length; ++i)
+    for(size_t i = 0; i < ir->operations->length; ++i)
     {
         aug_ir_operation operation = aug_container_at_type(aug_ir_operation, ir->operations, i);
         aug_ir_operand operand = operation.operand;
@@ -5817,7 +5824,6 @@ char* aug_generate_bytecode(aug_ir* ir)
             for(size_t i = 0; operand.data.str[i] != '\0'; ++i)
                 *(instruction++) = operand.data.str[i];
             *(instruction++) = 0; // null terminate
-            AUG_FREE(operand.data.str);
             break;
         case AUG_IR_OPERAND_SYMBOL:
             aug_symbol* symbol = aug_hashtable_ptr_type(aug_symbol, ir->globals, operand.data.str);
@@ -5890,8 +5896,7 @@ void aug_string_append_bytes(aug_string* string, const char* bytes, int len)
     if(string->length + len >= string->capacity) 
         aug_string_resize(string, string->capacity + len * 2);
 
-    int i;
-    for(i = 0; i < len; ++i)
+    for(int i = 0; i < len; ++i)
         string->buffer[string->length++] = bytes[i];
     string->buffer[string->length] = '\0'; 
 }
@@ -5932,8 +5937,7 @@ bool aug_string_compare_bytes(const aug_string* a, const char* bytes)
     if(len != a->length)
         return false;
 
-    size_t i;
-    for(i = 0; i < a->length; ++i)
+    for(size_t i = 0; i < a->length; ++i)
     {
         if(a->buffer[i] != bytes[i])
             return false;
@@ -6001,8 +6005,7 @@ void aug_array_resize(aug_array* array, size_t size)
 {
     aug_array_reserve(array, size);
     array->length = array->capacity;
-    size_t i;
-    for(i = 0; i < array->length; ++i)
+    for(size_t i = 0; i < array->length; ++i)
         array->buffer[i] = aug_none();
 }
  
@@ -6042,8 +6045,7 @@ bool aug_array_compare(const aug_array* a, const aug_array* b)
 {
     if(a->length != b->length)
         return false;
-    size_t i;
-    for(i = 0; i < a->length; ++i)
+    for(size_t i = 0; i < a->length; ++i)
     {
         if(!aug_compare(&a->buffer[i], &b->buffer[i]))
             return false;
@@ -6069,8 +6071,7 @@ void aug_array_remove(aug_array* array, int index)
         return;
 
     aug_decref(value);
-    size_t i;
-    for(i = index; i < array->length-1; ++i)
+    for(size_t i = index; i < array->length-1; ++i)
         array->buffer[i] = array->buffer[i+1];
     array->length--;
 }
@@ -6078,8 +6079,7 @@ void aug_array_remove(aug_array* array, int index)
 aug_array* aug_array_copy(aug_array* array)
 {
     aug_array* new_array = aug_array_new(array->length);
-    size_t i;
-    for(i = 0; i < array->length; ++i)
+    for(size_t i = 0; i < array->length; ++i)
         aug_array_append(new_array, aug_array_at(array, i));
     return new_array;
 }
@@ -6136,14 +6136,13 @@ size_t aug_map_hash(const aug_value* value)
 
 void aug_map_bucket_init(aug_map* map, int size)
 {
-    size_t i, j;
-    for (i = 0; i < map->capacity; ++i)
+    for (size_t i = 0; i < map->capacity; ++i)
     {
         aug_map_bucket* bucket = &map->buckets[i];
         bucket->capacity = size;
         bucket->keys = (aug_value*)AUG_ALLOC(sizeof(aug_value) * size);
         bucket->values = (aug_value*)AUG_ALLOC(sizeof(aug_value) * size);
-        for(j = 0; j < bucket->capacity; ++j)
+        for(size_t j = 0; j < bucket->capacity; ++j)
             bucket->keys[j] = aug_none();
     }
 }
@@ -6237,11 +6236,10 @@ void aug_map_resize(aug_map* map, size_t size)
     aug_map_bucket_init(map, AUG_MAP_BUCKET_SIZE_DEFAULT);
 
     // reindex all values, copy over raw data 
-    size_t i, j;
-    for (i = 0; i < old_size; ++i)
+    for (size_t i = 0; i < old_size; ++i)
     {
         aug_map_bucket* old_bucket = &old_buckets[i];
-        for (j = 0; j < old_bucket->capacity; ++j)
+        for (size_t j = 0; j < old_bucket->capacity; ++j)
         {
             aug_value* key = &old_bucket->keys[j];
             if (old_bucket->keys[j].type != AUG_NONE)
@@ -6275,12 +6273,10 @@ aug_map* aug_map_decref(aug_map* map)
 {
     if (map && --map->ref_count == 0)
     {
-        size_t i;
-        for (i = 0; i < map->capacity; ++i)
+        for (size_t i = 0; i < map->capacity; ++i)
         {
             aug_map_bucket* bucket = &map->buckets[i];
-            size_t j;
-            for (j = 0; j < bucket->capacity; ++j)
+            for (size_t j = 0; j < bucket->capacity; ++j)
             {
                 if (bucket->keys[j].type != AUG_NONE)
                 {
@@ -6330,8 +6326,7 @@ bool aug_map_remove(aug_map* map, aug_value* key)
     
     size_t hash = aug_map_hash(key);
     aug_map_bucket* bucket = &map->buckets[hash % map->capacity];
-    size_t i;
-    for (i = 0; i < bucket->capacity; ++i)
+    for (size_t i = 0; i < bucket->capacity; ++i)
     {
         if (aug_compare(&bucket->keys[i], key))
         {
@@ -6351,8 +6346,7 @@ aug_value* aug_map_get(aug_map* map, aug_value* key)
 
     size_t hash = aug_map_hash(key);
     aug_map_bucket* bucket = &map->buckets[hash % map->capacity];
-    size_t i;
-    for (i = 0; i < bucket->capacity; ++i)
+    for (size_t i = 0; i < bucket->capacity; ++i)
     {
         if (aug_compare(&bucket->keys[i], key))
         {
@@ -6382,11 +6376,10 @@ void aug_map_foreach(aug_map* map, aug_map_iterator* iterator, void* user_data)
     if (map == NULL)
         return;
 
-    size_t i, j;
-    for (i = 0; i < map->capacity; ++i)
+    for (size_t i = 0; i < map->capacity; ++i)
     {
         aug_map_bucket* bucket = &map->buckets[i];
-        for (j = 0; j < bucket->capacity; ++j)
+        for (size_t j = 0; j < bucket->capacity; ++j)
         {
             if (bucket->keys[j].type != AUG_NONE)
                 iterator(&bucket->keys[j], &bucket->values[j], user_data);
@@ -6553,10 +6546,13 @@ void aug_script_delete(aug_script* script)
     script->stack_state = aug_array_decref(script->stack_state);
     script->lib_extensions = aug_hashtable_decref(script->lib_extensions);
 
-    for(size_t i = 0; i < script->debug_symbols->length; ++i)
+    if(script->debug_symbols->ref_count == 1)
     {
-        aug_debug_symbol* debug_symbol = aug_container_ptr_type(aug_debug_symbol, script->debug_symbols, i);
-        aug_string_decref(debug_symbol->symbol_name);
+        for(size_t i = 0; i < script->debug_symbols->length; ++i)
+        {
+            aug_debug_symbol* debug_symbol = aug_container_ptr_type(aug_debug_symbol, script->debug_symbols, i);
+            aug_string_decref(debug_symbol->symbol_name);
+        }
     }
     script->debug_symbols = aug_container_decref(script->debug_symbols);
 
@@ -6578,8 +6574,7 @@ aug_vm* aug_startup(aug_error_func* error_func)
 
     aug_vm* vm = (aug_vm*)AUG_ALLOC(sizeof(aug_vm));
 
-    size_t i;
-    for (i = 0; i < AUG_STACK_SIZE; ++i)
+    for (size_t i = 0; i < AUG_STACK_SIZE; ++i)
         vm->stack[i] = aug_none();
 
     aug_vm_startup(vm);
@@ -6598,9 +6593,7 @@ void aug_shutdown(aug_vm* vm)
 {
     // Deinitialize global vm state, non script context sensitive
     // Unregister all extensions and lib extensions
-
-    size_t i;
-    for (i = 0; i < vm->libs->length; ++i)
+    for (size_t i = 0; i < vm->libs->length; ++i)
     {
         aug_lib_handle handle = aug_container_at_type(aug_lib_handle, vm->libs, i);
         aug_vm_lib_unload(vm, handle);
@@ -6659,13 +6652,6 @@ aug_script* aug_compile(aug_vm* vm, const char* filename)
     }
 
     aug_ir* ir = aug_generate_ir(vm, root, input);
-    if(ir == NULL)
-    {
-        aug_ast_delete(root);
-        aug_input_close(input);
-        return NULL;
-    }
-
     char* bytecode = aug_generate_bytecode(ir);
     if(bytecode == NULL)
     {

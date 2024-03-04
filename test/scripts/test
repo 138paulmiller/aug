@@ -1,6 +1,8 @@
-var i = 0;
-while i < 20 {
-    if i > 10       
-        break;
-    i+=1;
+func foo(x){
+    if x
+        return; 
+    expect(false);
 }
+
+foo(true);
+expect(true);
