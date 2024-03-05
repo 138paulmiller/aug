@@ -1176,6 +1176,24 @@ aug_token aug_token_copy(aug_token token)
     return new_token;
 }
 
+bool aug_token_is_assign_op(aug_token token)
+{
+    switch(token.id)
+    {
+
+    case AUG_TOKEN_ASSIGN: 
+    case AUG_TOKEN_ADD_ASSIGN: 
+    case AUG_TOKEN_SUB_ASSIGN: 
+    case AUG_TOKEN_MUL_ASSIGN: 
+    case AUG_TOKEN_DIV_ASSIGN: 
+    case AUG_TOKEN_MOD_ASSIGN: 
+    case AUG_TOKEN_POW_ASSIGN: 
+        return true;
+    default: break;
+    }
+    return false;    
+}
+
 aug_lexer* aug_lexer_new(aug_input* input)
 {
     aug_lexer* lexer = (aug_lexer*)AUG_ALLOC(sizeof(aug_lexer));
@@ -2252,26 +2270,7 @@ aug_ast* aug_parse_stmt_expr(aug_lexer* lexer)
     aug_ast_add(stmt_expr, expr);
 
     // If expression is a non-assignment, discard from the stack
-    bool discard = true;
-    if(expr->type == AUG_AST_BINARY_OP)
-    {
-        switch(expr->token.id)
-        {
-            case AUG_TOKEN_ASSIGN:
-            case AUG_TOKEN_ADD_ASSIGN: 
-            case AUG_TOKEN_SUB_ASSIGN: 
-            case AUG_TOKEN_MUL_ASSIGN: 
-            case AUG_TOKEN_DIV_ASSIGN: 
-            case AUG_TOKEN_MOD_ASSIGN: 
-            case AUG_TOKEN_POW_ASSIGN: 
-                discard = false;
-                break;
-            default:
-                break;
-        }
-    }
-
-    if(discard)
+    if(expr->type != AUG_AST_BINARY_OP || !aug_token_is_assign_op(expr->token))
         aug_ast_add(stmt_expr, aug_ast_new(AUG_AST_DISCARD, aug_token_new()));
 
     if(!aug_parse_stmt_semicolon(lexer))
@@ -2607,6 +2606,15 @@ aug_ast* aug_parse_stmt_return(aug_lexer* lexer)
     aug_lexer_move(lexer); // eat RETURN
 
     aug_ast* return_stmt = aug_ast_new(AUG_AST_RETURN, aug_token_new());
+
+#if AUG_ALLOW_NO_SEMICOLON
+    // Special condition for empty return and no semicolon. Prevent assignment operations from being the return expr. leave as none
+    if(aug_lexer_curr(lexer).id == AUG_TOKEN_NAME)
+    {
+        if(aug_token_is_assign_op(aug_lexer_next(lexer)))
+            return return_stmt;
+    }
+#endif
 
     aug_ast* expr = aug_parse_expr(lexer);
     if(expr != NULL)
