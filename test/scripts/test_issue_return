@@ -1,0 +1,10 @@
+#When not using semicolons, this return statement is ambiguous. As of now, assignment operators will be ignored after retrn statements if semicolons are omitted
+func foo(x){
+    var a = 0
+    if x
+        return
+    a = expect(false)
+}
+
+foo(true);
+expect(true);
