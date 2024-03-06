@@ -235,7 +235,7 @@ typedef struct aug_script
     aug_array* stack_state;         // current state of the stack before and after execution 
     aug_hashtable* lib_extensions;  // lib loaded extensions
 
-    aug_container* debug_symbols;   // aug_debug_symbol info for error handling
+    aug_container* markers;   // aug_trace_marker info for error handling
 } aug_script;
 
 // Calling frames are used to access parameters and local variables from the stack within a calling context
@@ -278,11 +278,12 @@ typedef struct aug_vm
     // Use aug_register/aug_unregister to modify these fields
     aug_hashtable* extensions;      // aug_extension all globally registered extensions. available to all scripts
     aug_container* libs;            // loaded library handles for the registered extensions
-    aug_container* debug_symbols;   // weak pointer to script's aug_debug_symbols
+    aug_container* markers;   // weak pointer to script's aug_trace_markers
 
     // Script runtime context state
 
-    const char* instruction; // Weak pointer to bytecode
+    const char* instruction; // Weak pointer to bytecode being executed
+    const char* last_instruction; // Weak pointer to bytecode last bytecode executed
     const char* bytecode;    // Weak pointer to script bytecode 
     aug_value stack[AUG_STACK_SIZE];
     int stack_index; // Current position on stack (ESP)
@@ -981,7 +982,7 @@ static inline void aug_log_input_error_hint(aug_input* input, const aug_pos* pos
     while (isspace(c) && ++ws_skipped)
         c = fgetc(input->file);
 
-    aug_log_error(input->error_func, "Syntax Error %s:(%d,%d) ", 
+    aug_log_error(input->error_func, "Error %s:(%d,%d) ", 
         input->filename->buffer, pos->line + 1, pos->col + 1);
 
     // Draw line
@@ -1806,6 +1807,13 @@ static inline void aug_ast_add(aug_ast* node, aug_ast* child)
     node->children[node->children_size++] = child;
 }
 
+aug_token aug_ast_token_empty(aug_lexer* lexer)
+{
+    aug_token token = aug_token_new();
+    token.pos = aug_lexer_curr(lexer).pos; //retains token position
+    return token;
+}
+
 // PARSER =============================================   PARSER   ============================================= PARSER // 
 
 aug_ast* aug_parse_value(aug_lexer* lexer);
@@ -1932,19 +1940,19 @@ aug_ast* aug_parse_funccall(aug_lexer* lexer, aug_ast* value)
 
     aug_lexer_move(lexer); // eat LPAREN
 
-    // TODO: If value is a variable, then have this be a standard function call. Otherwise, will be a call from stack
-    // This will allow func calls from elements, and returns values
+    // If value is a variable, then have this be a standard function call. 
+    // Otherwise, will be an unnamed call from stack. This allows func calls from elements, and returns values
     aug_ast* funccall = NULL;
     if(value->type == AUG_AST_VARIABLE)
     {
-        // pass token to func call
+        // pass token to func call and reset variable token. converts variable into func call
         funccall = aug_ast_new(AUG_AST_FUNC_CALL, value->token);
         value->token = aug_token_new();
         aug_ast_delete(value);
     }
     else
     {
-        funccall = aug_ast_new(AUG_AST_FUNC_CALL_UNNAMED, aug_token_new());
+        funccall = aug_ast_new(AUG_AST_FUNC_CALL_UNNAMED, aug_ast_token_empty(lexer));
         aug_ast_add(funccall, value); //NOTE: first child is the function value
     }
     
@@ -1983,7 +1991,7 @@ aug_ast* aug_parse_array(aug_lexer* lexer)
     aug_lexer_move(lexer); // eat LBRACKET
 
 
-    aug_ast* array = aug_ast_new(AUG_AST_ARRAY, aug_token_new());
+    aug_ast* array = aug_ast_new(AUG_AST_ARRAY, aug_ast_token_empty(lexer));
 
     aug_ast* expr = aug_parse_expr(lexer);
     if(expr != NULL)
@@ -2069,7 +2077,7 @@ aug_ast* aug_parse_map_pair(aug_lexer* lexer)
         return NULL;
     }
 
-    aug_ast* keyvalue = aug_ast_new(AUG_AST_MAP_PAIR, aug_token_new());
+    aug_ast* keyvalue = aug_ast_new(AUG_AST_MAP_PAIR, aug_ast_token_empty(lexer));
     aug_ast_add(keyvalue, key);
     aug_ast_add(keyvalue, expr);
     return keyvalue;
@@ -2086,7 +2094,7 @@ aug_ast* aug_parse_map(aug_lexer* lexer)
     if (aug_lexer_curr(lexer).id == AUG_TOKEN_RBRACE)
     {
         aug_lexer_move(lexer); // eat RBRACE
-        return aug_ast_new(AUG_AST_MAP, aug_token_new());
+        return aug_ast_new(AUG_AST_MAP, aug_ast_token_empty(lexer));
     }
 
     // must have key : comma. Otherwise, not a map literal
@@ -2096,7 +2104,7 @@ aug_ast* aug_parse_map(aug_lexer* lexer)
         return NULL;
     }
 
-    aug_ast* map = aug_ast_new(AUG_AST_MAP, aug_token_new());
+    aug_ast* map = aug_ast_new(AUG_AST_MAP, aug_ast_token_empty(lexer));
     aug_ast* pair = aug_parse_map_pair(lexer);
     if (pair != NULL )
     {
@@ -2141,7 +2149,7 @@ aug_ast* aug_parse_element(aug_lexer* lexer, aug_ast* container)
         return NULL;
     }
 
-    aug_ast* element = aug_ast_new(AUG_AST_ELEMENT, aug_token_new());
+    aug_ast* element = aug_ast_new(AUG_AST_ELEMENT, aug_ast_token_empty(lexer));
 
     aug_ast_resize(element, 2);
     element->children[0] = expr;
@@ -2266,12 +2274,12 @@ aug_ast* aug_parse_stmt_expr(aug_lexer* lexer)
     if(expr == NULL)
         return NULL;
     
-    aug_ast* stmt_expr = aug_ast_new(AUG_AST_STMT_EXPR, aug_token_new());
+    aug_ast* stmt_expr = aug_ast_new(AUG_AST_STMT_EXPR, aug_ast_token_empty(lexer));
     aug_ast_add(stmt_expr, expr);
 
     // If expression is a non-assignment, discard from the stack
     if(expr->type != AUG_AST_BINARY_OP || !aug_token_is_assign_op(expr->token))
-        aug_ast_add(stmt_expr, aug_ast_new(AUG_AST_DISCARD, aug_token_new()));
+        aug_ast_add(stmt_expr, aug_ast_new(AUG_AST_DISCARD, aug_ast_token_empty(lexer)));
 
     if(!aug_parse_stmt_semicolon(lexer))
     {
@@ -2339,7 +2347,7 @@ aug_ast* aug_parse_stmt_if_else(aug_lexer* lexer, aug_ast* expr, aug_ast* block)
 {
     aug_lexer_move(lexer); // eat ELSE
 
-    aug_ast* if_else_stmt = aug_ast_new(AUG_AST_STMT_IF_ELSE, aug_token_new());
+    aug_ast* if_else_stmt = aug_ast_new(AUG_AST_STMT_IF_ELSE, aug_ast_token_empty(lexer));
     aug_ast_resize(if_else_stmt, 3);
     if_else_stmt->children[0] = expr;
     if_else_stmt->children[1] = block;
@@ -2396,7 +2404,7 @@ aug_ast* aug_parse_stmt_if(aug_lexer* lexer)
     if(aug_lexer_curr(lexer).id == AUG_TOKEN_ELSE)
         return aug_parse_stmt_if_else(lexer, expr, block);
 
-    aug_ast* if_stmt = aug_ast_new(AUG_AST_STMT_IF, aug_token_new());
+    aug_ast* if_stmt = aug_ast_new(AUG_AST_STMT_IF, aug_ast_token_empty(lexer));
     aug_ast_resize(if_stmt, 2);
     if_stmt->children[0] = expr;
     if_stmt->children[1] = block;
@@ -2425,7 +2433,7 @@ aug_ast* aug_parse_stmt_while(aug_lexer* lexer)
         return NULL;
     }
 
-    aug_ast* while_stmt = aug_ast_new(AUG_AST_STMT_WHILE, aug_token_new());
+    aug_ast* while_stmt = aug_ast_new(AUG_AST_STMT_WHILE, aug_ast_token_empty(lexer));
     aug_ast_resize(while_stmt, 2);
     while_stmt->children[0] = expr;
     while_stmt->children[1] = block;
@@ -2452,7 +2460,7 @@ aug_ast* aug_parse_for_range(aug_lexer* lexer)
         return NULL;
     }
 
-    aug_ast* range = aug_ast_new(AUG_AST_RANGE, aug_token_new());
+    aug_ast* range = aug_ast_new(AUG_AST_RANGE, aug_ast_token_empty(lexer));
 
     aug_ast_resize(range, 2);
     range->children[0] = from_expr;
@@ -2503,7 +2511,7 @@ aug_ast* aug_parse_stmt_for(aug_lexer* lexer)
         return NULL;
     }
 
-    aug_ast* for_stmt = aug_ast_new(AUG_AST_STMT_FOR, aug_token_new());
+    aug_ast* for_stmt = aug_ast_new(AUG_AST_STMT_FOR, aug_ast_token_empty(lexer));
     aug_ast_resize(for_stmt, 3);
     for_stmt->children[0] = var;
     for_stmt->children[1] = expr;
@@ -2521,7 +2529,7 @@ aug_ast* aug_parse_param_list(aug_lexer* lexer)
 
     aug_lexer_move(lexer); // eat LPAREN
 
-    aug_ast* param_list = aug_ast_new(AUG_AST_PARAM_LIST, aug_token_new());
+    aug_ast* param_list = aug_ast_new(AUG_AST_PARAM_LIST, aug_ast_token_empty(lexer));
     if(aug_lexer_curr(lexer).id == AUG_TOKEN_NAME)
     {
         aug_ast* param = aug_ast_new(AUG_AST_PARAM, aug_token_copy(aug_lexer_curr(lexer)));
@@ -2605,7 +2613,7 @@ aug_ast* aug_parse_stmt_return(aug_lexer* lexer)
 
     aug_lexer_move(lexer); // eat RETURN
 
-    aug_ast* return_stmt = aug_ast_new(AUG_AST_RETURN, aug_token_new());
+    aug_ast* return_stmt = aug_ast_new(AUG_AST_RETURN, aug_ast_token_empty(lexer));
 
 #if AUG_ALLOW_NO_SEMICOLON
     // Special condition for empty return and no semicolon. Prevent assignment operations from being the return expr. leave as none
@@ -2763,7 +2771,7 @@ aug_ast* aug_parse_block(aug_lexer* lexer)
     if(aug_lexer_curr(lexer).id != AUG_TOKEN_LBRACE)
     {
 #if AUG_ALLOW_SINGLE_STMT_BLOCK
-        aug_ast* block = aug_ast_new(AUG_AST_BLOCK, aug_token_new());    
+        aug_ast* block = aug_ast_new(AUG_AST_BLOCK, aug_ast_token_empty(lexer));    
         aug_ast* stmt = aug_parse_stmt(lexer, true);
         aug_ast_add(block, stmt);
         return block;
@@ -2775,7 +2783,7 @@ aug_ast* aug_parse_block(aug_lexer* lexer)
     }
     aug_lexer_move(lexer); // eat LBRACE
 
-    aug_ast* block = aug_ast_new(AUG_AST_BLOCK, aug_token_new());    
+    aug_ast* block = aug_ast_new(AUG_AST_BLOCK, aug_ast_token_empty(lexer));    
     aug_ast* stmt = aug_parse_stmt(lexer, true);
     while(stmt)
     {
@@ -2801,7 +2809,7 @@ aug_ast* aug_parse_root(aug_lexer* lexer)
 
     aug_lexer_move(lexer); // move to first token
 
-    aug_ast* root = aug_ast_new(AUG_AST_ROOT, aug_token_new());
+    aug_ast* root = aug_ast_new(AUG_AST_ROOT, aug_ast_token_empty(lexer));
     aug_ast* stmt = aug_parse_stmt(lexer, false);
     while(stmt)
     {
@@ -2956,12 +2964,20 @@ typedef struct aug_symbol
     int argc;
 } aug_symbol;
 
+
+// Tracing ==============================================Tracing ================================================ Tracing // 
+
 // Script symbols source info
-typedef struct aug_debug_symbol
+typedef struct aug_trace_marker
 {
     int bytecode_addr;
     aug_string* symbol_name;
-} aug_debug_symbol;
+  
+    aug_string* filename;
+    aug_pos pos;
+
+    // NOTE: should contain filename to open input and move position to
+} aug_trace_marker;
 
 // IR ===================================================   IR   ======================================================= IR // 
 
@@ -3042,7 +3058,7 @@ typedef struct aug_ir
     bool valid;
 
     // Debug table, index from bytecode addr
-    aug_container* debug_symbols;
+    aug_container* markers;
 
 } aug_ir;
 
@@ -3054,7 +3070,7 @@ static inline aug_ir* aug_ir_new()
     ir->frame_stack =  aug_container_new_type(aug_ir_frame, 1);
     ir->loop_stack =  aug_container_new_type(aug_ir_loop, 1);
     ir->operations = aug_container_new_type(aug_ir_operation, 1);
-    ir->debug_symbols = aug_container_new_type(aug_debug_symbol, 1);
+    ir->markers = aug_container_new_type(aug_trace_marker, 1);
     
     ir->globals = NULL; // initialized in ast to ir pass
     return ir;
@@ -3066,15 +3082,16 @@ static inline void aug_ir_delete(aug_ir* ir)
     ir->frame_stack = aug_container_decref(ir->frame_stack);
     ir->loop_stack = aug_container_decref(ir->loop_stack);
 
-    if(ir->debug_symbols->ref_count == 1)
+    if(ir->markers->ref_count == 1)
     {
-        for(size_t i = 0; i < ir->debug_symbols->length; ++i)
+        for(size_t i = 0; i < ir->markers->length; ++i)
         {
-            aug_debug_symbol* debug_symbol = aug_container_ptr_type(aug_debug_symbol, ir->debug_symbols, i);
-            debug_symbol->symbol_name = aug_string_decref(debug_symbol->symbol_name);
+            aug_trace_marker* marker = aug_container_ptr_type(aug_trace_marker, ir->markers, i);
+            marker->symbol_name = aug_string_decref(marker->symbol_name);
+            marker->filename = aug_string_decref(marker->filename);
         }
     }
-    ir->debug_symbols = aug_container_decref(ir->debug_symbols);
+    ir->markers = aug_container_decref(ir->markers);
  
     for(size_t i = 0; i < ir->operations->length; ++i)
     {
@@ -3406,14 +3423,27 @@ static inline void aug_ir_end_loop(aug_ir* ir)
     loop.break_operations = aug_container_decref(loop.break_operations);
 }
 
-static inline void aug_ir_add_debug_symbol(aug_ir* ir, aug_symbol symbol)
+static inline void aug_ir_mark_symbol(aug_ir* ir, aug_symbol symbol)
 {
-    aug_debug_symbol debug_symbol;
-    debug_symbol.symbol_name = symbol.name;
-    debug_symbol.bytecode_addr = ir->bytecode_offset;
-    aug_container_push_type(aug_debug_symbol, ir->debug_symbols, debug_symbol);
+    aug_trace_marker marker;
+    marker.symbol_name = symbol.name;
+    marker.filename = NULL;
+    marker.bytecode_addr = ir->bytecode_offset;
+    aug_container_push_type(aug_trace_marker, ir->markers, marker);
 
-    aug_string_incref(debug_symbol.symbol_name);
+    aug_string_incref(marker.symbol_name);
+}
+
+static inline void aug_ir_mark_source(aug_ir* ir, aug_string* filename, aug_pos pos)
+{
+    aug_trace_marker marker;
+    marker.pos = pos;
+    marker.symbol_name = NULL;
+    marker.filename = filename;
+    marker.bytecode_addr = ir->bytecode_offset;
+    aug_container_push_type(aug_trace_marker, ir->markers, marker);
+
+    aug_string_incref(filename);
 }
 
 static inline bool aug_ir_set_var(aug_ir* ir, aug_string* var_name)
@@ -4279,6 +4309,50 @@ typedef union aug_vm_bytecode_value
     unsigned char bytes[sizeof(float)]; //Used to access raw byte data to bool, float and int types
 } aug_vm_bytecode_value;
 
+aug_trace_marker* aug_vm_get_marker(aug_vm* vm)
+{
+    const int addr = vm->last_instruction - vm->bytecode;
+    // TODO: index by address for faster lookup. Not priority as this will only occur on VM error 
+    for(size_t i = 0; i < vm->markers->length; ++i)
+    {
+        aug_trace_marker* marker = aug_container_ptr_type(aug_trace_marker, vm->markers, i);
+        if(marker->bytecode_addr == addr && marker->symbol_name == NULL)
+            return marker;
+    }
+    return NULL;
+}
+
+aug_string* aug_vm_get_marker_symbol(aug_vm* vm, size_t operand_size)
+{
+    const int addr = vm->last_instruction - vm->bytecode;
+    // TODO: index by address for faster lookup. Not priority as this will only occur on VM error 
+    for(size_t i = 0; i < vm->markers->length; ++i)
+    {
+        aug_trace_marker marker = aug_container_at_type(aug_trace_marker, vm->markers, i);
+        if(marker.bytecode_addr == addr && marker.symbol_name != NULL)
+            return marker.symbol_name;
+    }
+    return NULL;
+}
+
+void aug_log_vm_warn(aug_vm* vm, const char* format, ...)
+{
+    // Log the source code, or debug symbol if it exists
+    aug_trace_marker* marker = aug_vm_get_marker(vm);
+    if(marker != NULL && marker->filename != NULL)
+    {
+        aug_input* input = aug_input_open(marker->filename->buffer, vm->error_func);
+        aug_log_input_error_hint(input, &marker->pos);
+        aug_input_close(input);
+    }
+
+    va_list args;
+    va_start(args, format);
+    aug_log_error_internal(vm->error_func, format, args);
+    va_end(args);
+}
+
+
 void aug_log_vm_error(aug_vm* vm, const char* format, ...)
 {
     // Do not cascade multiple errors
@@ -4286,7 +4360,13 @@ void aug_log_vm_error(aug_vm* vm, const char* format, ...)
         return;
     vm->instruction = NULL;
 
-    // Log the source code, or debug symbol if it exists
+    aug_trace_marker* marker = aug_vm_get_marker(vm);
+    if(marker != NULL && marker->filename != NULL)
+    {
+        aug_input* input = aug_input_open(marker->filename->buffer, vm->error_func);
+        aug_log_input_error_hint(input, &marker->pos);
+        aug_input_close(input);
+    }
 
     va_list args;
     va_start(args, format);
@@ -4395,20 +4475,6 @@ static inline const char* aug_vm_read_bytes(aug_vm* vm)
     return vm->instruction - len;
 }
 
-aug_string* aug_vm_get_debug_symbol_name(aug_vm* vm, size_t operand_size)
-{
-    // not the -1 is to account for the immediate instruction advance befreo switch statement
-    const int addr = (vm->instruction-1) - operand_size - vm->bytecode;
-    // TODO: index by address for faster lookup. Not priority as this will only occur on VM error 
-    for(size_t i = 0; i < vm->debug_symbols->length; ++i)
-    {
-        aug_debug_symbol debug_symbol = aug_container_at_type(aug_debug_symbol, vm->debug_symbols, i);
-        if(debug_symbol.bytecode_addr == addr)
-            return debug_symbol.symbol_name;
-    }
-    return NULL;
-}
-
 void aug_vm_startup(aug_vm* vm)
 {
     vm->bytecode = NULL;
@@ -4445,7 +4511,7 @@ void aug_vm_load_script(aug_vm* vm, const aug_script* script)
     
     vm->instruction = vm->bytecode;
     vm->valid = (vm->bytecode != NULL);
-    vm->debug_symbols = script->debug_symbols; //NOTE weak ref
+    vm->markers = script->markers; //NOTE weak ref
     vm->lib_extensions = script->lib_extensions;
 
     if(script->stack_state != NULL)
@@ -4572,7 +4638,7 @@ void aug_vm_lib_unload(aug_vm* vm, aug_lib_handle handle)
 #define AUG_OPCODE_UNOP(opfunc, str)                                                \
 {                                                                                   \
     aug_value* arg = aug_vm_pop(vm);                                                \
-    aug_value target;                                                               \
+    aug_value target = aug_none();                                                  \
     if (!opfunc(&target, arg))                                                      \
         aug_log_vm_error(vm, "%s %s not defined", str, aug_type_label(arg));        \
     aug_decref(arg);                                                                \
@@ -4584,7 +4650,7 @@ void aug_vm_lib_unload(aug_vm* vm, aug_lib_handle handle)
 {                                                                                                           \
     aug_value* rhs = aug_vm_pop(vm);                                                                        \
     aug_value* lhs = aug_vm_pop(vm);                                                                        \
-    aug_value target;                                                                                       \
+    aug_value target = aug_none();                                                                          \
     if (!opfunc(&target, lhs, rhs))                                                                         \
         aug_log_vm_error(vm, "%s %s %s not defined", aug_type_label(lhs), str, aug_type_label(rhs));        \
     aug_decref(lhs);                                                                                        \
@@ -4601,6 +4667,8 @@ void aug_vm_execute(aug_vm* vm)
     vm->running = true; 
     while(vm->instruction)
     {
+        vm->last_instruction = vm->instruction;
+
         aug_opcode opcode = (aug_opcode)(*vm->instruction++);
         switch(opcode)
         {
@@ -4883,9 +4951,9 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* top = aug_vm_pop(vm);
                 if(top == NULL || top->type != AUG_FUNCTION)
                 {
-                    aug_string* name = aug_vm_get_debug_symbol_name(vm, sizeof(int));
+                    aug_string* symbol = aug_vm_get_marker_symbol(vm, sizeof(int));
                     aug_log_vm_error(vm, "Unnamed value %s is not a function", 
-                        name ? name->buffer : "(anonymous)");
+                        symbol ? symbol->buffer : "(anonymous)");
                     break;
                 }
 
@@ -4900,9 +4968,9 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* local = aug_vm_get_local(vm, stack_offset);
                 if(local == NULL || local->type != AUG_FUNCTION)
                 {
-                    aug_string* name = aug_vm_get_debug_symbol_name(vm, sizeof(int));
+                    aug_string* symbol = aug_vm_get_marker_symbol(vm, sizeof(int));
                     aug_log_vm_error(vm, "Local variable %s can not a function", 
-                        name ? name->buffer : "(anonymous)");
+                        symbol ? symbol->buffer : "(anonymous)");
                     break;
                 }
 
@@ -4917,9 +4985,9 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* global = aug_vm_get_global(vm, stack_offset);
                 if(global == NULL || global->type != AUG_FUNCTION)
                 {                    
-                    aug_string* name = aug_vm_get_debug_symbol_name(vm, sizeof(int));
+                    aug_string* symbol = aug_vm_get_marker_symbol(vm, sizeof(int));
                     aug_log_vm_error(vm, "Global variable %s can not a function", 
-                        name ? name->buffer : "(anonymous)");
+                        symbol ? symbol->buffer : "(anonymous)");
                     break;
                 }
 
@@ -4991,9 +5059,9 @@ void aug_vm_execute(aug_vm* vm)
                 const int param_count = aug_vm_read_int(vm);
                 if (vm->arg_count != param_count)
                 {
-                    aug_string* name = aug_vm_get_debug_symbol_name(vm, sizeof(int));
+                    aug_string* symbol = aug_vm_get_marker_symbol(vm, sizeof(int));
                     aug_log_vm_error(vm, "Incorrect number of arguments passed to %s. Received %d expected %d ", 
-                        name ? name->buffer : "anonymous", vm->arg_count, param_count);
+                        symbol ? symbol->buffer : "anonymous", vm->arg_count, param_count);
                     break;
                 }
                 break;
@@ -5297,7 +5365,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
                 return;
             }
 
-            aug_ir_add_debug_symbol(ir, symbol);
+            aug_ir_mark_symbol(ir, symbol);
 
             if(symbol.type == AUG_SYM_FUNC)
             {
@@ -5337,6 +5405,8 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
             if(id != AUG_TOKEN_ASSIGN) // special condition, assignment handles lhs via the addr/element
                 aug_generate_ir_pass(children[0], ir, input); // LHS
             aug_generate_ir_pass(children[1], ir, input); // RHS
+
+            aug_ir_mark_source(ir, input->filename, token.pos);
 
             switch (token.id)
             {
@@ -5395,7 +5465,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
                         break;
                     }
 
-                    aug_ir_add_debug_symbol(ir, symbol);
+                    aug_ir_mark_symbol(ir, symbol);
 
                     const aug_ir_operand address_operand = aug_ir_operand_from_symbol(symbol);
                     if(symbol.scope == AUG_SYM_SCOPE_GLOBAL)
@@ -5408,6 +5478,8 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
                     assert(var_node->children_size == 2); // 0[1]
                     aug_generate_ir_pass(var_node->children[0], ir, input); // push index expr
                     aug_generate_ir_pass(var_node->children[1], ir, input); // push container                    
+                    
+                    aug_ir_mark_source(ir, input->filename, token.pos);
                     aug_ir_add_operation(ir, AUG_OPCODE_LOAD_ELEMENT);
                 }
             }
@@ -5444,6 +5516,8 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
             assert(children_size == 2); // 0[1]
             aug_generate_ir_pass(children[0], ir, input); // push index expr
             aug_generate_ir_pass(children[1], ir, input); // push container
+
+            aug_ir_mark_source(ir, input->filename, token.pos);
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_ELEMENT);
             break;
         }
@@ -5452,6 +5526,8 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
             assert(children_size == 2); // 0[1]
             aug_generate_ir_pass(children[0], ir, input); // push from 
             aug_generate_ir_pass(children[1], ir, input); // push to
+
+            aug_ir_mark_source(ir, input->filename, token.pos);
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_RANGE);
             break;
         }
@@ -5573,6 +5649,8 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
             int it_offset = scope->stack_offset++;
             it_offset = aug_ir_current_frame_local_offset(ir, it_offset, 0);
             aug_generate_ir_pass(children[1], ir, input);
+
+            aug_ir_mark_source(ir, input->filename, token.pos);
             aug_ir_add_operation(ir, AUG_OPCODE_PUSH_ITERATOR);
 
             // Top of the loop.
@@ -5657,7 +5735,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
                                         
                     if(symbol.type == AUG_SYM_FUNC)  
                     {
-                        aug_ir_add_debug_symbol(ir, symbol);
+                        aug_ir_mark_symbol(ir, symbol);
 
                         aug_ir_operand address_operand = aug_ir_operand_from_symbol(symbol);
                         aug_ir_add_operation_arg(ir, AUG_OPCODE_CALL, address_operand);
@@ -5665,7 +5743,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
                     if(symbol.type == AUG_SYM_VAR)
                     {
                         const aug_symbol var_symbol = aug_ir_get_symbol_relative(ir, token_data);
-                        aug_ir_add_debug_symbol(ir, var_symbol);
+                        aug_ir_mark_symbol(ir, var_symbol);
 
                         aug_ir_operand address_operand = aug_ir_operand_from_symbol(var_symbol);
                         if(var_symbol.scope == AUG_SYM_SCOPE_GLOBAL)
@@ -5766,7 +5844,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
             aug_ir_push_scope(ir);
             aug_generate_ir_pass(children[0], ir, input);
 
-            aug_ir_add_debug_symbol(ir, aug_ir_get_symbol(ir, token_data));
+            aug_ir_mark_symbol(ir, aug_ir_get_symbol(ir, token_data));
 
             // TODO: Argument count check
             aug_ir_operand param_count_arg = aug_ir_operand_from_int(param_count);
@@ -6500,9 +6578,17 @@ bool aug_iterator_get(aug_iterator* iterator, aug_value* out_element)
 
     aug_value* index = iterator->index;
     aug_value* iterable = iterator->iterable;
+    assert(index->type == AUG_INT);
+
     bool success = aug_get_element(iterable, index, out_element);
     if(!success)
     {
+        if(iterable->type == AUG_INT && index->i <= iterable->i)
+        {
+            *out_element = *index;
+            return true;
+        }
+
         AUG_FREE(iterator->index);
         iterator->index = NULL;
         return false;
@@ -6537,7 +6623,7 @@ void aug_range_incref(aug_range* range)
 
 // SCRIPT ================================================= SCRIPT ============================================= SCRIPT // 
 
-aug_script* aug_script_new(aug_hashtable* globals, char* bytecode, aug_container* debug_symbols)
+aug_script* aug_script_new(aug_hashtable* globals, char* bytecode, aug_container* markers)
 {
     aug_script* script = (aug_script*)AUG_ALLOC(sizeof(aug_script));
     script->stack_state = NULL;
@@ -6546,8 +6632,8 @@ aug_script* aug_script_new(aug_hashtable* globals, char* bytecode, aug_container
     script->globals = globals;
     aug_hashtable_incref(script->globals);
 
-    script->debug_symbols = debug_symbols;
-    aug_container_incref(script->debug_symbols);
+    script->markers = markers;
+    aug_container_incref(script->markers);
 
     script->lib_extensions = aug_hashtable_new_type(aug_extension);
 
@@ -6571,15 +6657,16 @@ void aug_script_delete(aug_script* script)
     script->stack_state = aug_array_decref(script->stack_state);
     script->lib_extensions = aug_hashtable_decref(script->lib_extensions);
 
-    if(script->debug_symbols->ref_count == 1)
+    if(script->markers->ref_count == 1)
     {
-        for(size_t i = 0; i < script->debug_symbols->length; ++i)
+        for(size_t i = 0; i < script->markers->length; ++i)
         {
-            aug_debug_symbol* debug_symbol = aug_container_ptr_type(aug_debug_symbol, script->debug_symbols, i);
-            aug_string_decref(debug_symbol->symbol_name);
+            aug_trace_marker* marker = aug_container_ptr_type(aug_trace_marker, script->markers, i);
+            marker->symbol_name = aug_string_decref(marker->symbol_name);
+            marker->filename = aug_string_decref(marker->filename);
         }
     }
-    script->debug_symbols = aug_container_decref(script->debug_symbols);
+    script->markers = aug_container_decref(script->markers);
 
     if (script->bytecode != NULL)
         AUG_FREE(script->bytecode);
@@ -6636,7 +6723,11 @@ void aug_register(aug_vm* vm, const char* func_name, aug_extension_func* extensi
     if(vm->running && vm->lib_extensions != NULL)
     {
         if(aug_hashtable_get(vm->lib_extensions, func_name) != 0)
-            aug_log_vm_error(vm, "Failed to register library extension Function %s. Already registered!", func_name);
+        {
+            aug_log_vm_warn(vm, "Failed to register library extension Function %s. Already registered!", func_name);
+            return;
+        }
+
         aug_extension* extension = aug_hashtable_insert_type(aug_extension, vm->lib_extensions, func_name);
         if(extension != NULL)
             extension->func = extension_func;
@@ -6644,7 +6735,11 @@ void aug_register(aug_vm* vm, const char* func_name, aug_extension_func* extensi
     }
 
     if(aug_hashtable_get(vm->extensions, func_name) != 0)
-        aug_log_vm_error(vm, "Failed to register extension Function %s. Already registered!", func_name);
+    {
+        aug_log_vm_warn(vm, "Failed to register library extension Function %s. Already registered!", func_name);
+        return;
+    }
+
     aug_extension* extension = aug_hashtable_insert_type(aug_extension, vm->extensions, func_name);
     if(extension != NULL)
         extension->func = extension_func;
@@ -6655,12 +6750,12 @@ void aug_unregister(aug_vm* vm, const char* func_name)
     if(vm->running && vm->lib_extensions != NULL)
     {        
         if(!aug_hashtable_remove(vm->lib_extensions, func_name))
-            aug_log_vm_error(vm, "Failed to unregister library extension Function %s. Not registered!", func_name);
+            aug_log_vm_warn(vm, "Failed to unregister library extension Function %s. Not registered!", func_name);
         return;
     }
 
     if(!aug_hashtable_remove(vm->extensions, func_name))
-        aug_log_vm_error(vm, "Failed to unregister extension Function %s. Not registered!", func_name);
+        aug_log_vm_warn(vm, "Failed to unregister extension Function %s. Not registered!", func_name);
 }
 
 aug_script* aug_compile(aug_vm* vm, const char* filename)
@@ -6686,7 +6781,7 @@ aug_script* aug_compile(aug_vm* vm, const char* filename)
         return NULL;
     }
 
-    aug_script* script = aug_script_new(ir->globals, bytecode, ir->debug_symbols);
+    aug_script* script = aug_script_new(ir->globals, bytecode, ir->markers);
     
     aug_ir_delete(ir);
     aug_ast_delete(root);

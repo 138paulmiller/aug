@@ -118,12 +118,12 @@ void dump_ir(aug_ir* ir)
         int addr = (int)operation.bytecode_offset;
         size_t i;
         // TODO: index by address for faster lookup. Not priority as this will only occur on VM error 
-        for (i = 0; i < ir->debug_symbols->length; ++i)
+        for (i = 0; i < ir->markers->length; ++i)
         {
-            aug_debug_symbol debug_symbol = aug_container_at_type(aug_debug_symbol, ir->debug_symbols, i);
-            if (debug_symbol.bytecode_addr == addr)
+            aug_trace_marker marker = aug_container_at_type(aug_trace_marker, ir->markers, i);
+            if (marker.bytecode_addr == addr)
             {
-                if (debug_symbol.symbol_name) printf("(%s)", debug_symbol.symbol_name->buffer);
+                if (marker.symbol_name) printf("(%s)", marker.symbol_name->buffer);
                 break;
             };
         }
