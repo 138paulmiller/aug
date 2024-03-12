@@ -339,6 +339,7 @@ void on_aug_post_instruction_debug(aug_vm* vm, int opcode)
 int main(int argc, char**argv)
 {
     aug_vm* vm = aug_startup(on_aug_error);
+    vm->exec_filepath = *argv;
 
 #if AUG_DEBUG
     vm->debug_post_instruction = on_aug_post_instruction_debug;

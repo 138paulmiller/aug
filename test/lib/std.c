@@ -6,8 +6,12 @@
 extern "C" {
 #endif
 
+static aug_vm* s_std_vm;
+
 aug_value aug_std_random(int argc, aug_value* args)
 {
+	assert(argc == 0 || argc == 1 || argc == 2);
+
 	int x;
 	if(argc == 1)
 		x = rand() % aug_to_int(args+0);
@@ -91,14 +95,44 @@ aug_value aug_std_print(int argc, aug_value* args)
 		aug_std_print_value(args[i]);
 
 	printf("\n");
-
 	return aug_none();
+}
+
+aug_value aug_std_to_string(int argc, aug_value* args)
+{
+	assert(argc == 1);
+
+	aug_value value = args[0];
+   	char out[1024];
+    switch (value.type)
+    {
+    case AUG_NONE:
+    	return aug_none();
+    case AUG_BOOL:
+        snprintf(out, sizeof(out), "%s", value.b ? "true" : "false");
+        break;
+	case AUG_CHAR:
+        snprintf(out, sizeof(out), "%c", value.c);
+        break;
+    case AUG_INT:
+        snprintf(out, sizeof(out), "%d", value.i);
+        break;
+    case AUG_FLOAT:
+        snprintf(out, sizeof(out), "%0.3f", value.f);
+        break;
+    case AUG_STRING:
+        snprintf(out, sizeof(out), "%s", value.str->buffer);
+        break;
+    default:
+    	return aug_none();
+    }
+	return aug_create_string(out);
 }
 
 aug_value aug_std_get(int argc, aug_value* args)
 {
-	if (argc != 2 || args[0].type != AUG_MAP)
-		return aug_none();
+	assert(argc == 2 && args[0].type == AUG_MAP);
+
 	aug_value* elem = aug_map_get(args[0].map, args + 1);
 	if(elem == NULL)
 		return aug_none();
@@ -108,16 +142,15 @@ aug_value aug_std_get(int argc, aug_value* args)
 
 aug_value aug_std_exists(int argc, aug_value* args)
 {
-	if (argc != 2 || args[0].type != AUG_MAP)
-		return aug_create_bool(false);
+	assert(argc == 2 && args[0].type == AUG_MAP);
+
 	aug_value* elem = aug_map_get(args[0].map, args + 1);
 	return aug_create_bool(elem != NULL);
 }
 
 aug_value aug_std_concat(int argc, aug_value* args)
 {
-	if (argc == 0)
-		return aug_none();
+	assert (argc >= 0);
 
 	aug_value value = aug_create_string("");
 	for (int i = 0; i < argc; ++i)
@@ -139,11 +172,8 @@ aug_value aug_std_concat(int argc, aug_value* args)
 
 aug_value aug_std_split(int argc, aug_value* args)
 {
-	if (argc != 2)
-		return aug_none();
-
-	if(args[0].type != AUG_STRING || args[1].type != AUG_STRING)
-		return aug_none();
+	assert(argc == 2);
+	assert(args[0].type == AUG_STRING && args[1].type == AUG_STRING);
 
 	aug_value value = aug_create_array();
 	aug_string* str = args[0].str;
@@ -181,8 +211,7 @@ aug_value aug_std_split(int argc, aug_value* args)
 
 aug_value aug_std_append(int argc, aug_value* args)
 {
-	if (argc == 0)
-		return aug_none();
+	assert (argc > 0);
 
 	aug_value value = args[0];
 	for (int i = 1; i < argc; ++i)
@@ -216,8 +245,7 @@ aug_value aug_std_append(int argc, aug_value* args)
 
 aug_value aug_std_remove(int argc, aug_value* args)
 {
-	if (argc != 2 || args[0].type != AUG_ARRAY)
-		return aug_none();
+	assert(argc == 2 && args[0].type != AUG_ARRAY);
 
 	aug_value value = args[0];
 	aug_value index = args[1];
@@ -227,8 +255,8 @@ aug_value aug_std_remove(int argc, aug_value* args)
 
 aug_value aug_std_front(int argc, aug_value* args)
 {
-	if (argc == 0 || args[0].type != AUG_ARRAY)
-		return aug_none();
+	assert (argc == 1 && args[0].type == AUG_ARRAY);
+
 	aug_value value = args[0];
 	aug_value* element = aug_array_at(value.array, 0);
 	aug_incref(element);
@@ -239,8 +267,8 @@ aug_value aug_std_front(int argc, aug_value* args)
 
 aug_value aug_std_back(int argc, aug_value* args)
 {
-	if (argc == 0 || args[0].type != AUG_ARRAY)
-		return aug_none(); 
+	assert(argc == 1 && args[0].type == AUG_ARRAY);
+
 	aug_value value = args[0];
 	aug_value* element = aug_array_at(value.array, value.array->length - 1);
 	aug_incref(element);
@@ -251,8 +279,8 @@ aug_value aug_std_back(int argc, aug_value* args)
 
 aug_value aug_std_length(int argc, aug_value* args)
 {
-	if(argc != 1)
-		return aug_none();
+	assert(argc == 1);
+
 	aug_value value = args[0];
 	switch (value.type)
 	{
@@ -269,8 +297,7 @@ aug_value aug_std_length(int argc, aug_value* args)
 
 aug_value aug_std_contains(int argc, aug_value* args)
 {
-	if ((argc != 2 || argc != 4) && args[0].type != AUG_ARRAY)
-		return aug_none();
+	assert(!((argc != 2 || argc != 4) && args[0].type != AUG_ARRAY));
 
 	aug_value value = args[0];
 	aug_value arg = args[1];
@@ -296,46 +323,60 @@ aug_value aug_std_contains(int argc, aug_value* args)
 
 aug_value aug_std_snap(int argc, aug_value* args)
 {
-	if(argc == 0)
-		return aug_none();
+	assert(argc == 1);
+
 	int x = aug_to_int(args + 0);
 	int grid = aug_to_int(args + 1);
 	return aug_create_int(floor(x / grid) * grid);
 }
 
-aug_value aug_std_to_string(int argc, aug_value* args)
+void core_basedir(char* path, const char* file)
 {
-	if(argc != 1)
-		return aug_none();
-	aug_value value = args[0];
-   	char out[1024];
-    switch (value.type)
-    {
-    case AUG_NONE:
-    	return aug_none();
-    case AUG_BOOL:
-        snprintf(out, sizeof(out), "%s", value.b ? "true" : "false");
-        break;
-	case AUG_CHAR:
-        snprintf(out, sizeof(out), "%c", value.c);
-        break;
-    case AUG_INT:
-        snprintf(out, sizeof(out), "%d", value.i);
-        break;
-    case AUG_FLOAT:
-        snprintf(out, sizeof(out), "%0.3f", value.f);
-        break;
-    case AUG_STRING:
-        snprintf(out, sizeof(out), "%s", value.str->buffer);
-        break;
-    default:
-    	return aug_none();
-    }
-	return aug_create_string(out);
+    int i = 0;
+    while(file && *file != '\0')
+        path[i++] = *file++;
+    
+    while(i >= 0 && path[i] != '/' && path[i] != '\\')
+        --i;
+    ++i;
+
+    path[i] = '\0';
+}
+
+void core_makepath(char* path, const char* base, const char* file)
+{
+    int i = 0;
+    while(base && *base != '\0')
+        path[i++] = *base++;
+    
+    while(i >= 0 && path[i] != '/' && path[i] != '\\')
+        --i;
+    ++i;
+    
+    while(file && *file != '\0')
+        path[i++] = *file++;
+    path[i] = '\0';
+}
+
+aug_value aug_std_exec(int argc, aug_value* args)
+{
+	assert(argc == 1 && args[0].type == AUG_STRING);
+
+	char syspath[1024] = {0};
+	core_basedir(syspath, s_std_vm->exec_filepath);
+	core_makepath(syspath, syspath, args[0].str->buffer);
+
+	aug_vm_exec_state exec_state;
+	aug_save_state(s_std_vm, &exec_state);
+	aug_execute(s_std_vm, syspath);
+    aug_load_state(s_std_vm, &exec_state);
+	return aug_none();
 }
 
 AUG_LIB aug_register_lib(aug_vm* vm)
 {
+	s_std_vm = vm;
+	aug_register(vm, "exec",      aug_std_exec      );
 	aug_register(vm, "snap",      aug_std_snap      );
 	aug_register(vm, "random",    aug_std_random    );
 	aug_register(vm, "print",     aug_std_print     );
@@ -355,3 +396,4 @@ AUG_LIB aug_register_lib(aug_vm* vm)
 #ifdef __cplusplus
 }
 #endif
+

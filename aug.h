@@ -267,6 +267,7 @@ typedef void (*aug_register_lib_func)(aug_vm* /*vm*/);
 // Running instance of the virtual machine
 typedef struct aug_vm
 {
+    const char* exec_filepath;
     aug_error_func* error_func;
     bool valid;
     bool running;
@@ -6705,6 +6706,7 @@ aug_vm* aug_startup(aug_error_func* error_func)
     vm->extensions = aug_hashtable_new_type(aug_extension);
     vm->libs = aug_container_new_type(aug_lib_handle, 1);
     vm->error_func = error_func;
+    vm->exec_filepath = NULL;
 #if AUG_DEBUG
     vm->debug_post_instruction = NULL;
 #endif// AUG_DEBUG
@@ -6905,7 +6907,7 @@ void aug_save_state(aug_vm* vm, aug_vm_exec_state* exec_state)
             aug_value* top = aug_vm_pop(vm);
             aug_value* element = aug_array_at(exec_state->stack_state, vm->stack_index);
             *element = aug_none();
-            aug_move(element, top);
+            aug_assign(element, top);
         }
     }
 }
@@ -6928,9 +6930,7 @@ void aug_load_state(aug_vm* vm, aug_vm_exec_state* exec_state)
         {
             aug_value* top = aug_vm_push(vm);
             aug_value* element = aug_array_at(exec_state->stack_state, i);
-            *element = aug_none();
-
-            aug_move(top, element);
+            aug_assign(top, element);
         }
     }
     exec_state->stack_state = aug_array_decref(exec_state->stack_state);
