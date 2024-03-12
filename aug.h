@@ -267,29 +267,24 @@ typedef void (*aug_register_lib_func)(aug_vm* /*vm*/);
 // Running instance of the virtual machine
 typedef struct aug_vm
 {
-    // Global VM state
-
     aug_error_func* error_func;
     bool valid;
     bool running;
 
-    // Extensions are extension functions are native functions that can be called from scripts   
-    // This extension function map contains the user's registered functions. 
-    // Use aug_register/aug_unregister to modify these fields
-    aug_hashtable* extensions;      // aug_extension all globally registered extensions. available to all scripts
-    aug_container* libs;            // loaded library handles for the registered extensions
-    aug_container* markers;   // weak pointer to script's aug_trace_markers
+    aug_hashtable* extensions; // func_name->aug_extension. all globally registered extensions. available to all scripts
+    aug_container* libs;       // aug_lib_handle. loaded library handles for the registered extensions
+    aug_container* markers;    // weak pointer to script's aug_trace_markers
+    aug_hashtable* lib_extensions;  // Weak pointer to script loaded libs
 
     // Script runtime context state
 
-    const char* instruction; // Weak pointer to bytecode being executed
+    const char* instruction;      // Index pointer to current bytecode being executed
     const char* last_instruction; // Weak pointer to bytecode last bytecode executed
-    const char* bytecode;    // Weak pointer to script bytecode 
+    const char* bytecode;         // Weak pointer to script bytecode 
     aug_value stack[AUG_STACK_SIZE];
     int stack_index; // Current position on stack (ESP)
     int base_index;  // Current frame stack offset (EBP)
     int arg_count;   // Current argument count expected when entering a call frame
-    aug_hashtable* lib_extensions;  // weak pointer to script loaded libs
 
 #if AUG_DEBUG
     void (*debug_post_instruction)(aug_vm* /*vm*/, int /*opcode*/);
@@ -297,12 +292,23 @@ typedef struct aug_vm
 
 } aug_vm;
 
+typedef struct aug_vm_exec_state
+{
+    const char* bytecode;
+    const char* instruction;
+    const char* last_instruction;
+    aug_array* stack_state;         // current state of the stack before and after execution 
+    aug_hashtable* lib_extensions;  
+    aug_container* markers;   
+} aug_vm_exec_state;
+
 // VM API ----------------------------------------- VM API ---------------------------------------------------- VM API//
 
 // VM Must call both startup before using the VM. When done, must call shutdown.
 aug_vm* aug_startup(aug_error_func* on_error);
 void aug_shutdown(aug_vm* vm);
 
+// Extensions are native functions that can be called from scripts. Use aug_register/aug_unregister to manage extensions
 void aug_register(aug_vm* vm, const char* func_name, aug_extension_func* func);
 void aug_unregister(aug_vm* vm, const char* func_name);
 
@@ -318,6 +324,9 @@ void aug_unload(aug_vm* vm, aug_script* script);
 // Used to call global functions within the script
 aug_value aug_call(aug_vm* vm, aug_script* script, const char* func_name);
 aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, int argc, aug_value* args);
+
+void aug_save_state(aug_vm* vm, aug_vm_exec_state* exec_state);
+void aug_load_state(aug_vm* vm, aug_vm_exec_state* exec_state);
 
 #if AUG_DEBUG
 const char* aug_opcode_label(uint8_t opcode);
@@ -6869,6 +6878,65 @@ aug_value aug_call_args(aug_vm* vm, aug_script* script, const char* func_name, i
 aug_value aug_call(aug_vm* vm, aug_script* script, const char* func_name)
 {
     return aug_call_args(vm, script, func_name, 0, NULL);
+}
+
+void aug_save_state(aug_vm* vm, aug_vm_exec_state* exec_state)
+{
+    if (vm == NULL || exec_state == NULL)
+        return;
+
+    // Move ownership
+    exec_state->lib_extensions = vm->lib_extensions;
+
+    exec_state->bytecode = vm->bytecode;
+    exec_state->instruction = vm->instruction;
+    exec_state->last_instruction = vm->last_instruction;
+    exec_state->markers = vm->markers; 
+    exec_state->lib_extensions = vm->lib_extensions;
+
+    // reset script stack state to match vm
+    exec_state->stack_state = aug_array_new(1);
+    if (vm->stack_index > 0)
+    {
+        aug_array_reserve(exec_state->stack_state, vm->stack_index);
+        exec_state->stack_state->length = vm->stack_index;
+
+        while (vm->stack_index > 0)
+        {
+            aug_value* top = aug_vm_pop(vm);
+            aug_value* element = aug_array_at(exec_state->stack_state, vm->stack_index);
+            *element = aug_none();
+            aug_assign(element, top);
+        }
+    }
+}
+
+void aug_load_state(aug_vm* vm, aug_vm_exec_state* exec_state)
+{
+    if (vm == NULL || exec_state == NULL)
+        return;
+
+    if (exec_state->bytecode == NULL)
+        vm->bytecode = NULL;
+    else
+        vm->bytecode = exec_state->bytecode;
+
+    vm->bytecode = exec_state->bytecode;
+    vm->instruction = exec_state->instruction;
+    vm->last_instruction = exec_state->last_instruction;
+    vm->markers = exec_state->markers;
+    vm->lib_extensions = exec_state->lib_extensions;
+
+    if (exec_state->stack_state != NULL)
+    {
+        for (size_t i = 0; i < exec_state->stack_state->length; ++i)
+        {
+            aug_value* top = aug_vm_push(vm);
+            if (top)
+                *top = *aug_array_at(exec_state->stack_state, i);
+        }
+    }
+    exec_state->stack_state = aug_array_decref(exec_state->stack_state);
 }
 
 aug_value aug_create_bool(bool data)
