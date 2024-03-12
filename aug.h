@@ -297,6 +297,7 @@ typedef struct aug_vm_exec_state
     const char* bytecode;
     const char* instruction;
     const char* last_instruction;
+    int base_index;
     aug_array* stack_state;         // current state of the stack before and after execution 
     aug_hashtable* lib_extensions;  
     aug_container* markers;   
@@ -6885,10 +6886,8 @@ void aug_save_state(aug_vm* vm, aug_vm_exec_state* exec_state)
     if (vm == NULL || exec_state == NULL)
         return;
 
-    // Move ownership
-    exec_state->lib_extensions = vm->lib_extensions;
-
     exec_state->bytecode = vm->bytecode;
+    exec_state->base_index = vm->base_index;
     exec_state->instruction = vm->instruction;
     exec_state->last_instruction = vm->last_instruction;
     exec_state->markers = vm->markers; 
@@ -6906,7 +6905,7 @@ void aug_save_state(aug_vm* vm, aug_vm_exec_state* exec_state)
             aug_value* top = aug_vm_pop(vm);
             aug_value* element = aug_array_at(exec_state->stack_state, vm->stack_index);
             *element = aug_none();
-            aug_assign(element, top);
+            aug_move(element, top);
         }
     }
 }
@@ -6916,12 +6915,8 @@ void aug_load_state(aug_vm* vm, aug_vm_exec_state* exec_state)
     if (vm == NULL || exec_state == NULL)
         return;
 
-    if (exec_state->bytecode == NULL)
-        vm->bytecode = NULL;
-    else
-        vm->bytecode = exec_state->bytecode;
-
     vm->bytecode = exec_state->bytecode;
+    vm->base_index = exec_state->base_index;
     vm->instruction = exec_state->instruction;
     vm->last_instruction = exec_state->last_instruction;
     vm->markers = exec_state->markers;
@@ -6932,8 +6927,10 @@ void aug_load_state(aug_vm* vm, aug_vm_exec_state* exec_state)
         for (size_t i = 0; i < exec_state->stack_state->length; ++i)
         {
             aug_value* top = aug_vm_push(vm);
-            if (top)
-                *top = *aug_array_at(exec_state->stack_state, i);
+            aug_value* element = aug_array_at(exec_state->stack_state, i);
+            *element = aug_none();
+
+            aug_move(top, element);
         }
     }
     exec_state->stack_state = aug_array_decref(exec_state->stack_state);
