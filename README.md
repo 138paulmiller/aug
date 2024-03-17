@@ -5,11 +5,15 @@
 
 Simple and customizable scripting language.
 
+# Example 
+
+
 # Features
 
 The Aug programming language supports:
-- Dynamic typing with built-in string, array, hashmap, and first-class function data types.
-- Basic code structure and control flow via if, for, while, and function blocks
+- Dynamic typing:
+        - built-in string, array, hashmap, and first-class function data types.
+- Simple code structure and control flow via if, for, while
 - Simple bidirectional interoperability mechanism that facilitates communication scripts with native code, and  
 
 # Language Embedding
@@ -25,7 +29,7 @@ This is useful if users wish to fire-off one-shot script tasks or jobs.
 
 ### Load scripts
 
-When compiling a script, the script source will be compiled to bytecode. Then the virtual machine will boot into this bytecode, execute the instructions, return, and reset state.
+When compiling a script, the source code will be compiled to bytecode. The virtual machine will boot into this bytecode, execute the instructions, and return. The virtual machine stack may or may not retain state, depending on the api call. For instance, **aug_execute** calls will reset the stack state, where as **aug_call** will retain the stack state after the operation. See [AUG FFI](#AUG FFI)
 Or in other words, it will execute the script. However, the script will retain the global state of its variables, this will allows users to modify the state of the script by calling on it's functions.
 
 ## Header Usage
@@ -87,7 +91,6 @@ These extension functions are in place to extend the scripting capabilities by p
 To register these extensions, users must first define and implement a thin wrapper function in C. 
 These external functions expect a function signature similar to the C **main** function signature (see code below).
 To bind your local function to a script function you must use the ***aug_register** function.
-
 ```c
 aug_value function(int argc, aug_value* args) { ... }
 aug_register(vm, "function", external_function);
@@ -185,18 +188,18 @@ Note: If these scripts are intended to have a long lifecycle, keeping a handle o
 Something like this:
 
 ```c
-	aug_vm* vm = aug_startup(NULL);
-	aug_register(vm, "print", print);
-	aug_script* script = aug_load(vm, "entity.aug");
-	bool running = true;
-	while(running)
-	{
-		aug_value args[] = { aug_create_int(time(NULL)) };
-		aug_call_args(vm, script, "update", 1, args);
-		...
-	}
-	aug_unload(script);
-	aug_shutdown(vm);
+aug_vm* vm = aug_startup(NULL);
+aug_register(vm, "print", print);
+aug_script* script = aug_load(vm, "entity.aug");
+bool running = true;
+while(running)
+{
+    aug_value args[] = { aug_create_int(time(NULL)) };
+    aug_call_args(vm, script, "update", 1, args);
+	...
+}
+aug_unload(script);
+aug_shutdown(vm);
 ```
 
 ## Libraries
