@@ -36,7 +36,7 @@ if ( $perf ); then prelude_cmd="time"; fi;
 
 if ( $all ); then
     echo Running all tests
-    eval $prelude_cmd ./aug_test --test_native $script_path/test_native --test_all $(ls $script_path/test_*)
+    eval $prelude_cmd ./aug_test --test_eval --test_native $script_path/test_native --test_all $(ls $script_path/test_*)
 else 
     echo Running tests
     eval $prelude_cmd ./aug_test --dump --verbose $tests

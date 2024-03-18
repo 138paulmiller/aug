@@ -317,6 +317,8 @@ void aug_unregister(aug_vm* vm, const char* func_name);
 // Will reboot the VM to execute the standalone script or code
 void aug_execute(aug_vm* vm, const char* filename);
 
+aug_value aug_eval(aug_vm* vm, const char* code);
+
 // Compiles, executes and loads script into globals into memory from file
 aug_script* aug_load(aug_vm* vm, const char* filename);
 
@@ -835,6 +837,8 @@ typedef struct aug_pos
 typedef struct aug_input
 {
     FILE* file;
+    const char* str;
+
     bool valid;
     aug_string* filename;
     size_t track_pos;
@@ -869,10 +873,21 @@ static inline aug_pos* aug_input_move_pos(aug_input* input, int dir)
 
 static inline char aug_input_get(aug_input* input)
 {
-    if(input == NULL || input->file == NULL)
+    if(input == NULL)
         return -1;
 
-    int c = fgetc(input->file);
+    int c;
+    if(input->file != NULL)
+    {
+        c = fgetc(input->file);
+    }
+    else 
+    {
+        aug_pos* pos = aug_input_pos(input);
+        c = input->str[pos->filepos];
+        if(c == '\0')
+            return -1;
+    }
 
     aug_pos* pos = aug_input_pos(input);
     aug_pos* next_pos = aug_input_move_pos(input, 1);
@@ -880,30 +895,38 @@ static inline char aug_input_get(aug_input* input)
     next_pos->line = pos->line;
     next_pos->col = pos->col + 1;
     next_pos->linepos = pos->linepos;
-    next_pos->filepos = ftell(input->file);
+    next_pos->filepos = pos->filepos + 1;
 
     if(c == '\n')
     {
         next_pos->col = 0;
         next_pos->line = pos->line + 1;
-        next_pos->linepos = ftell(input->file);
+        next_pos->linepos = next_pos->filepos;
     }
     return c;
 }
 
 static inline char aug_input_peek(aug_input* input)
 {
-    assert(input != NULL && input->file != NULL);
-    int c = fgetc(input->file);
-    ungetc(c, input->file);
+    assert(input != NULL);
+    if(input->file != NULL)
+    {
+        int c = fgetc(input->file);
+        ungetc(c, input->file);
+        return c;
+    }
+
+    aug_pos* pos = aug_input_pos(input);
+    int c = input->str[pos->filepos];
     return c;
 }
 
 static inline void aug_input_unget(aug_input* input)
 {
-    assert(input != NULL && input->file != NULL);
+    assert(input != NULL);
     aug_pos* pos = aug_input_pos(input);
-    ungetc(pos->c, input->file);
+    if(input->file != NULL)
+        ungetc(pos->c, input->file);
     aug_input_move_pos(input, -1);
 }
 
@@ -924,6 +947,7 @@ aug_input* aug_input_open(const char* filename, aug_error_func* error_func)
     aug_input* input = (aug_input*)AUG_ALLOC(sizeof(aug_input));
     input->error_func = error_func;
     input->file = file;
+    input->str = NULL;
     input->valid = true;
     input->filename = aug_string_create(filename);
     input->pos_buffer_index = 0;
@@ -932,8 +956,28 @@ aug_input* aug_input_open(const char* filename, aug_error_func* error_func)
     aug_pos* pos = aug_input_pos(input);
     pos->col = 0;
     pos->line = 0;
-    pos->filepos = pos->linepos = ftell(input->file);
     pos->c = -1;
+    pos->filepos = pos->linepos = 0;
+
+    return input;
+}
+
+aug_input* aug_input_open_code(const char* code, aug_error_func* error_func)
+{
+    aug_input* input = (aug_input*)AUG_ALLOC(sizeof(aug_input));
+    input->error_func = error_func;
+    input->file = NULL;
+    input->str = code;
+    input->valid = true;
+    input->filename = aug_string_create("stdin");
+    input->pos_buffer_index = 0;
+    input->track_pos = 0;
+
+    aug_pos* pos = aug_input_pos(input);
+    pos->col = 0;
+    pos->line = 0;
+    pos->c = -1;
+    pos->filepos = pos->linepos = 0;
 
     return input;
 }
@@ -942,6 +986,7 @@ void aug_input_close(aug_input* input)
 {
     if(input == NULL) 
         return;
+
     input->filename = aug_string_decref(input->filename);
     if(input->file != NULL)
         fclose(input->file);
@@ -951,35 +996,48 @@ void aug_input_close(aug_input* input)
 
 static inline void aug_input_start_tracking(aug_input* input)
 {
-    assert(input != NULL && input->file != NULL);
-    input->track_pos = ftell(input->file);
+    assert(input != NULL);
+    aug_pos* pos = aug_input_pos(input);
+    input->track_pos = pos->filepos;
 }
 
 static inline aug_string* aug_input_end_tracking(aug_input* input)
 {
-    assert(input != NULL && input->file != NULL);
+    assert(input != NULL);
+    aug_pos* pos = aug_input_pos(input);
 
-    const size_t pos_end = ftell(input->file);
+    const size_t pos_end = pos->filepos;
     const size_t len = (pos_end - input->track_pos);
 
     aug_string* string = aug_string_new(len+1);
     string->length = len;
     string->buffer[len] = '\0';
 
-    fseek(input->file, input->track_pos, SEEK_SET);
-    size_t count = fread(string->buffer, sizeof(char), len, input->file);
-    fseek(input->file, pos_end, SEEK_SET);
-    if(count != len)
+    if(input->file != NULL)
+    {        
+        fseek(input->file, input->track_pos, SEEK_SET);
+        size_t count = fread(string->buffer, sizeof(char), len, input->file);
+        fseek(input->file, pos_end, SEEK_SET);
+        if(count != len)
+        {
+            aug_log_error(input->error_func, "Failed to read %d bytes! %s", len, input->filename->buffer);
+            fseek(input->file, pos_end, SEEK_END);
+        }
+    }
+    else 
     {
-        aug_log_error(input->error_func, "Failed to read %d bytes! %s", len, input->filename->buffer);
-        fseek(input->file, pos_end, SEEK_END);
+        for(int i = 0; i < len; ++i)
+            string->buffer[i] = input->str[i + input->track_pos]; 
     }
     return string;
 }
 
 static inline void aug_log_input_error_hint(aug_input* input, const aug_pos* pos)
 {
-    assert(input != NULL && input->file != NULL);
+    assert(input != NULL);
+
+    if(input->file == NULL)
+        return;
 
     // save state
     int curr_pos = ftell(input->file);
@@ -5551,7 +5609,17 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
         }
         case AUG_AST_DISCARD:
         {
-            aug_ir_add_operation_arg(ir, AUG_OPCODE_POP, aug_ir_operand_from_int(1));
+            // if evaluating an input string, do not discard global return values. These may be returned to user
+            if(input->str != NULL)
+            {
+                bool global = aug_ir_current_scope_is_global(ir); 
+                if(!global)
+                    aug_ir_add_operation_arg(ir, AUG_OPCODE_POP, aug_ir_operand_from_int(1));
+            }
+            else //executing a file, discard all unused return values
+            {
+                aug_ir_add_operation_arg(ir, AUG_OPCODE_POP, aug_ir_operand_from_int(1));
+            }
             break;
         }
         case AUG_AST_STMT_DEFINE_VAR:
@@ -6800,6 +6868,46 @@ aug_script* aug_compile(aug_vm* vm, const char* filename)
     aug_input_close(input);
 
     return script;
+}
+
+aug_value aug_eval(aug_vm* vm, const char* code)
+{    
+    if(vm == NULL || code == NULL)
+        return aug_none();
+
+    aug_input* input = aug_input_open_code(code, vm->error_func);
+    aug_ast* root = aug_parse(input);
+    if (root == NULL)
+    {
+        aug_input_close(input);
+        return aug_none();
+    }
+
+    aug_ir* ir = aug_generate_ir(vm, root, input);
+    char* bytecode = aug_generate_bytecode(ir);
+    if(bytecode == NULL)
+    {
+        aug_ir_delete(ir);
+        aug_ast_delete(root);
+        aug_input_close(input);
+        return aug_none();
+    }
+
+    aug_script* script = aug_script_new(ir->globals, bytecode, ir->markers);
+    
+    aug_ir_delete(ir);
+    aug_ast_delete(root);
+    aug_input_close(input);
+
+    aug_vm_startup(vm);
+    aug_vm_load_script(vm, script);
+    aug_vm_execute(vm);
+
+    aug_value* ret = aug_vm_pop(vm);
+
+    aug_vm_shutdown(vm);
+    aug_script_delete(script);
+    return *ret;
 }
 
 void aug_execute(aug_vm* vm, const char* filename)

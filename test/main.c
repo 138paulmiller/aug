@@ -307,6 +307,22 @@ void aug_test_gameloop(aug_vm* vm)
     aug_unload(vm, script);
 }
 
+void aug_test_eval(aug_vm* vm)
+{
+    const char* code = "func count(a){ if a <= 0 return 0; return count(a-1) + 1;} count(5)";
+    aug_value value = aug_eval(vm, code);
+    bool success = value.i == 5;
+    aug_string* message = aug_string_create("count = ");
+    aug_string* value_str = to_string(&value);
+    aug_string_append(message, value_str);
+    test_verify(success, message);
+
+    // cleanup
+    aug_decref(&value);
+    aug_string_decref(value_str);
+    aug_string_decref(message);
+}
+
 void on_aug_error(const char* msg)
 {
     fprintf(stderr, "[%sERROR%s]\t%s\t\n", STDOUT_RED, STDOUT_CLEAR, msg);
@@ -400,6 +416,10 @@ int main(int argc, char**argv)
             {
                 test_run(argv[i++], vm, NULL);
             }
+        }
+        else if (argv[i] && strcmp(argv[i], "--test_eval") == 0)
+        {
+            test_run(argv[i], vm, aug_test_eval);
         }
     }
 
