@@ -7,6 +7,41 @@ Simple and customizable scripting language.
 
 # Example 
 
+```c
+import std
+
+func quicksort(arr, low, high){
+    if low < high {
+        
+        var pivot_idx = floor((low + high) / 2)
+        swap(arr[pivot_idx], arr[high])
+
+        var pivot = arr[high]
+        var i = low - 1
+
+        for j in low:high{
+            if arr[j] < pivot {
+                i += 1
+                swap(arr[i], arr[j])
+            }
+        }
+
+        swap(arr[i + 1], arr[high])
+        pivot_idx =  i + 1
+
+        quicksort(arr, low, pivot_idx - 1)
+        quicksort(arr, pivot_idx + 1, high)
+    }
+}
+
+var arr = [10, 3, 8, 4, 2]
+var result = [ 2, 3, 4, 8, 10 ]
+quicksort(arr, 0, length(arr) - 1)
+
+expect(arr = result, "quicksort(", arr, ")")
+```
+
+NOTE: The above example relies on user-defined function calls from the testing library. See [here](https://github.com/138paulmiller/aug/tree/master/test/lib/std.c)
 
 # Features
 

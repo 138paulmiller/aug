@@ -330,6 +330,25 @@ aug_value aug_std_snap(int argc, aug_value* args)
 	return aug_create_int(floor(x / grid) * grid);
 }
 
+aug_value aug_std_floor(int argc, aug_value* args)
+{
+	assert(argc == 1);
+
+	float x = aug_to_float(args);
+	return aug_create_int(floor(x));
+}
+
+
+aug_value aug_std_swap(int argc, aug_value* args)
+{
+	assert(argc == 2);
+
+	aug_value temp = args[0];
+	args[0] = args[1];
+	args[1] = temp;
+	return aug_none();
+}
+
 void core_basedir(char* path, const char* file)
 {
     int i = 0;
@@ -378,6 +397,8 @@ AUG_LIB aug_register_lib(aug_vm* vm)
 	s_std_vm = vm;
 	aug_register(vm, "exec",      aug_std_exec      );
 	aug_register(vm, "snap",      aug_std_snap      );
+	aug_register(vm, "swap",      aug_std_swap      );
+	aug_register(vm, "floor",     aug_std_floor     );
 	aug_register(vm, "random",    aug_std_random    );
 	aug_register(vm, "print",     aug_std_print     );
 	aug_register(vm, "get",       aug_std_get       );

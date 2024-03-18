@@ -2,10 +2,9 @@ import std
 
 func quicksort(arr, low, high){
     if low < high {
+        
         var pivot_idx = floor((low + high) / 2)
-        var temp = arr[pivot_idx]
-        arr[pivot_idx] = arr[high]
-        arr[high] = temp
+        swap(arr[pivot_idx], arr[high])
 
         var pivot = arr[high]
         var i = low - 1
@@ -13,15 +12,11 @@ func quicksort(arr, low, high){
         for j in low:high{
             if arr[j] < pivot {
                 i += 1
-                temp = arr[i]
-                arr[i] = arr[j]
-                arr[j] = temp
+                swap(arr[i], arr[j])
             }
         }
 
-        temp = arr[i + 1]
-        arr[i + 1] = arr[high] 
-        arr[high] = temp
+        swap(arr[i + 1], arr[high])
         pivot_idx =  i + 1
 
         quicksort(arr, low, pivot_idx - 1)
@@ -34,4 +29,3 @@ var result = [ 2, 3, 4, 8, 10 ]
 quicksort(arr, 0, length(arr) - 1)
 
 expect(arr = result, "quicksort(", arr, ")")
-print(arr)
