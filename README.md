@@ -3,7 +3,7 @@
 
 **Aug**ment your systems
 
-Simple and customizable scripting language.
+Easily embeddable and highly extensible scripting engine.
 
 # Example 
 
