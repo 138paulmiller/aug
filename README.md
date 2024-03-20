@@ -12,7 +12,6 @@ import std
 
 func quicksort(arr, low, high){
     if low < high {
-        
         var pivot_idx = floor((low + high) / 2)
         swap(arr[pivot_idx], arr[high])
 
@@ -37,7 +36,6 @@ func quicksort(arr, low, high){
 var arr = [10, 3, 8, 4, 2]
 var result = [ 2, 3, 4, 8, 10 ]
 quicksort(arr, 0, length(arr) - 1)
-
 expect(arr = result, "quicksort(", arr, ")")
 ```
 
@@ -49,13 +47,13 @@ The Aug programming language supports:
 - Dynamic typing:
         - built-in string, array, hashmap, and first-class function data types.
 - Simple code structure and control flow via if, for, while
-- Simple bidirectional interoperability mechanism that facilitates communication scripts with native code, and  
+- Simple bidirectional interoperability that facilitates communication scripts with native code. 
 
 # Language Embedding
 
-The primary focus of this language was to create a simple programming language that can be easily embedded into existing applications.
+The primary focus of this language was to create a simple programming language implementation that can be easily embedded into existing applications.
 To support this, **aug.h** provides an API that operates on the engine's virtual machine. This virtual machine contains some global script state, like registered extensions. 
-The API supports a few different use cases, primarily executing and loading scripts.
+The API supports a few different use cases, primarily executing and loading compiled scripts.
 
 ### Executing scripts
 
@@ -196,27 +194,15 @@ func fibonacci(n) {
 **main.c**
 
 ```c
-aug_value print(int argc, aug_value* args)
-{
-	if(argc == 1)
-	{
-		aug_value value = args[0];
-		if(value.type == AUG_INT)
-			printf("%d", value.i);
-	}                  
-}
+aug_vm* vm = aug_startup(NULL); aug_script* script = aug_load(vm, "fib.aug");
 
-int main(int argc, char** argv)
-{
-	aug_vm* vm = aug_startup(NULL);
-	aug_register(vm, "print", print);
-	aug_script* script = aug_load(vm, "fib.aug");
-	aug_value args[] = { aug_create_int(30) };
-	aug_call_args(vm, script, "fib", 1, args);
-	aug_unload(script);
-	aug_shutdown(vm);
- 	return 0;
-}
+aug_value args[] = { aug_create_int(30) };
+aug_value ret = aug_call_args(vm, script, "fib", 1, args);
+
+printf("fib(30)=%d", ret.i);
+
+aug_unload(script);
+aug_shutdown(vm);
 ```
 
 Note: If these scripts are intended to have a long lifecycle, keeping a handle on the script and VM will allow users to contiuously update and execute the script. 
@@ -224,7 +210,7 @@ Something like this:
 
 ```c
 aug_vm* vm = aug_startup(NULL);
-aug_register(vm, "print", print);
+qq
 aug_script* script = aug_load(vm, "entity.aug");
 bool running = true;
 while(running)
@@ -253,13 +239,13 @@ AUG_LIBCALL void aug_register_lib(aug_vm* vm)
 	...
 }
 ```
-For example, if this is compiled to a dynamic shared library on a linux platform, named **example.so**, and this is placed under the working directory of the executable, the it can be imported via 
+For example, if this is compiled to a dynamic library named **example.so** on linux, or **example.dll** on windows, and this is placed under the working directory of the executable, the it can be imported via 
 
 ```go
 import example;
 ```
 
-Compiling this is OS specific, for an example library used by the test utility see [here](https://github.com/138paulmiller/aug/tree/master/test/lib)
+Compiling libraries is OS specific, for an example library used by the test utility see [here](https://github.com/138paulmiller/aug/tree/master/test/lib)
 
 ### Demo
 
