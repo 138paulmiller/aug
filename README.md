@@ -11,6 +11,7 @@ Easily embeddable and highly extensible scripting engine.
 import std
 
 func quicksort(arr, low, high){
+
     if low < high {
         var pivot_idx = floor((low + high) / 2)
         swap(arr[pivot_idx], arr[high])
@@ -44,8 +45,7 @@ NOTE: The above example relies on user-defined function calls from the testing l
 # Features
 
 The Aug programming language supports:
-- Dynamic typing:
-        - built-in string, array, hashmap, and first-class function data types.
+- Dynamic typing, built-in string, array, hashmap, and first-class function data types.
 - Simple code structure and control flow via if, for, while
 - Simple bidirectional interoperability that facilitates communication scripts with native code. 
 
