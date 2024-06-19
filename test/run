@@ -3,11 +3,13 @@ clear
 script_path=$(pwd)/scripts
 all=true;
 debug=false;
+memcheck_per_test=false
 tests=()
 perf=false
 for var in "$@"; do
     if [ "$var" = "-dbg" ]; then debug=true; 
     elif [ "$var" = "-perf" ]; then perf=true; 
+    elif [ "$var" = "-mem" ]; then memcheck_per_test=true; 
     else all=false; tests+=("--test $script_path/$var");
     fi
 done
@@ -36,7 +38,14 @@ if ( $perf ); then prelude_cmd="time"; fi;
 
 if ( $all ); then
     echo Running all tests
-    eval $prelude_cmd ./aug_test --test_eval --test_native $script_path/test_native --test_all $(ls $script_path/test_*)
+
+    if ( $memcheck_per_test ); then
+        for f in $script_path/test_*; do
+            eval $prelude_cmd ./aug_test --test $f
+        done 
+    else
+        eval $prelude_cmd ./aug_test --test_eval --test_native $script_path/test_native --test_all $(ls $script_path/test_*)
+    fi; 
 else 
     echo Running tests
     eval $prelude_cmd ./aug_test --dump --verbose $tests

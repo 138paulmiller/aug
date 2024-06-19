@@ -7004,20 +7004,21 @@ void aug_save_state(aug_vm* vm, aug_vm_exec_state* exec_state)
     exec_state->lib_extensions = vm->lib_extensions;
 
     // reset script stack state to match vm
-    exec_state->stack_state = aug_array_new(1);
     if (vm->stack_index > 0)
     {
-        aug_array_reserve(exec_state->stack_state, vm->stack_index);
+        exec_state->stack_state = aug_array_new(vm->stack_index);
         exec_state->stack_state->length = vm->stack_index;
 
         while (vm->stack_index > 0)
         {
             aug_value* top = aug_vm_pop(vm);
             aug_value* element = aug_array_at(exec_state->stack_state, vm->stack_index);
-            *element = aug_none();
-            aug_assign(element, top);
+            aug_incref(top);
+            *element = *top;
         }
     }
+    else
+        exec_state->stack_state = NULL;
 }
 
 void aug_load_state(aug_vm* vm, aug_vm_exec_state* exec_state)
@@ -7038,7 +7039,8 @@ void aug_load_state(aug_vm* vm, aug_vm_exec_state* exec_state)
         {
             aug_value* top = aug_vm_push(vm);
             aug_value* element = aug_array_at(exec_state->stack_state, i);
-            aug_assign(top, element);
+            aug_decref(top);
+            *top = *element;
         }
     }
     exec_state->stack_state = aug_array_decref(exec_state->stack_state);
