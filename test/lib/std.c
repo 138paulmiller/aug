@@ -131,7 +131,8 @@ aug_value aug_std_to_string(int argc, aug_value* args)
 
 aug_value aug_std_get(int argc, aug_value* args)
 {
-	assert(argc == 2 && args[0].type == AUG_MAP);
+	assert(argc == 2);
+	assert(args[0].type == AUG_MAP);
 
 	aug_value* elem = aug_map_get(args[0].map, args + 1);
 	if(elem == NULL)
@@ -142,7 +143,8 @@ aug_value aug_std_get(int argc, aug_value* args)
 
 aug_value aug_std_exists(int argc, aug_value* args)
 {
-	assert(argc == 2 && args[0].type == AUG_MAP);
+	assert(argc == 2);
+	assert(args[0].type == AUG_MAP);
 
 	aug_value* elem = aug_map_get(args[0].map, args + 1);
 	return aug_create_bool(elem != NULL);
@@ -245,7 +247,8 @@ aug_value aug_std_append(int argc, aug_value* args)
 
 aug_value aug_std_remove(int argc, aug_value* args)
 {
-	assert(argc == 2 && args[0].type != AUG_ARRAY);
+	assert(argc == 2);
+	assert(args[0].type == AUG_ARRAY);
 
 	aug_value value = args[0];
 	aug_value index = args[1];
@@ -255,7 +258,8 @@ aug_value aug_std_remove(int argc, aug_value* args)
 
 aug_value aug_std_front(int argc, aug_value* args)
 {
-	assert (argc == 1 && args[0].type == AUG_ARRAY);
+	assert(argc == 1);
+	assert(args[0].type == AUG_ARRAY);
 
 	aug_value value = args[0];
 	aug_value* element = aug_array_at(value.array, 0);
@@ -267,7 +271,8 @@ aug_value aug_std_front(int argc, aug_value* args)
 
 aug_value aug_std_back(int argc, aug_value* args)
 {
-	assert(argc == 1 && args[0].type == AUG_ARRAY);
+	assert(argc == 1);
+	assert(args[0].type == AUG_ARRAY);
 
 	aug_value value = args[0];
 	aug_value* element = aug_array_at(value.array, value.array->length - 1);
@@ -323,7 +328,7 @@ aug_value aug_std_contains(int argc, aug_value* args)
 
 aug_value aug_std_snap(int argc, aug_value* args)
 {
-	assert(argc == 1);
+	assert(argc == 2);
 
 	int x = aug_to_int(args + 0);
 	int grid = aug_to_int(args + 1);
@@ -379,7 +384,8 @@ void core_makepath(char* path, const char* base, const char* file)
 
 aug_value aug_std_exec(int argc, aug_value* args)
 {
-	assert(argc == 1 && args[0].type == AUG_STRING);
+	assert(argc == 1);
+	assert(args[0].type == AUG_STRING);
 
 	char syspath[1024] = {0};
 	core_basedir(syspath, s_std_vm->exec_filepath);

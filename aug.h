@@ -1026,7 +1026,8 @@ static inline aug_string* aug_input_end_tracking(aug_input* input)
     }
     else 
     {
-        for(int i = 0; i < len; ++i)
+        size_t i;
+        for(i = 0; i < len; ++i)
             string->buffer[i] = input->str[i + input->track_pos]; 
     }
     return string;
@@ -4053,7 +4054,7 @@ static inline bool aug_get_element(aug_value* value, aug_value* index, aug_value
     {
         aug_value* element = aug_map_get(value->map, index);
         if(element == NULL)
-            return false;
+            return true; // Allow maps to return non if index is invalid
 
         *element_out = *element;
         return true;
