@@ -287,9 +287,9 @@ stmt    : expr ;
         | VAR NAME = expr ;
         | WHILE expr { stmts }
         | FUNC NAME ( params ) block
-        | IF block 
-        | IF block ELSE block 
-        | IF block ELSE cond
+        | IF expr block 
+        | IF expr block ELSE block 
+        | IF expr block ELSE cond
 
 stmts   : stmt stmts
         | NULL
