@@ -57,7 +57,7 @@ void dump_ast_tree(const aug_ast* node, aug_string* prev_prefix, bool is_leaf)
     aug_ast** children = node->children;
     const int children_size = node->children_size;
 
-    printf("%s", aug_ast_type_label(node->type));
+    printf("%s", aug_ast_label(node->type));
     if(token.data != NULL)
         printf(": %s", token.data->buffer);
     printf("\n");

@@ -334,7 +334,7 @@ void aug_load_state(aug_vm* vm, aug_vm_exec_state* exec_state);
 
 #if AUG_DEBUG
 const char* aug_opcode_label(uint8_t opcode);
-const char* aug_ast_type_label(uint8_t ast_type);
+const char* aug_ast_label(uint8_t ast_type);
 #endif 
 
 // Value API ------------------------------------- Value API ------------------------------------------------ Value API//
@@ -389,7 +389,6 @@ void aug_array_remove(aug_array* array, int index);
 aug_array* aug_array_copy(aug_array* array);
 
 // Map API ------------------------------------------ Map API ------------------------------------------------- Map API//
-
 aug_map* aug_map_new(size_t size);
 void aug_map_incref(aug_map* map);
 aug_map* aug_map_decref(aug_map* map);
@@ -412,6 +411,7 @@ bool aug_iterator_get(aug_iterator* iterator, aug_value* out_element);
 aug_range* aug_range_new(int from, int to);
 aug_range* aug_range_decref(aug_range* range);
 void aug_range_incref(aug_range* range);
+
 #ifdef __cplusplus
 }
 #endif
@@ -1784,6 +1784,7 @@ typedef uint8_t aug_ast_type;
     AUG_AST_TYPE(MAP)                \
     AUG_AST_TYPE(MAP_PAIR)           \
     AUG_AST_TYPE(ELEMENT)            \
+    AUG_AST_TYPE(FIELD)              \
     AUG_AST_TYPE(RANGE)              \
     AUG_AST_TYPE(UNARY_OP)           \
     AUG_AST_TYPE(BINARY_OP)          \
@@ -1796,7 +1797,7 @@ typedef uint8_t aug_ast_type;
     AUG_AST_TYPE(RETURN)             \
     AUG_AST_TYPE(BREAK)              \
     AUG_AST_TYPE(CONTINUE)           \
-    AUG_AST_TYPE(IMPORT_SCRIPT)         \
+    AUG_AST_TYPE(IMPORT_SCRIPT)      \
     AUG_AST_TYPE(IMPORT_LIB)
 
 enum aug_ast_types
@@ -1809,16 +1810,16 @@ enum aug_ast_types
 
 #if AUG_DEBUG
 
-const char* aug_ast_type_labels[] =
+const char* aug_ast_labels[] =
 {
 #define AUG_AST_TYPE(opcode) #opcode,
     AUG_AST_TYPE_LIST
 #undef AUG_AST_TYPE
 }; 
 
-const char* aug_ast_type_label(uint8_t type)
+const char* aug_ast_label(uint8_t type)
 {
-    return aug_ast_type_labels[(int)type];
+    return aug_ast_labels[(int)type];
 }
 
 #endif //AUG_DEBUG
@@ -2234,11 +2235,36 @@ aug_ast* aug_parse_element(aug_lexer* lexer, aug_ast* container)
 
     aug_lexer_move(lexer); // eat RBRACKET
     
-    aug_ast* nested_element = aug_parse_element(lexer, element);
-    if(nested_element)
-        return nested_element;
     return element;
 }
+
+aug_ast* aug_parse_field(aug_lexer* lexer, aug_ast* container)
+{
+    // . NAME
+    if(aug_lexer_curr(lexer).id != AUG_TOKEN_DOT)
+        return NULL;
+
+    aug_lexer_move(lexer); // eat DOT
+
+    if(aug_lexer_curr(lexer).id != AUG_TOKEN_NAME)
+    {
+        aug_log_input_error(lexer->input, "Dot operator missing field name");
+        return NULL;
+    }
+
+    aug_ast* name = aug_ast_new(AUG_AST_VARIABLE, aug_ast_token_empty(lexer));
+
+    aug_lexer_move(lexer); // eat NAME
+
+    aug_ast* field = aug_ast_new(AUG_AST_FIELD, aug_ast_token_empty(lexer));
+
+    aug_ast_resize(field, 2);
+    field->children[0] = name;
+    field->children[1] = container;
+
+    return field;
+}
+
 
 aug_ast* aug_parse_value(aug_lexer* lexer)
 {
@@ -2310,11 +2336,19 @@ aug_ast* aug_parse_value(aug_lexer* lexer)
             continue;
         }
 
-        // try parse index of variable
+        // try parse element of variable
         aug_ast* element = aug_parse_element(lexer, value);
         if (element != NULL)
         {
             value = element;
+            continue;
+        }
+
+        // try parse field of variable
+        aug_ast* field = aug_parse_field(lexer, value);
+        if (field != NULL)
+        {
+            value = field;
             continue;
         }
 

@@ -19,7 +19,6 @@ expect(map["c"] == 222, "map[c] == 222");
 expect(map["d"] == 2222, "map[d] == 2222");
 expect(map["e"] == 11111, "map[e] == 11111");
 
-
 var nested = {
 	"0" : { 
 		"0" : "A", 
@@ -51,3 +50,15 @@ nested["0"] = {
 
 expect(nested["0"]["0"] == "A");
 expect(nested["0"]["1"] == "B");
+
+func get_nested(){
+	return nested;
+}
+
+expect(get_nested()["0"]["1"] == "B");
+
+var nested_func = {
+	"func" : get_nested
+};
+
+expect(nested_func["func"]()["0"]["1"] == "B");
