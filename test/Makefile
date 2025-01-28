@@ -3,7 +3,7 @@ TARGET = $(OUT_DIR)/aug_test
 SCRIPTS = scripts
 SRC = $(wildcard *.c)
 CC = gcc
-CFLAGS = -Wall -O3
+FLAGS = -ggdb -Werror -Wall -Wextra -Wstrict-aliasing -Woverflow 
 LIBS = -I../ -std=c99 -lm
 LINK = -rdynamic -Wl,-rpath,../build
 DEBUG=0

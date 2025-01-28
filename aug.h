@@ -510,7 +510,7 @@ char* aug_container_pop(aug_container* container)
 
 char* aug_container_at(const aug_container* container, size_t index)   
 {        
-    return index >= 0 && index < container->length ? &container->buffer[index * container->element_size] : NULL;    
+    return index < container->length ? &container->buffer[index * container->element_size] : NULL;    
 }        
 
 char* aug_container_back(const aug_container* container)   
@@ -867,7 +867,8 @@ static inline aug_pos* aug_input_move_pos(aug_input* input, int dir)
     assert(input != NULL);
     const int buffer_len = (sizeof(input->pos_buffer) / sizeof(input->pos_buffer[0]));
     input->pos_buffer_index = (input->pos_buffer_index + dir) % buffer_len;
-    if (input->pos_buffer_index < 0) input->pos_buffer_index = buffer_len - input->pos_buffer_index;
+    // TODO: Fix ? Always false 
+    // if (input->pos_buffer_index < 0) input->pos_buffer_index = buffer_len - input->pos_buffer_index;
     return &input->pos_buffer[input->pos_buffer_index];
 }
 
@@ -1069,7 +1070,7 @@ static inline void aug_log_input_error_hint(aug_input* input, const aug_pos* pos
 
     // Draw arrow to the error if within buffer
     size_t tok_col = pos->col - ws_skipped;
-    if (tok_col >= 0 && tok_col < n - 1)
+    if (tok_col != 0 && tok_col < n - 1)
     {
         size_t i;
         for (i = 0; i < tok_col; ++i)
@@ -4426,7 +4427,7 @@ aug_trace_marker* aug_vm_get_marker(aug_vm* vm)
     return NULL;
 }
 
-aug_string* aug_vm_get_marker_symbol(aug_vm* vm, size_t operand_size)
+aug_string* aug_vm_get_marker_symbol(aug_vm* vm)
 {
     const int addr = vm->last_instruction - vm->bytecode;
     // TODO: index by address for faster lookup. Not priority as this will only occur on VM error 
@@ -4728,7 +4729,7 @@ void aug_vm_lib_load(aug_vm* vm, const char* libname)
     aug_container_push_type(aug_lib_handle, vm->libs, (aug_lib_handle)handle);
 }
 
-void aug_vm_lib_unload(aug_vm* vm, aug_lib_handle handle)
+void aug_vm_lib_unload(aug_lib_handle handle)
 {
     if(handle == 0)
         return;
@@ -5055,7 +5056,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* top = aug_vm_pop(vm);
                 if(top == NULL || top->type != AUG_FUNCTION)
                 {
-                    aug_string* symbol = aug_vm_get_marker_symbol(vm, sizeof(int));
+                    aug_string* symbol = aug_vm_get_marker_symbol(vm);
                     aug_log_vm_error(vm, "Unnamed value %s is not a function", 
                         symbol ? symbol->buffer : "(anonymous)");
                     break;
@@ -5072,7 +5073,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* local = aug_vm_get_local(vm, stack_offset);
                 if(local == NULL || local->type != AUG_FUNCTION)
                 {
-                    aug_string* symbol = aug_vm_get_marker_symbol(vm, sizeof(int));
+                    aug_string* symbol = aug_vm_get_marker_symbol(vm);
                     aug_log_vm_error(vm, "Local variable %s can not a function", 
                         symbol ? symbol->buffer : "(anonymous)");
                     break;
@@ -5089,7 +5090,7 @@ void aug_vm_execute(aug_vm* vm)
                 aug_value* global = aug_vm_get_global(vm, stack_offset);
                 if(global == NULL || global->type != AUG_FUNCTION)
                 {                    
-                    aug_string* symbol = aug_vm_get_marker_symbol(vm, sizeof(int));
+                    aug_string* symbol = aug_vm_get_marker_symbol(vm);
                     aug_log_vm_error(vm, "Global variable %s can not a function", 
                         symbol ? symbol->buffer : "(anonymous)");
                     break;
@@ -5163,7 +5164,7 @@ void aug_vm_execute(aug_vm* vm)
                 const int param_count = aug_vm_read_int(vm);
                 if (vm->arg_count != param_count)
                 {
-                    aug_string* symbol = aug_vm_get_marker_symbol(vm, sizeof(int));
+                    aug_string* symbol = aug_vm_get_marker_symbol(vm);
                     aug_log_vm_error(vm, "Incorrect number of arguments passed to %s. Received %d expected %d ", 
                         symbol ? symbol->buffer : "anonymous", vm->arg_count, param_count);
                     break;
@@ -5313,7 +5314,7 @@ void aug_generate_ir_prepass(const aug_ast* node, aug_ir* ir, aug_input* input)
             // TODO: open and parse script, should be relative to the current input. (i.e. trunk filename, add relative path and get absolute?) 
             aug_string* imported_filename = aug_string_create(input->filename->buffer);
             size_t dir_pos = imported_filename->length;
-            while(--dir_pos >= 0)
+            while(--dir_pos != 0)
             {
                 if(imported_filename->buffer[dir_pos] == '/' || imported_filename->buffer[dir_pos] == '\\')
                 {
@@ -5990,7 +5991,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
     }
 }
 
-aug_ir* aug_generate_ir(aug_vm* vm, aug_ast* root, aug_input* input)
+aug_ir* aug_generate_ir(aug_ast* root, aug_input* input)
 {
     if(root == NULL || input == NULL)
         return NULL;
@@ -6823,7 +6824,7 @@ void aug_shutdown(aug_vm* vm)
     for (size_t i = 0; i < vm->libs->length; ++i)
     {
         aug_lib_handle handle = aug_container_at_type(aug_lib_handle, vm->libs, i);
-        aug_vm_lib_unload(vm, handle);
+        aug_vm_lib_unload(handle);
     }
 
     vm->libs = aug_container_decref(vm->libs);
@@ -6886,7 +6887,7 @@ aug_script* aug_compile(aug_vm* vm, const char* filename)
         return NULL;
     }
 
-    aug_ir* ir = aug_generate_ir(vm, root, input);
+    aug_ir* ir = aug_generate_ir(root, input);
     char* bytecode = aug_generate_bytecode(ir);
     if(bytecode == NULL)
     {
@@ -6918,7 +6919,7 @@ aug_value aug_eval(aug_vm* vm, const char* code)
         return aug_none();
     }
 
-    aug_ir* ir = aug_generate_ir(vm, root, input);
+    aug_ir* ir = aug_generate_ir(root, input);
     char* bytecode = aug_generate_bytecode(ir);
     if(bytecode == NULL)
     {
