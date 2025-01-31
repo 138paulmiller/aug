@@ -34,3 +34,5 @@ var result = [ 2, 3, 4, 8, 10 ]
 quicksort(arr, 0, length(arr) - 1)
 
 expect(arr = result, "quicksort(", arr, ")")
+
+expect(0xFF == 255, "0xFF == 255")

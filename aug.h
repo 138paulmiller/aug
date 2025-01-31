@@ -907,7 +907,7 @@ static inline char aug_input_get(aug_input* input)
         next_pos->line = pos->line + 1;
         next_pos->linepos = next_pos->filepos;
     }
-    return c;
+    return (char)c;
 }
 
 static inline char aug_input_peek(aug_input* input)
@@ -917,12 +917,12 @@ static inline char aug_input_peek(aug_input* input)
     {
         int c = fgetc(input->file);
         ungetc(c, input->file);
-        return c;
+        return (char)c;
     }
 
     aug_pos* pos = aug_input_pos(input);
     int c = input->str[pos->filepos];
-    return c;
+    return (char)c;
 }
 
 static inline void aug_input_unget(aug_input* input)
@@ -1048,7 +1048,7 @@ static inline void aug_log_input_error_hint(aug_input* input, const aug_pos* pos
         return;
 
     // save state
-    int curr_pos = ftell(input->file);
+    int curr_pos = (int)ftell(input->file);
 
     // go to line
     fseek(input->file, (int)pos->linepos, SEEK_SET);
@@ -1067,7 +1067,7 @@ static inline void aug_log_input_error_hint(aug_input* input, const aug_pos* pos
     size_t n = 0;
     while (c != EOF && c != '\n' && n < (sizeof(buffer) - 1))
     {
-        buffer[n++] = c;
+        buffer[n++] = (char)c;
         c = fgetc(input->file);
     }
     buffer[n] = '\0';
@@ -3124,7 +3124,7 @@ typedef struct aug_ir_operation
 {
     aug_opcode opcode;
     aug_ir_operand operand; //optional parameter. will be encoded in following bytes
-    size_t bytecode_offset;
+    int bytecode_offset;
 } aug_ir_operation;
 
 // The symbol stack state for a variable scope .
@@ -3161,7 +3161,7 @@ typedef struct aug_ir
 
     // Generated data
     aug_container* operations; // type aug_ir_operation
-    size_t bytecode_offset;
+    int bytecode_offset;
     
     // Assigned to the outer-most frame's symbol table. 
     // This field is initialized after generation, so not available during the generation pass. 
@@ -3246,10 +3246,10 @@ static inline size_t aug_ir_operand_size(aug_ir_operand operand)
     return 0;
 }
 
-static inline size_t aug_ir_operation_size(aug_ir_operation operation)
+static inline int aug_ir_operation_size(aug_ir_operation operation)
 {
-    size_t size = sizeof(aug_opcode);
-    size += aug_ir_operand_size(operation.operand);
+    int size = (int)sizeof(aug_opcode);
+    size += (int)aug_ir_operand_size(operation.operand);
     return size;
 }
 
@@ -3518,7 +3518,7 @@ static inline void aug_ir_end_loop(aug_ir* ir)
     aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP, begin_addr_operand);
 
     // Fixup stubbed block offsets
-    const size_t end_block_addr = ir->bytecode_offset;
+    const int end_block_addr = ir->bytecode_offset;
 
     aug_ir_operation* operation = aug_ir_get_operation(ir, loop.end_jump_operation);
     assert(operation != NULL);
@@ -3641,10 +3641,10 @@ static inline bool aug_ir_set_func(aug_ir* ir, aug_string* func_name, int param_
 
 static inline aug_symbol aug_ir_get_symbol(aug_ir* ir, aug_string* name)
 {
-    for(int i = ir->frame_stack->length - 1; i >= 0; --i)
+    for(int i = (int)ir->frame_stack->length - 1; i >= 0; --i)
     {
         aug_ir_frame frame = aug_container_at_type(aug_ir_frame, ir->frame_stack, (size_t)i);
-        for(int j = frame.scope_stack->length - 1; j >= 0; --j)
+        for(int j = (int)frame.scope_stack->length - 1; j >= 0; --j)
         {
             aug_ir_scope scope = aug_container_at_type(aug_ir_scope, frame.scope_stack, (size_t)j);
             aug_symbol* symbol_ptr = aug_hashtable_ptr_type(aug_symbol, scope.symtable, name->buffer);
@@ -3660,10 +3660,10 @@ static inline aug_symbol aug_ir_get_symbol(aug_ir* ir, aug_string* name)
 
 static inline aug_symbol aug_ir_get_symbol_relative(aug_ir* ir, aug_string* name)
 {
-    for(int i = ir->frame_stack->length - 1; i >= 0; --i)
+    for(int i = (int)ir->frame_stack->length - 1; i >= 0; --i)
     {
         aug_ir_frame frame = aug_container_at_type(aug_ir_frame, ir->frame_stack, (size_t)i);
-        for(int j = frame.scope_stack->length - 1; j >= 0; --j)
+        for(int j = (int)frame.scope_stack->length - 1; j >= 0; --j)
         {
             aug_ir_scope scope = aug_container_at_type(aug_ir_scope, frame.scope_stack, (size_t)j);
             aug_symbol* symbol_ptr = aug_hashtable_ptr_type(aug_symbol, scope.symtable, name->buffer);
@@ -4200,8 +4200,8 @@ static inline bool aug_add(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP_POD(result, lhs, rhs,
         return aug_set_int(result, lhs->i + rhs->i),
-        return aug_set_float(result, lhs->i + rhs->f),
-        return aug_set_float(result, lhs->f + rhs->i),
+        return aug_set_float(result, (float)lhs->i + rhs->f),
+        return aug_set_float(result, lhs->f + (float)rhs->i),
         return aug_set_float(result, lhs->f + rhs->f),
         return aug_set_char(result, lhs->c + rhs->c),
         return false
@@ -4213,8 +4213,8 @@ static inline bool aug_sub(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP_POD(result, lhs, rhs,
         return aug_set_int(result, lhs->i - rhs->i),
-        return aug_set_float(result, lhs->i - rhs->f),
-        return aug_set_float(result, lhs->f - rhs->i),
+        return aug_set_float(result, (float)lhs->i - rhs->f),
+        return aug_set_float(result, lhs->f - (float)rhs->i),
         return aug_set_float(result, lhs->f - rhs->f),
         return aug_set_char(result, lhs->c - rhs->c),
         return false
@@ -4226,8 +4226,8 @@ static inline bool aug_mul(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP_POD(result, lhs, rhs,
         return aug_set_int(result, lhs->i * rhs->i),
-        return aug_set_float(result, lhs->i * rhs->f),
-        return aug_set_float(result, lhs->f * rhs->i),
+        return aug_set_float(result, (float)lhs->i * rhs->f),
+        return aug_set_float(result, lhs->f * (float)rhs->i),
         return aug_set_float(result, lhs->f * rhs->f),
         return aug_set_char(result, lhs->c * rhs->c),
         return false
@@ -4238,9 +4238,9 @@ static inline bool aug_mul(aug_value* result, aug_value* lhs, aug_value* rhs)
 static inline bool aug_div(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP_POD(result, lhs, rhs,
-        return aug_set_float(result, (float)lhs->i / rhs->i),
-        return aug_set_float(result, lhs->i / rhs->f),
-        return aug_set_float(result, lhs->f / rhs->i),
+        return aug_set_float(result, (float)lhs->i / (float)rhs->i),
+        return aug_set_float(result, (float)lhs->i / rhs->f),
+        return aug_set_float(result, lhs->f / (float)rhs->i),
         return aug_set_float(result, lhs->f / rhs->f),
         return aug_set_char(result, lhs->c / rhs->c),
         return false
@@ -4265,8 +4265,8 @@ static inline bool aug_mod(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP_POD(result, lhs, rhs,
         return aug_set_int(result, lhs->i % rhs->i),
-        return aug_set_float(result, (float)fmod(lhs->i, rhs->f)),
-        return aug_set_float(result, (float)fmod(lhs->f, rhs->i)),
+        return aug_set_float(result, (float)fmod((float)lhs->i, rhs->f)),
+        return aug_set_float(result, (float)fmod(lhs->f, (float)rhs->i)),
         return aug_set_float(result, (float)fmod(lhs->f, rhs->f)),
         return false,
         return false
@@ -4278,8 +4278,8 @@ static inline bool aug_lt(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP_POD(result, lhs, rhs,
         return aug_set_bool(result, lhs->i < rhs->i),
-        return aug_set_bool(result, lhs->i < rhs->f),
-        return aug_set_bool(result, lhs->f < rhs->i),
+        return aug_set_bool(result, (float)lhs->i < rhs->f),
+        return aug_set_bool(result, lhs->f < (float)rhs->i),
         return aug_set_bool(result, lhs->f < rhs->f),
         return aug_set_bool(result, lhs->c < rhs->c),
         return false
@@ -4291,8 +4291,8 @@ static inline bool aug_lte(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP_POD(result, lhs, rhs,
         return aug_set_bool(result, lhs->i <= rhs->i),
-        return aug_set_bool(result, lhs->i <= rhs->f),
-        return aug_set_bool(result, lhs->f <= rhs->i),
+        return aug_set_bool(result, (float)lhs->i <= rhs->f),
+        return aug_set_bool(result, lhs->f <= (float)rhs->i),
         return aug_set_bool(result, lhs->f <= rhs->f),
         return aug_set_bool(result, lhs->c <= rhs->c),
         return false
@@ -4304,8 +4304,8 @@ static inline bool aug_gt(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP_POD(result, lhs, rhs,
         return aug_set_bool(result, lhs->i > rhs->i),
-        return aug_set_bool(result, lhs->i > rhs->f),
-        return aug_set_bool(result, lhs->f > rhs->i),
+        return aug_set_bool(result, (float)lhs->i > rhs->f),
+        return aug_set_bool(result, lhs->f > (float)rhs->i),
         return aug_set_bool(result, lhs->f > rhs->f),
         return aug_set_bool(result, lhs->c > rhs->c),
         return false
@@ -4317,8 +4317,8 @@ static inline bool aug_gte(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP_POD(result, lhs, rhs,
         return aug_set_bool(result, lhs->i >= rhs->i),
-        return aug_set_bool(result, lhs->i >= rhs->f),
-        return aug_set_bool(result, lhs->f >= rhs->i),
+        return aug_set_bool(result, (float)lhs->i >= rhs->f),
+        return aug_set_bool(result, lhs->f >= (float)rhs->i),
         return aug_set_bool(result, lhs->f >= rhs->f),
         return aug_set_bool(result, lhs->c >= rhs->c),
         return false
@@ -4330,8 +4330,8 @@ static inline bool aug_eq(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP_POD(result, lhs, rhs,
         return aug_set_bool(result, lhs->i == rhs->i),
-        return aug_set_bool(result, lhs->i == rhs->f),
-        return aug_set_bool(result, lhs->f == rhs->i),
+        return aug_set_bool(result, (float)lhs->i == rhs->f),
+        return aug_set_bool(result, lhs->f == (float)rhs->i),
         return aug_set_bool(result, lhs->f == rhs->f),
         return aug_set_bool(result, lhs->c == rhs->c),
         return aug_set_bool(result, lhs->b == rhs->b)
@@ -4356,8 +4356,8 @@ static inline bool aug_neq(aug_value* result, aug_value* lhs, aug_value* rhs)
 {
     AUG_DEFINE_BINOP_POD(result, lhs, rhs,
         return aug_set_bool(result, lhs->i != rhs->i),
-        return aug_set_bool(result, lhs->i != rhs->f),
-        return aug_set_bool(result, lhs->f != rhs->i),
+        return aug_set_bool(result, (float)lhs->i != rhs->f),
+        return aug_set_bool(result, lhs->f != (float)rhs->i),
         return aug_set_bool(result, lhs->f != rhs->f),
         return aug_set_bool(result, lhs->c != rhs->c),
         return aug_set_bool(result, lhs->b != rhs->b)
@@ -4382,8 +4382,8 @@ static inline bool aug_approxeq(aug_value* result, aug_value* lhs, aug_value* rh
 {
     AUG_DEFINE_BINOP_POD(result, lhs, rhs,
         return aug_set_bool(result, lhs->i == rhs->i),
-        return aug_set_bool(result, (float)fabs(lhs->i - rhs->f) < AUG_APPROX_THRESHOLD),
-        return aug_set_bool(result, (float)fabs(lhs->f - rhs->i) < AUG_APPROX_THRESHOLD),
+        return aug_set_bool(result, (float)fabs((float)lhs->i - rhs->f) < AUG_APPROX_THRESHOLD),
+        return aug_set_bool(result, (float)fabs(lhs->f - (float)rhs->i) < AUG_APPROX_THRESHOLD),
         return aug_set_bool(result, (float)fabs(lhs->f - rhs->f) < AUG_APPROX_THRESHOLD),
         return aug_set_bool(result, lhs->c == rhs->c),
         return aug_set_bool(result, lhs->b == rhs->b)
@@ -4422,7 +4422,7 @@ typedef union aug_vm_bytecode_value
 
 aug_trace_marker* aug_vm_get_marker(aug_vm* vm)
 {
-    const int addr = vm->last_instruction - vm->bytecode;
+    const int addr = (int)(vm->last_instruction - vm->bytecode);
     // TODO: index by address for faster lookup. Not priority as this will only occur on VM error 
     for(size_t i = 0; i < vm->markers->length; ++i)
     {
@@ -4435,7 +4435,7 @@ aug_trace_marker* aug_vm_get_marker(aug_vm* vm)
 
 aug_string* aug_vm_get_marker_symbol(aug_vm* vm)
 {
-    const int addr = vm->last_instruction - vm->bytecode;
+    const int addr = (int)(vm->last_instruction - vm->bytecode);
     // TODO: index by address for faster lookup. Not priority as this will only occur on VM error 
     for(size_t i = 0; i < vm->markers->length; ++i)
     {
@@ -5405,7 +5405,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
                 case AUG_TOKEN_INT:
                 {
                     assert(token_data && token_data->length > 0);
-                    const int data = strtol(token_data->buffer, NULL, 10);
+                    const int data = (int)(strtol(token_data->buffer, NULL, 10));
                     const aug_ir_operand operand = aug_ir_operand_from_int(data);
                     aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_INT, operand);
                     break;
@@ -5701,7 +5701,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
             aug_generate_ir_pass(children[1], ir, input);
             aug_ir_pop_scope(ir);
 
-            const size_t end_block_addr = ir->bytecode_offset;
+            const int end_block_addr = ir->bytecode_offset;
 
             // Fixup stubbed block offsets
             aug_ir_get_operation(ir, end_block_jmp)->operand = aug_ir_operand_from_int(end_block_addr);
@@ -5726,7 +5726,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
 
             //Jump to end after true
             const size_t end_block_jmp = aug_ir_add_operation_arg(ir, AUG_OPCODE_JUMP, stub_operand);
-            const size_t else_block_addr = ir->bytecode_offset;
+            const int else_block_addr = ir->bytecode_offset;
 
             // Else block
             aug_ir_push_scope(ir);
@@ -5734,7 +5734,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
             aug_ir_pop_scope(ir);
 
             // Tag end address
-            const size_t end_block_addr = ir->bytecode_offset;
+            const int end_block_addr = ir->bytecode_offset;
 
             // Fixup stubbed block offsets
             aug_ir_get_operation(ir, else_block_jmp)->operand = aug_ir_operand_from_int(else_block_addr);
@@ -5987,7 +5987,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
             aug_ir_pop_scope(ir);
 
             // fixup jump operand
-            const size_t end_block_addr = ir->bytecode_offset;
+            const int end_block_addr = ir->bytecode_offset;
             aug_ir_get_operation(ir, end_block_jmp)->operand = aug_ir_operand_from_int(end_block_addr);
 
             break;
@@ -6021,7 +6021,8 @@ char* aug_generate_bytecode(aug_ir* ir)
     if (!ir->valid)
         return NULL;
 
-    char* bytecode = (char*)AUG_ALLOC(sizeof(char)*ir->bytecode_offset);
+    assert(ir->bytecode_offset > 0);
+    char* bytecode = (char*)AUG_ALLOC( sizeof(char) * (size_t)ir->bytecode_offset);
     char* instruction = bytecode;
 
     for(size_t i = 0; i < ir->operations->length; ++i)
@@ -6058,7 +6059,7 @@ char* aug_generate_bytecode(aug_ir* ir)
             break;
         }
     }
-    assert((size_t) (instruction - bytecode) == ir->bytecode_offset);
+    assert((int)(instruction - bytecode) == ir->bytecode_offset);
     return bytecode;
 }
 
