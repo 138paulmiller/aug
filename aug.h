@@ -121,6 +121,7 @@ extern "C" {
 #pragma warning Potentially Unsupported compiler. Unknown dynamic link import/export semantics.
 #endif
 
+#include <limits.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -365,7 +366,7 @@ void aug_string_resize(aug_string* string, size_t size);
 void aug_string_push(aug_string* string, char c);
 char aug_string_pop(aug_string* string);
 void aug_string_append(aug_string* a, const aug_string* b);
-void aug_string_append_bytes(aug_string* string, const char* bytes, int len);
+void aug_string_append_bytes(aug_string* string, const char* bytes, size_t len);
 char aug_string_at(const aug_string* string, size_t index);
 bool aug_string_set(const aug_string* string, size_t index, char c);
 char aug_string_back(const aug_string* string);
@@ -385,7 +386,7 @@ bool aug_array_set(const aug_array* array, size_t index, aug_value* value);
 aug_value* aug_array_back(const aug_array* array);
 bool aug_array_compare(const aug_array* a, const aug_array* b);
 void aug_array_append(aug_array* array, aug_value* value);
-void aug_array_remove(aug_array* array, int index);
+void aug_array_remove(aug_array* array, size_t index);
 aug_array* aug_array_copy(aug_array* array);
 
 // Map API ------------------------------------------ Map API ------------------------------------------------- Map API//
@@ -569,7 +570,7 @@ typedef struct aug_hashtable
     aug_hashtable_free * free_func;
 } aug_hashtable;
 
-void aug_hashtable_bucket_init(aug_hashtable* map, int size)
+void aug_hashtable_bucket_init(aug_hashtable* map, size_t size)
 {
     size_t i;
     for (i = 0; i < map->capacity; ++i)
@@ -611,7 +612,7 @@ uint8_t* aug_hashtable_bucket_insert(aug_hashtable* map, aug_hashtable_bucket* b
 
     ++map->count;
 
-    const int buff_size = strlen(key) + 1;
+    const size_t buff_size = strlen(key) + 1;
     bucket->key_buffer[i] = (char*)AUG_ALLOC(buff_size);
 #ifdef AUG_SECURE
     strcpy_s(bucket->key_buffer[i], buff_size, key);
@@ -782,7 +783,7 @@ size_t aug_hashtable_hash_default(const char* str)
 {
     size_t hash = 5381; // DJB2 hash
     while(*str)
-        hash = ((hash << 5) + hash) + *str++;
+        hash = ((hash << 5) + hash) + (size_t)(*str++);
     return hash;
 }
 
@@ -826,13 +827,15 @@ void aug_log_error(aug_error_func* error_func, const char* format, ...)
 
 typedef struct aug_pos
 {
-    size_t filepos;
-    size_t linepos;
+    int filepos;
+    int linepos;
     size_t line;
     size_t col;
 
     int c;
 }aug_pos;
+
+static const int AUG_INPUT_POS_BUFFER_SIZE = 2;
 
 typedef struct aug_input
 {
@@ -841,8 +844,8 @@ typedef struct aug_input
 
     bool valid;
     aug_string* filename;
-    size_t track_pos;
-    size_t pos_buffer_index;
+    int track_pos;
+    int pos_buffer_index;
     aug_pos pos_buffer[2]; //store, prev, curr
 
     aug_error_func* error_func;
@@ -856,19 +859,19 @@ static inline aug_pos* aug_input_pos(aug_input* input)
 static inline aug_pos* aug_input_get_pos(aug_input* input, int dir)
 {
     assert(input != NULL);
-    const int buffer_len = (sizeof(input->pos_buffer) / sizeof(input->pos_buffer[0]));
-    const int len = (input->pos_buffer_index + dir) % buffer_len;
-    if (len < 0) input->pos_buffer_index = buffer_len - input->pos_buffer_index;
+    const int len = ((int)input->pos_buffer_index + dir) % AUG_INPUT_POS_BUFFER_SIZE;
+    if (len < 0) 
+        input->pos_buffer_index = AUG_INPUT_POS_BUFFER_SIZE - input->pos_buffer_index;
     return &input->pos_buffer[len];
 }
 
 static inline aug_pos* aug_input_move_pos(aug_input* input, int dir)
 {
     assert(input != NULL);
-    const int buffer_len = (sizeof(input->pos_buffer) / sizeof(input->pos_buffer[0]));
-    input->pos_buffer_index = (input->pos_buffer_index + dir) % buffer_len;
+    input->pos_buffer_index = (input->pos_buffer_index + dir) % AUG_INPUT_POS_BUFFER_SIZE;
     // TODO: Fix ? Always false 
-    // if (input->pos_buffer_index < 0) input->pos_buffer_index = buffer_len - input->pos_buffer_index;
+    if (input->pos_buffer_index < 0) 
+        input->pos_buffer_index = AUG_INPUT_POS_BUFFER_SIZE + input->pos_buffer_index;
     return &input->pos_buffer[input->pos_buffer_index];
 }
 
@@ -1007,10 +1010,12 @@ static inline aug_string* aug_input_end_tracking(aug_input* input)
     assert(input != NULL);
     aug_pos* pos = aug_input_pos(input);
 
-    const size_t pos_end = pos->filepos;
-    const size_t len = (pos_end - input->track_pos);
+    assert(pos->filepos != -1 && pos->filepos > input->track_pos);
 
-    aug_string* string = aug_string_new(len+1);
+    const int pos_end = pos->filepos;
+    const size_t len = (size_t)(pos_end - input->track_pos);
+
+    aug_string* string = aug_string_new(len + 1);
     string->length = len;
     string->buffer[len] = '\0';
 
@@ -1027,8 +1032,9 @@ static inline aug_string* aug_input_end_tracking(aug_input* input)
     }
     else 
     {
-        size_t i;
-        for(i = 0; i < len; ++i)
+        assert(len < INT_MAX);
+        int i;
+        for(i = 0; i < (int)len; ++i)
             string->buffer[i] = input->str[i + input->track_pos]; 
     }
     return string;
@@ -1045,7 +1051,7 @@ static inline void aug_log_input_error_hint(aug_input* input, const aug_pos* pos
     int curr_pos = ftell(input->file);
 
     // go to line
-    fseek(input->file, pos->linepos, SEEK_SET);
+    fseek(input->file, (int)pos->linepos, SEEK_SET);
 
     // skip leading whitespace
     size_t ws_skipped = 0;
@@ -1865,7 +1871,7 @@ static inline void aug_ast_delete(aug_ast* node)
 static inline void aug_ast_resize(aug_ast* node, int size)
 {    
     node->children_capacity = size == 0 ? 1 : size;
-    node->children = (aug_ast**)AUG_REALLOC(node->children, sizeof(aug_ast*) * node->children_capacity);
+    node->children = (aug_ast**)AUG_REALLOC(node->children, sizeof(aug_ast*) * (size_t)node->children_capacity);
     node->children_size = size;
 }
 
@@ -1874,7 +1880,7 @@ static inline void aug_ast_add(aug_ast* node, aug_ast* child)
     if(node->children_size + 1 >= node->children_capacity)
     {
         node->children_capacity = node->children_capacity == 0 ? 1 : node->children_capacity * 2;
-        node->children = (aug_ast**)AUG_REALLOC(node->children, sizeof(aug_ast*) * node->children_capacity);
+        node->children = (aug_ast**)AUG_REALLOC(node->children, sizeof(aug_ast*) * (size_t)node->children_capacity);
     }
     node->children[node->children_size++] = child;
 }
@@ -3637,10 +3643,10 @@ static inline aug_symbol aug_ir_get_symbol(aug_ir* ir, aug_string* name)
 {
     for(int i = ir->frame_stack->length - 1; i >= 0; --i)
     {
-        aug_ir_frame frame = aug_container_at_type(aug_ir_frame, ir->frame_stack, i);
+        aug_ir_frame frame = aug_container_at_type(aug_ir_frame, ir->frame_stack, (size_t)i);
         for(int j = frame.scope_stack->length - 1; j >= 0; --j)
         {
-            aug_ir_scope scope = aug_container_at_type(aug_ir_scope, frame.scope_stack, j);
+            aug_ir_scope scope = aug_container_at_type(aug_ir_scope, frame.scope_stack, (size_t)j);
             aug_symbol* symbol_ptr = aug_hashtable_ptr_type(aug_symbol, scope.symtable, name->buffer);
             if (symbol_ptr != NULL && symbol_ptr->type != AUG_SYM_NONE)
                 return *symbol_ptr;
@@ -3656,10 +3662,10 @@ static inline aug_symbol aug_ir_get_symbol_relative(aug_ir* ir, aug_string* name
 {
     for(int i = ir->frame_stack->length - 1; i >= 0; --i)
     {
-        aug_ir_frame frame = aug_container_at_type(aug_ir_frame, ir->frame_stack, i);
+        aug_ir_frame frame = aug_container_at_type(aug_ir_frame, ir->frame_stack, (size_t)i);
         for(int j = frame.scope_stack->length - 1; j >= 0; --j)
         {
-            aug_ir_scope scope = aug_container_at_type(aug_ir_scope, frame.scope_stack, j);
+            aug_ir_scope scope = aug_container_at_type(aug_ir_scope, frame.scope_stack, (size_t)j);
             aug_symbol* symbol_ptr = aug_hashtable_ptr_type(aug_symbol, scope.symtable, name->buffer);
             if (symbol_ptr != NULL && symbol_ptr->type != AUG_SYM_NONE)
             {
@@ -3676,7 +3682,7 @@ static inline aug_symbol aug_ir_get_symbol_relative(aug_ir* ir, aug_string* name
                 }
                 case AUG_SYM_SCOPE_LOCAL:
                 {
-                    const int frame_delta = (ir->frame_stack->length-1) - i;
+                    const int frame_delta = (int)(ir->frame_stack->length-1) - i;
                     symbol.offset = aug_ir_current_frame_local_offset(ir, symbol.offset, frame_delta);
                     break;
                 }
@@ -4099,7 +4105,7 @@ static inline bool aug_get_element(aug_value* value, aug_value* index, aug_value
         if(index->type != AUG_INT)
             return false;
 
-        int i = (size_t)aug_to_int(index);
+        int i = aug_to_int(index);
         if(i < value->range->from || i >= value->range->to)
             return false;
 
@@ -4411,7 +4417,7 @@ typedef union aug_vm_bytecode_value
     int i;
     char c;
     float f;
-    unsigned char bytes[sizeof(float)]; //Used to access raw byte data to bool, float and int types
+    char bytes[sizeof(float)]; //Used to access raw byte data to bool, float and int types
 } aug_vm_bytecode_value;
 
 aug_trace_marker* aug_vm_get_marker(aug_vm* vm)
@@ -4669,13 +4675,13 @@ void aug_vm_save_script(aug_vm* vm, aug_script* script)
     {
         script->stack_state = aug_array_new(1);
 
-        aug_array_reserve(script->stack_state, vm->stack_index);
-        script->stack_state->length = vm->stack_index;
+        aug_array_reserve(script->stack_state, (size_t)(vm->stack_index));
+        script->stack_state->length = (size_t)(vm->stack_index);
 
         while(vm->stack_index > 0)
         {
             aug_value* top = aug_vm_pop(vm);
-            aug_value* element = aug_array_at(script->stack_state, vm->stack_index);
+            aug_value* element = aug_array_at(script->stack_state, (size_t)(vm->stack_index));
             *element = aug_none();
             aug_assign(element, top);
         }
@@ -5127,7 +5133,7 @@ void aug_vm_execute(aug_vm* vm)
 
                 // Gather arguments
                 const int arg_count = aug_vm_read_int(vm);
-                aug_value* args = (aug_value*)AUG_ALLOC(sizeof(aug_value) * arg_count);
+                aug_value* args = (aug_value*)AUG_ALLOC(sizeof(aug_value) * (size_t)arg_count);
                 for(int i = arg_count - 1; i >= 0; --i)
                 {
                     aug_value* arg = aug_vm_pop(vm);
@@ -5407,7 +5413,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
                 case AUG_TOKEN_HEX:
                 {
                     assert(token_data && token_data->length > 2 && token_data->buffer[1] == 'x'); 
-                    const unsigned int data = strtoul(token_data->buffer + 2, NULL, 16); // +2 skip 0x 
+                    const int data = (int)(strtoul(token_data->buffer + 2, NULL, 16)); // +2 skip 0x 
                     const aug_ir_operand operand = aug_ir_operand_from_int(data);
                     aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_INT, operand);
                     break;
@@ -5415,7 +5421,7 @@ void aug_generate_ir_pass(const aug_ast* node, aug_ir* ir, aug_input* input)
                 case AUG_TOKEN_BINARY:
                 {
                     assert(token_data && token_data->length > 2 && token_data->buffer[1] == 'b');
-                    const unsigned int data = strtoul(token_data->buffer + 2, NULL, 2);// +2 skip 0b 
+                    const int data = (int)(strtoul(token_data->buffer + 2, NULL, 2));// +2 skip 0b 
                     const aug_ir_operand operand = aug_ir_operand_from_int(data);
                     aug_ir_add_operation_arg(ir, AUG_OPCODE_PUSH_INT, operand);
                     break;
@@ -6024,7 +6030,7 @@ char* aug_generate_bytecode(aug_ir* ir)
         aug_ir_operand operand = operation.operand;
 
         // push operation opcode
-        (*instruction++) = (aug_opcode)operation.opcode;
+        (*instruction++) = (char)operation.opcode;
 
         // push operation arguments
         switch (operand.type)
@@ -6109,12 +6115,12 @@ void aug_string_append(aug_string* a, const aug_string* b)
         aug_string_append_bytes(a, b->buffer, b->length);
 }
 
-void aug_string_append_bytes(aug_string* string, const char* bytes, int len)
+void aug_string_append_bytes(aug_string* string, const char* bytes, size_t len)
 {
     if(string->length + len >= string->capacity) 
         aug_string_resize(string, string->capacity + len * 2);
 
-    for(int i = 0; i < len; ++i)
+    for(size_t i = 0; i < len; ++i)
         string->buffer[string->length++] = bytes[i];
     string->buffer[string->length] = '\0'; 
 }
@@ -6281,7 +6287,7 @@ void aug_array_append(aug_array* array, aug_value* value)
     aug_array_set(array, array->length-1, value);
 }
 
-void aug_array_remove(aug_array* array, int index)  
+void aug_array_remove(aug_array* array, size_t index)  
 {
     aug_value* value = aug_array_at(array, index); 
 
@@ -6341,18 +6347,18 @@ size_t aug_map_hash(const aug_value* value)
             const char* bytes = value->str->buffer;
             size_t hash = 5381; // DJB2 hash
             while (*bytes)
-                hash = ((hash << 5) + hash) + *bytes++;
+                hash = ((hash << 5) + hash) + (size_t)(*bytes++);
             return hash;
         }
         case AUG_INT:
-            return value->i;
+            return (size_t)value->i;
         default:
             return 0;
     }
     return 0;
 }
 
-void aug_map_bucket_init(aug_map* map, int size)
+void aug_map_bucket_init(aug_map* map, size_t size)
 {
     for (size_t i = 0; i < map->capacity; ++i)
     {
@@ -7042,13 +7048,14 @@ void aug_save_state(aug_vm* vm, aug_vm_exec_state* exec_state)
     // reset script stack state to match vm
     if (vm->stack_index > 0)
     {
-        exec_state->stack_state = aug_array_new(vm->stack_index);
-        exec_state->stack_state->length = vm->stack_index;
+        const size_t stack_size = (size_t)(vm->stack_index);
+        exec_state->stack_state = aug_array_new(stack_size);
+        exec_state->stack_state->length = stack_size;
 
         while (vm->stack_index > 0)
         {
             aug_value* top = aug_vm_pop(vm);
-            aug_value* element = aug_array_at(exec_state->stack_state, vm->stack_index);
+            aug_value* element = aug_array_at(exec_state->stack_state, (size_t)(vm->stack_index));
             aug_incref(top);
             *element = *top;
         }

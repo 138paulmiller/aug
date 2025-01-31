@@ -3,7 +3,7 @@ TARGET = $(OUT_DIR)/aug_test
 SCRIPTS = scripts
 SRC = $(wildcard *.c)
 CC = gcc
-FLAGS = -ggdb -Werror -Wall -Wextra -Wstrict-aliasing -Woverflow 
+CFLAGS = -ggdb -Wall -Wextra -Wstrict-aliasing -Woverflow -Wsign-conversion -Wconversion #-Werror
 LIBS = -I../ -std=c99 -lm
 LINK = -rdynamic -Wl,-rpath,../build
 DEBUG=0
@@ -22,3 +22,6 @@ $(OUT_DIR):
 
 $(TARGET): $(SRC)
 	$(CC) $(LINK) -DAUG_DEBUG=$(DEBUG) -g -o $@ $^ $(CFLAGS) $(LIBS)
+
+install:
+	sudo apt install valgrind linux-tools-generic
